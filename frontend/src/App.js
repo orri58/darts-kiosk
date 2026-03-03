@@ -1,53 +1,62 @@
-import { useEffect } from "react";
-import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Toaster } from "sonner";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+// Kiosk Pages
+import KioskLayout from "./pages/kiosk/KioskLayout";
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
+// Admin Pages
+import AdminLayout from "./pages/admin/AdminLayout";
+import AdminLogin from "./pages/admin/Login";
+import AdminDashboard from "./pages/admin/Dashboard";
+import AdminBoards from "./pages/admin/Boards";
+import AdminSettings from "./pages/admin/Settings";
+import AdminUsers from "./pages/admin/Users";
+import AdminLogs from "./pages/admin/Logs";
+import AdminRevenue from "./pages/admin/Revenue";
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
+// Context
+import { AuthProvider } from "./context/AuthContext";
+import { SettingsProvider } from "./context/SettingsContext";
 
 function App() {
   return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </div>
+    <AuthProvider>
+      <SettingsProvider>
+        <BrowserRouter>
+          <Routes>
+            {/* Kiosk Routes */}
+            <Route path="/kiosk" element={<KioskLayout />} />
+            <Route path="/kiosk/:boardId" element={<KioskLayout />} />
+            
+            {/* Admin Routes */}
+            <Route path="/admin/login" element={<AdminLogin />} />
+            <Route path="/admin" element={<AdminLayout />}>
+              <Route index element={<AdminDashboard />} />
+              <Route path="boards" element={<AdminBoards />} />
+              <Route path="settings" element={<AdminSettings />} />
+              <Route path="users" element={<AdminUsers />} />
+              <Route path="logs" element={<AdminLogs />} />
+              <Route path="revenue" element={<AdminRevenue />} />
+            </Route>
+            
+            {/* Default redirect */}
+            <Route path="/" element={<Navigate to="/kiosk" replace />} />
+            <Route path="*" element={<Navigate to="/kiosk" replace />} />
+          </Routes>
+        </BrowserRouter>
+        <Toaster 
+          position="top-center" 
+          theme="dark"
+          toastOptions={{
+            style: {
+              background: 'hsl(240 6% 10%)',
+              border: '1px solid hsl(240 3.7% 15.9%)',
+              color: 'hsl(0 0% 89%)',
+            },
+          }}
+        />
+      </SettingsProvider>
+    </AuthProvider>
   );
 }
 
