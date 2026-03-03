@@ -31,6 +31,7 @@ from models import (
     UserRole, BoardStatus, SessionStatus, PricingMode,
     DEFAULT_PALETTES, DEFAULT_PRICING, DEFAULT_BRANDING
 )
+from services.scheduler import scheduler, start_scheduler, stop_scheduler
 
 # Configuration
 JWT_SECRET = os.environ.get('JWT_SECRET', 'darts-kiosk-secret-key-change-in-production')
@@ -316,9 +317,13 @@ async def lifespan(app: FastAPI):
         
         await db.commit()
     
+    # Start background scheduler
+    await start_scheduler()
+    
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     yield
     # Shutdown
+    await stop_scheduler()
     logger.info("Shutting down...")
 
 

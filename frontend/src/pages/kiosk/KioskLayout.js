@@ -6,6 +6,7 @@ import { useSettings } from '../../context/SettingsContext';
 import LockedScreen from './LockedScreen';
 import SetupScreen from './SetupScreen';
 import InGameScreen from './InGameScreen';
+import ErrorScreen from './ErrorScreen';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -14,7 +15,8 @@ const STATES = {
   LOCKED: 'locked',
   SETUP: 'setup',
   IN_GAME: 'in_game',
-  FINISHED: 'finished'
+  FINISHED: 'finished',
+  ERROR: 'error'
 };
 
 export default function KioskLayout() {
@@ -25,6 +27,7 @@ export default function KioskLayout() {
   const [session, setSession] = useState(null);
   const [boardStatus, setBoardStatus] = useState('locked');
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState(null);
 
   // Fetch board session status
   const fetchBoardStatus = useCallback(async () => {
@@ -73,7 +76,10 @@ export default function KioskLayout() {
       toast.success('SPIEL GESTARTET!');
       fetchBoardStatus();
     } catch (error) {
-      toast.error(error.response?.data?.detail || 'Fehler beim Starten');
+      const errorMsg = error.response?.data?.detail || 'Fehler beim Starten des Spiels';
+      setErrorMessage(errorMsg);
+      setKioskState(STATES.ERROR);
+      toast.error(errorMsg);
     }
   };
 
@@ -102,6 +108,19 @@ export default function KioskLayout() {
     } catch (error) {
       toast.error('Fehler beim Benachrichtigen');
     }
+  };
+
+  // Handle return to locked from error state
+  const handleReturnToLocked = () => {
+    setErrorMessage(null);
+    setKioskState(STATES.LOCKED);
+    fetchBoardStatus();
+  };
+
+  // Handle retry from error state
+  const handleRetry = () => {
+    setErrorMessage(null);
+    fetchBoardStatus();
   };
 
   if (loading || settingsLoading) {
@@ -139,6 +158,15 @@ export default function KioskLayout() {
           branding={branding}
           session={session}
           onEndGame={handleEndGame}
+          onCallStaff={handleCallStaff}
+        />
+      )}
+
+      {kioskState === STATES.ERROR && (
+        <ErrorScreen
+          message={errorMessage}
+          onRetry={handleRetry}
+          onLock={handleReturnToLocked}
           onCallStaff={handleCallStaff}
         />
       )}
