@@ -47,6 +47,7 @@ from services.setup_wizard import (
     is_setup_complete, check_setup_status, complete_setup,
     SetupConfig, SetupStatus
 )
+from services.system_service import system_service
 
 # Configuration
 JWT_SECRET = os.environ.get('JWT_SECRET', 'darts-kiosk-secret-key-change-in-production')
@@ -1348,6 +1349,35 @@ async def rollback_agent(board_id: str, target_version: str, admin: User = Depen
         "success": rollback_result.success,
         "message": rollback_result.message
     }
+
+
+# ===== System Management Routes (Admin Only) =====
+
+@api_router.get("/system/info")
+async def get_system_info(admin: User = Depends(require_admin)):
+    """Get system information: version, uptime, disk, OS"""
+    return system_service.get_system_info()
+
+
+@api_router.get("/system/logs")
+async def get_system_logs(lines: int = 200, admin: User = Depends(require_admin)):
+    """Tail recent application logs"""
+    return {"lines": system_service.tail_logs(lines)}
+
+
+@api_router.get("/system/logs/bundle")
+async def download_log_bundle(admin: User = Depends(require_admin)):
+    """Download all logs as a gzipped tar archive"""
+    bundle = system_service.create_log_bundle()
+    if not bundle:
+        raise HTTPException(status_code=500, detail="Failed to create log bundle")
+
+    timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
+    return StreamingResponse(
+        bundle,
+        media_type="application/gzip",
+        headers={"Content-Disposition": f"attachment; filename=darts-logs_{timestamp}.tar.gz"}
+    )
 
 
 # ===== Agent Update Endpoint (called by master) =====

@@ -10,7 +10,8 @@ import {
   LogOut,
   Menu,
   X,
-  Activity
+  Activity,
+  Server
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { path: '/admin/logs', icon: FileText, label: 'Logs', adminOnly: true },
   { path: '/admin/revenue', icon: TrendingUp, label: 'Umsatz', adminOnly: true },
   { path: '/admin/health', icon: Activity, label: 'Health', adminOnly: true },
+  { path: '/admin/system', icon: Server, label: 'System', adminOnly: true },
 ];
 
 export default function AdminLayout() {
