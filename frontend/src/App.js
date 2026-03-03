@@ -13,6 +13,8 @@ import AdminSettings from "./pages/admin/Settings";
 import AdminUsers from "./pages/admin/Users";
 import AdminLogs from "./pages/admin/Logs";
 import AdminRevenue from "./pages/admin/Revenue";
+import AdminHealth from "./pages/admin/Health";
+import SetupWizard from "./pages/admin/SetupWizard";
 
 // Context
 import { AuthProvider } from "./context/AuthContext";
@@ -28,6 +30,9 @@ function App() {
             <Route path="/kiosk" element={<KioskLayout />} />
             <Route path="/kiosk/:boardId" element={<KioskLayout />} />
             
+            {/* Setup Wizard */}
+            <Route path="/setup" element={<SetupWizard />} />
+            
             {/* Admin Routes */}
             <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/admin" element={<AdminLayout />}>
@@ -37,6 +42,7 @@ function App() {
               <Route path="users" element={<AdminUsers />} />
               <Route path="logs" element={<AdminLogs />} />
               <Route path="revenue" element={<AdminRevenue />} />
+              <Route path="health" element={<AdminHealth />} />
             </Route>
             
             {/* Default redirect */}

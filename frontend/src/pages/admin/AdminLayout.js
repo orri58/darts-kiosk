@@ -9,7 +9,8 @@ import {
   TrendingUp, 
   LogOut,
   Menu,
-  X
+  X,
+  Activity
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
@@ -21,6 +22,7 @@ const NAV_ITEMS = [
   { path: '/admin/users', icon: Users, label: 'Benutzer', adminOnly: true },
   { path: '/admin/logs', icon: FileText, label: 'Logs', adminOnly: true },
   { path: '/admin/revenue', icon: TrendingUp, label: 'Umsatz', adminOnly: true },
+  { path: '/admin/health', icon: Activity, label: 'Health', adminOnly: true },
 ];
 
 export default function AdminLayout() {

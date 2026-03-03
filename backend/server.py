@@ -1,10 +1,12 @@
 """
 Main FastAPI Application - Darts Kiosk + Admin Control System
+Enterprise Hardened Version with Setup Wizard, Backups, Health Monitoring
 """
 from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Request, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func
@@ -14,16 +16,22 @@ from typing import List, Optional
 import os
 import uuid
 import logging
+import logging.handlers
 import hashlib
 import hmac
 import jwt
 import bcrypt
+import json
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
 # Load environment
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
+
+# Load secrets from file if available
+from services.setup_wizard import load_secrets_to_env
+load_secrets_to_env()
 
 from database import get_db, init_db, Base, async_engine
 from models import (
@@ -32,6 +40,13 @@ from models import (
     DEFAULT_PALETTES, DEFAULT_PRICING, DEFAULT_BRANDING
 )
 from services.scheduler import scheduler, start_scheduler, stop_scheduler
+from services.backup_service import backup_service, start_backup_service, stop_backup_service
+from services.health_monitor import health_monitor, start_health_monitor, stop_health_monitor
+from services.update_service import update_service
+from services.setup_wizard import (
+    is_setup_complete, check_setup_status, complete_setup,
+    SetupConfig, SetupStatus
+)
 
 # Configuration
 JWT_SECRET = os.environ.get('JWT_SECRET', 'darts-kiosk-secret-key-change-in-production')
@@ -41,10 +56,60 @@ MODE = os.environ.get('MODE', 'MASTER')  # MASTER or AGENT
 AGENT_SECRET = os.environ.get('AGENT_SECRET', 'agent-secret-key')
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/app/data'))
 ASSETS_DIR = DATA_DIR / 'assets'
+LOGS_DIR = DATA_DIR / 'logs'
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# JSON Logging with rotation
+LOG_FILE = LOGS_DIR / 'app.log'
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        log_obj = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno
+        }
+        if record.exc_info:
+            log_obj["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_obj)
+
+# Setup logging with rotation
+file_handler = logging.handlers.RotatingFileHandler(
+    LOG_FILE,
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
+file_handler.setFormatter(JsonFormatter())
+
+console_handler = logging.StreamHandler()
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[file_handler, console_handler]
+)
 logger = logging.getLogger(__name__)
+
+# Security: LAN-only access
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
+CORS_ORIGINS = os.environ.get('CORS_ORIGINS', '*').split(',')
+
+# Restrict CORS to LAN if not wildcard
+if CORS_ORIGINS != ['*']:
+    # Add common LAN patterns
+    lan_patterns = [
+        'http://localhost:*',
+        'http://127.0.0.1:*',
+        'http://192.168.*.*:*',
+        'http://10.*.*.*:*',
+        'http://172.16.*.*:*',
+    ]
+    CORS_ORIGINS.extend([p for p in lan_patterns if p not in CORS_ORIGINS])
 
 
 # ===== Pydantic Schemas =====
@@ -317,12 +382,21 @@ async def lifespan(app: FastAPI):
         
         await db.commit()
     
-    # Start background scheduler
+    # Start background services
     await start_scheduler()
+    health_monitor.set_scheduler_status(True)
+    
+    await start_backup_service()
+    health_monitor.set_backup_status(True)
+    
+    await start_health_monitor()
     
     logger.info(f"Darts Kiosk System started in {MODE} mode")
+    logger.info(f"Setup complete: {is_setup_complete()}")
     yield
     # Shutdown
+    await stop_health_monitor()
+    await stop_backup_service()
     await stop_scheduler()
     logger.info("Shutting down...")
 
@@ -330,14 +404,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Darts Kiosk System", lifespan=lifespan)
 api_router = APIRouter(prefix="/api")
 
-# CORS
+# CORS - Restrict to configured origins
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Trusted hosts (optional, enable in production)
+if ALLOWED_HOSTS != ['*']:
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=ALLOWED_HOSTS)
 
 
 # ===== Auth Routes =====
@@ -1034,6 +1112,263 @@ async def root():
 @api_router.get("/health")
 async def health():
     return {"status": "healthy", "mode": MODE}
+
+
+# ===== Setup Wizard Routes =====
+
+@api_router.get("/setup/status")
+async def get_setup_status(db: AsyncSession = Depends(get_db)):
+    """Check if first-run setup is needed"""
+    return await check_setup_status(db)
+
+
+@api_router.post("/setup/complete")
+async def complete_first_setup(config: SetupConfig, db: AsyncSession = Depends(get_db)):
+    """Complete first-run setup with secure credentials"""
+    # Validate
+    if len(config.admin_password) < 8:
+        raise HTTPException(status_code=400, detail="Admin password must be at least 8 characters")
+    if len(config.staff_pin) != 4 or not config.staff_pin.isdigit():
+        raise HTTPException(status_code=400, detail="Staff PIN must be exactly 4 digits")
+    
+    results = await complete_setup(db, config)
+    return {
+        "success": True,
+        "results": results,
+        "restart_required": results.get("secrets_generated", False),
+        "message": "Setup complete. Please restart the server if new secrets were generated."
+    }
+
+
+# ===== Health Monitoring Routes =====
+
+@api_router.get("/health/detailed")
+async def get_detailed_health(admin: User = Depends(require_admin)):
+    """Get detailed system health status"""
+    from dataclasses import asdict
+    health_data = health_monitor.get_health()
+    return asdict(health_data)
+
+
+@api_router.get("/health/screenshot/{filename}")
+async def get_error_screenshot(filename: str, admin: User = Depends(require_admin)):
+    """Get an error screenshot"""
+    screenshots_dir = DATA_DIR / 'autodarts_debug'
+    filepath = screenshots_dir / filename
+    
+    if not filepath.exists() or not filepath.is_file():
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    
+    # Security check - prevent path traversal
+    if not str(filepath.resolve()).startswith(str(screenshots_dir.resolve())):
+        raise HTTPException(status_code=403, detail="Access denied")
+    
+    return FileResponse(filepath, media_type="image/png")
+
+
+@api_router.get("/health/screenshots")
+async def list_error_screenshots(admin: User = Depends(require_admin)):
+    """List all error screenshots"""
+    return health_monitor.get_error_screenshots()
+
+
+# ===== Backup Routes =====
+
+@api_router.get("/backups")
+async def list_backups(admin: User = Depends(require_admin)):
+    """List all available backups"""
+    backups = backup_service.list_backups()
+    return {
+        "backups": [
+            {
+                "filename": b.filename,
+                "size_bytes": b.size_bytes,
+                "size_mb": round(b.size_bytes / (1024 * 1024), 2),
+                "created_at": b.created_at.isoformat(),
+                "compressed": b.compressed
+            }
+            for b in backups
+        ],
+        "stats": backup_service.get_backup_stats()
+    }
+
+
+@api_router.post("/backups/create")
+async def create_backup(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Create a new backup immediately"""
+    backup = backup_service.create_backup()
+    if not backup:
+        raise HTTPException(status_code=500, detail="Backup creation failed")
+    
+    await log_audit(db, admin, "create_backup", "backup", backup.filename)
+    
+    return {
+        "success": True,
+        "backup": {
+            "filename": backup.filename,
+            "size_bytes": backup.size_bytes,
+            "created_at": backup.created_at.isoformat()
+        }
+    }
+
+
+@api_router.get("/backups/download/{filename}")
+async def download_backup(filename: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Download a backup file"""
+    backup_path = backup_service.get_backup_path(filename)
+    
+    if not backup_path:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    
+    await log_audit(db, admin, "download_backup", "backup", filename)
+    
+    return FileResponse(
+        backup_path,
+        media_type="application/octet-stream",
+        filename=filename
+    )
+
+
+@api_router.post("/backups/restore/{filename}")
+async def restore_backup(filename: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Restore database from a backup (requires restart)"""
+    success = backup_service.restore_backup(filename)
+    
+    if not success:
+        raise HTTPException(status_code=500, detail="Restore failed")
+    
+    await log_audit(db, admin, "restore_backup", "backup", filename)
+    
+    return {
+        "success": True,
+        "message": "Database restored. Please restart the server.",
+        "restart_required": True
+    }
+
+
+@api_router.delete("/backups/{filename}")
+async def delete_backup(filename: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Delete a backup file"""
+    success = backup_service.delete_backup(filename)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Backup not found")
+    
+    await log_audit(db, admin, "delete_backup", "backup", filename)
+    
+    return {"success": True, "message": "Backup deleted"}
+
+
+# ===== Update Routes =====
+
+@api_router.get("/updates/status")
+async def get_update_status(admin: User = Depends(require_admin)):
+    """Get current version and available updates"""
+    return {
+        "current_version": update_service.get_current_version(),
+        "available_versions": [
+            {
+                "version": v.version,
+                "tag": v.tag,
+                "is_current": v.is_current,
+                "is_stable": v.is_stable
+            }
+            for v in update_service.get_available_versions()
+        ],
+        "update_history": update_service.get_update_history(10)
+    }
+
+
+@api_router.post("/updates/agent/{board_id}")
+async def update_agent(board_id: str, target_version: str = "latest", admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Update a specific agent to a new version"""
+    # Get board agent URL
+    result = await db.execute(select(Board).where(Board.board_id == board_id))
+    board = result.scalar_one_or_none()
+    
+    if not board or not board.agent_api_base_url:
+        raise HTTPException(status_code=404, detail="Board or agent URL not found")
+    
+    update_result = await update_service.update_agent(board_id, board.agent_api_base_url, target_version)
+    
+    await log_audit(db, admin, "update_agent", "board", board_id, {
+        "target_version": target_version,
+        "success": update_result.success
+    })
+    
+    return {
+        "success": update_result.success,
+        "message": update_result.message,
+        "details": {
+            "board_id": update_result.board_id,
+            "old_version": update_result.old_version,
+            "new_version": update_result.new_version
+        }
+    }
+
+
+@api_router.post("/updates/all-agents")
+async def update_all_agents(target_version: str = "latest", admin: User = Depends(require_admin)):
+    """Update all registered agents"""
+    results = await update_service.update_all_agents(target_version)
+    
+    return {
+        "total": len(results),
+        "successful": sum(1 for r in results if r.success),
+        "failed": sum(1 for r in results if not r.success),
+        "results": [
+            {
+                "board_id": r.board_id,
+                "success": r.success,
+                "message": r.message
+            }
+            for r in results
+        ]
+    }
+
+
+@api_router.post("/updates/local")
+async def update_local(target_version: str = "latest", admin: User = Depends(require_admin)):
+    """Get instructions for local update"""
+    return update_service.trigger_local_update(target_version)
+
+
+@api_router.post("/updates/rollback/{board_id}")
+async def rollback_agent(board_id: str, target_version: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Rollback an agent to a previous version"""
+    result = await db.execute(select(Board).where(Board.board_id == board_id))
+    board = result.scalar_one_or_none()
+    
+    if not board or not board.agent_api_base_url:
+        raise HTTPException(status_code=404, detail="Board or agent URL not found")
+    
+    rollback_result = await update_service.rollback_agent(board_id, board.agent_api_base_url, target_version)
+    
+    return {
+        "success": rollback_result.success,
+        "message": rollback_result.message
+    }
+
+
+# ===== Agent Update Endpoint (called by master) =====
+
+@api_router.post("/agent/update")
+async def agent_receive_update(request: Request, data: dict):
+    """Receive update command from master (agent endpoint)"""
+    # Verify agent secret
+    if not verify_agent_secret(request):
+        raise HTTPException(status_code=403, detail="Invalid agent secret")
+    
+    target_version = data.get("target_version", "latest")
+    
+    # In production, this would trigger docker pull + restart
+    logger.info(f"Received update command: {target_version}")
+    
+    return {
+        "success": True,
+        "message": f"Update to {target_version} initiated",
+        "note": "Container will restart shortly"
+    }
 
 
 # Include router

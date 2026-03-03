@@ -425,6 +425,80 @@ class DartsKioskAPITester:
             print(f"   ✓ Total revenue (7 days): {total_revenue} €")
             print(f"   ✓ Total sessions: {total_sessions}")
 
+    def test_enterprise_hardening_features(self):
+        """Test enterprise hardening features - setup, backups, detailed health"""
+        print("\n=== ENTERPRISE HARDENING FEATURES ===")
+        
+        # Test setup status (no auth required)
+        success, response = self.run_test(
+            "Get setup status",
+            "GET",
+            "setup/status",
+            200
+        )
+        
+        if success:
+            is_complete = response.get('is_complete', False)
+            needs_admin_password = response.get('needs_admin_password', False)
+            needs_staff_pin = response.get('needs_staff_pin', False)
+            print(f"   ✓ Setup complete: {is_complete}")
+            print(f"   ✓ Needs admin password: {needs_admin_password}")
+            print(f"   ✓ Needs staff PIN: {needs_staff_pin}")
+
+        # Test detailed health endpoint (admin only)
+        if not self.admin_token:
+            print("❌ No admin token available - skipping detailed health tests")
+        else:
+            success, response = self.run_test(
+                "Get detailed health status",
+                "GET",
+                "health/detailed",
+                200,
+                token=self.admin_token
+            )
+            
+            if success:
+                status = response.get('status', 'unknown')
+                uptime = response.get('uptime_seconds', 0)
+                scheduler_running = response.get('scheduler_running', False)
+                backup_running = response.get('backup_service_running', False)
+                print(f"   ✓ System status: {status}")
+                print(f"   ✓ Uptime: {uptime} seconds")
+                print(f"   ✓ Scheduler running: {scheduler_running}")
+                print(f"   ✓ Backup service running: {backup_running}")
+
+            # Test backup listing
+            success, response = self.run_test(
+                "List backups",
+                "GET",
+                "backups",
+                200,
+                token=self.admin_token
+            )
+            
+            if success:
+                backup_count = len(response.get('backups', []))
+                stats = response.get('stats', {})
+                print(f"   ✓ Available backups: {backup_count}")
+                print(f"   ✓ Retention policy: {stats.get('retention_policy', 'N/A')} backups")
+                print(f"   ✓ Backup interval: {stats.get('backup_interval_hours', 'N/A')} hours")
+
+            # Test backup creation
+            success, response = self.run_test(
+                "Create new backup",
+                "POST",
+                "backups/create",
+                200,
+                token=self.admin_token
+            )
+            
+            if success:
+                backup_info = response.get('backup', {})
+                filename = backup_info.get('filename', 'unknown')
+                size_bytes = backup_info.get('size_bytes', 0)
+                print(f"   ✓ Backup created: {filename}")
+                print(f"   ✓ Backup size: {size_bytes} bytes")
+
     def test_error_conditions(self):
         """Test various error conditions"""
         print("\n=== ERROR CONDITIONS ===")
@@ -483,6 +557,7 @@ def main():
         tester.test_user_management()
         tester.test_logs_and_audit()
         tester.test_revenue_summary()
+        tester.test_enterprise_hardening_features()  # New enterprise features test
         tester.test_error_conditions()
         
     except Exception as e:

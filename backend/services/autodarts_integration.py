@@ -1,6 +1,7 @@
 """
 Autodarts Integration Service - Full Production Implementation
 Browser automation via Playwright for Autodarts.io
+With Circuit Breaker, Fallback Strategy, and Persistent Browser Context
 """
 import asyncio
 import os
@@ -8,9 +9,10 @@ import logging
 from abc import ABC, abstractmethod
 from typing import List, Optional, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from enum import Enum
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,125 @@ logger = logging.getLogger(__name__)
 AUTODARTS_URL = os.environ.get('AUTODARTS_URL', 'https://play.autodarts.io')
 SCREENSHOTS_DIR = Path(os.environ.get('DATA_DIR', '/app/data')) / 'autodarts_debug'
 SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ===== Circuit Breaker =====
+
+class CircuitState(str, Enum):
+    CLOSED = "closed"      # Normal operation
+    OPEN = "open"          # Failing, reject requests
+    HALF_OPEN = "half_open"  # Testing if recovered
+
+
+class CircuitBreaker:
+    """
+    Circuit breaker pattern for automation resilience.
+    Opens after consecutive failures, allows recovery attempts.
+    """
+    
+    def __init__(
+        self,
+        failure_threshold: int = 3,
+        recovery_timeout: int = 60,
+        half_open_max_calls: int = 1
+    ):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.half_open_max_calls = half_open_max_calls
+        
+        self._state = CircuitState.CLOSED
+        self._failure_count = 0
+        self._last_failure_time: Optional[float] = None
+        self._half_open_calls = 0
+    
+    @property
+    def state(self) -> CircuitState:
+        # Check if we should transition from OPEN to HALF_OPEN
+        if self._state == CircuitState.OPEN:
+            if self._last_failure_time:
+                elapsed = time.time() - self._last_failure_time
+                if elapsed >= self.recovery_timeout:
+                    self._state = CircuitState.HALF_OPEN
+                    self._half_open_calls = 0
+                    logger.info("Circuit breaker: OPEN -> HALF_OPEN")
+        return self._state
+    
+    def can_execute(self) -> bool:
+        """Check if request can proceed"""
+        state = self.state
+        
+        if state == CircuitState.CLOSED:
+            return True
+        elif state == CircuitState.HALF_OPEN:
+            return self._half_open_calls < self.half_open_max_calls
+        else:  # OPEN
+            return False
+    
+    def record_success(self):
+        """Record successful execution"""
+        if self._state == CircuitState.HALF_OPEN:
+            self._state = CircuitState.CLOSED
+            logger.info("Circuit breaker: HALF_OPEN -> CLOSED (recovered)")
+        
+        self._failure_count = 0
+        self._half_open_calls = 0
+    
+    def record_failure(self):
+        """Record failed execution"""
+        self._failure_count += 1
+        self._last_failure_time = time.time()
+        
+        if self._state == CircuitState.HALF_OPEN:
+            self._state = CircuitState.OPEN
+            logger.warning("Circuit breaker: HALF_OPEN -> OPEN (still failing)")
+        elif self._failure_count >= self.failure_threshold:
+            self._state = CircuitState.OPEN
+            logger.warning(f"Circuit breaker: CLOSED -> OPEN (threshold {self.failure_threshold} reached)")
+        
+        self._half_open_calls += 1
+    
+    def reset(self):
+        """Manual reset"""
+        self._state = CircuitState.CLOSED
+        self._failure_count = 0
+        self._half_open_calls = 0
+        logger.info("Circuit breaker: manually reset to CLOSED")
+
+
+# ===== Selector Fallback Strategy =====
+
+class SelectorFallback:
+    """
+    Manages multiple selector strategies with fallback.
+    Learns which selectors work and prioritizes them.
+    """
+    
+    def __init__(self):
+        self._selector_success: dict = {}  # selector -> success count
+        self._selector_failure: dict = {}  # selector -> failure count
+    
+    def get_selectors(self, category: str, selectors: List[str]) -> List[str]:
+        """Get selectors sorted by success rate"""
+        def score(selector: str) -> float:
+            key = f"{category}:{selector}"
+            success = self._selector_success.get(key, 0)
+            failure = self._selector_failure.get(key, 0)
+            total = success + failure
+            if total == 0:
+                return 0.5  # Neutral for untested
+            return success / total
+        
+        return sorted(selectors, key=score, reverse=True)
+    
+    def record_success(self, category: str, selector: str):
+        """Record that a selector worked"""
+        key = f"{category}:{selector}"
+        self._selector_success[key] = self._selector_success.get(key, 0) + 1
+    
+    def record_failure(self, category: str, selector: str):
+        """Record that a selector failed"""
+        key = f"{category}:{selector}"
+        self._selector_failure[key] = self._selector_failure.get(key, 0) + 1
 
 
 class AutodartsError(Exception):
@@ -95,6 +216,7 @@ class PlaywrightAutodartsIntegration(AutodartsIntegration):
     """
     Production Playwright-based Autodarts integration.
     Handles browser automation for Autodarts.io
+    With Circuit Breaker, Selector Fallback, and Persistent Browser Context
     """
     
     # Retry configuration
@@ -102,6 +224,10 @@ class PlaywrightAutodartsIntegration(AutodartsIntegration):
     RETRY_DELAY = 2  # seconds
     PAGE_LOAD_TIMEOUT = 30000  # ms
     ACTION_TIMEOUT = 10000  # ms
+    
+    # Circuit breaker settings
+    CIRCUIT_FAILURE_THRESHOLD = 3
+    CIRCUIT_RECOVERY_TIMEOUT = 120  # seconds
     
     # DOM Selectors (may need adjustment based on actual Autodarts DOM)
     SELECTORS = {
@@ -130,34 +256,77 @@ class PlaywrightAutodartsIntegration(AutodartsIntegration):
         'error_message': '.error-message, .alert-error, [data-error]',
     }
     
-    def __init__(self, headless: bool = True):
+    def __init__(self, headless: bool = True, use_persistent_context: bool = True):
         self.headless = headless
+        self.use_persistent_context = use_persistent_context
         self._browser = None
         self._context = None
         self._page = None
         self._current_config: Optional[GameConfig] = None
         self._game_started = False
         self._playwright = None
+        
+        # Circuit breaker and selector fallback
+        self._circuit_breaker = CircuitBreaker(
+            failure_threshold=self.CIRCUIT_FAILURE_THRESHOLD,
+            recovery_timeout=self.CIRCUIT_RECOVERY_TIMEOUT
+        )
+        self._selector_fallback = SelectorFallback()
+        self._manual_mode = False  # Fallback to manual operation
+    
+    @property
+    def circuit_state(self) -> CircuitState:
+        return self._circuit_breaker.state
+    
+    @property
+    def is_manual_mode(self) -> bool:
+        return self._manual_mode
+    
+    def enable_manual_mode(self):
+        """Enable manual fallback mode (automation disabled)"""
+        self._manual_mode = True
+        logger.warning("Manual mode enabled - automation disabled")
+    
+    def disable_manual_mode(self):
+        """Disable manual fallback mode (re-enable automation)"""
+        self._manual_mode = False
+        self._circuit_breaker.reset()
+        logger.info("Manual mode disabled - automation re-enabled")
     
     async def _init_browser(self):
-        """Initialize Playwright browser"""
+        """Initialize Playwright browser with persistent context for speed"""
         if self._browser is not None:
             return
         
         try:
             from playwright.async_api import async_playwright
             self._playwright = await async_playwright().start()
-            self._browser = await self._playwright.chromium.launch(
-                headless=self.headless,
-                args=['--disable-dev-shm-usage', '--no-sandbox']
-            )
-            self._context = await self._browser.new_context(
-                viewport={'width': 1920, 'height': 1080},
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'
-            )
-            self._page = await self._context.new_page()
+            
+            if self.use_persistent_context:
+                # Persistent context for faster subsequent loads
+                user_data_dir = SCREENSHOTS_DIR.parent / 'browser_data'
+                user_data_dir.mkdir(exist_ok=True)
+                
+                self._context = await self._playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(user_data_dir),
+                    headless=self.headless,
+                    viewport={'width': 1920, 'height': 1080},
+                    args=['--disable-dev-shm-usage', '--no-sandbox']
+                )
+                self._page = self._context.pages[0] if self._context.pages else await self._context.new_page()
+            else:
+                self._browser = await self._playwright.chromium.launch(
+                    headless=self.headless,
+                    args=['--disable-dev-shm-usage', '--no-sandbox']
+                )
+                self._context = await self._browser.new_context(
+                    viewport={'width': 1920, 'height': 1080},
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0'
+                )
+                self._page = await self._context.new_page()
+            
             self._page.set_default_timeout(self.ACTION_TIMEOUT)
-            logger.info("Playwright browser initialized")
+            logger.info(f"Playwright browser initialized (persistent={self.use_persistent_context})")
         except Exception as e:
             logger.error(f"Failed to initialize browser: {e}")
             raise AutodartsError(f"Browser initialization failed: {e}")

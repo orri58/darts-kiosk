@@ -146,14 +146,19 @@ class SessionScheduler:
                         # We use session.updated_at or started_at to track last activity
                         last_activity = session.updated_at or session.started_at
                         
-                        if last_activity and last_activity < idle_threshold:
-                            # Session is idle - lock it
-                            session.status = SessionStatus.CANCELLED.value
-                            session.ended_at = now
-                            session.ended_reason = "idle_timeout"
-                            board.status = BoardStatus.LOCKED.value
+                        if last_activity:
+                            # Make timezone-aware if naive
+                            if last_activity.tzinfo is None:
+                                last_activity = last_activity.replace(tzinfo=timezone.utc)
                             
-                            logger.info(f"Session idle timeout: {session.id[:8]} on {board.board_id}")
+                            if last_activity < idle_threshold:
+                                # Session is idle - lock it
+                                session.status = SessionStatus.CANCELLED.value
+                                session.ended_at = now
+                                session.ended_reason = "idle_timeout"
+                                board.status = BoardStatus.LOCKED.value
+                                
+                                logger.info(f"Session idle timeout: {session.id[:8]} on {board.board_id}")
                 
                 await db.commit()
                 
