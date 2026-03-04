@@ -1,0 +1,85 @@
+{
+  "summary": "P2 Player Statistics & Leaderboard feature testing complete. All backend stats endpoints working (18/20 tests passed - 2 unrelated auth-required endpoints). Frontend leaderboard page with podium, period tabs, sort buttons all functional. Kiosk locked screen shows 'Top Spieler heute' rotation correctly.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/system/info", "issue": "Returns 401 without auth (expected behavior, not a bug)"},
+      {"endpoint": "/api/discovery/agents", "issue": "Returns 401 without auth (expected behavior, not a bug)"}
+    ]
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "GET /api/health returns healthy status",
+    "POST /api/auth/login with admin/admin123 returns access_token",
+    "GET /api/stats/leaderboard returns sorted players (default: games_won)",
+    "GET /api/stats/leaderboard?period=today returns today's stats",
+    "GET /api/stats/leaderboard?period=week returns week stats",
+    "GET /api/stats/leaderboard?period=month returns month stats",
+    "GET /api/stats/leaderboard?sort_by=win_rate sorts by win rate correctly",
+    "GET /api/stats/leaderboard?sort_by=games_played sorts by games played",
+    "Player stats structure verified: nickname, games_played, games_won, win_rate, avg_score, best_checkout, highest_throw",
+    "GET /api/stats/player/Max returns found=true with stats (6 games, 6 wins, 100% win_rate, best_checkout=120, highest_throw=180)",
+    "GET /api/stats/player/max case-insensitive search works",
+    "GET /api/stats/player/NonExistent returns found=false (not 404)",
+    "GET /api/stats/top-today returns top 5 players of the day with date",
+    "GET /api/stats/top-today?limit=3 respects limit parameter",
+    "POST /api/kiosk/{board_id}/end-game accepts winner and scores in body",
+    "POST /api/kiosk/{board_id}/end-game works without body (uses fallback winner)",
+    "/admin/leaderboard page loads with data-testid='admin-leaderboard'",
+    "/admin/leaderboard shows podium (top 3 players) with rank badges",
+    "/admin/leaderboard has period tabs: Heute, Woche, Monat, Gesamt (German)",
+    "/admin/leaderboard has sort buttons: Siege, Spiele, Quote (German)",
+    "/admin/leaderboard tab switching works (period changes)",
+    "/admin/leaderboard sort switching works (sort_by changes)",
+    "/admin/leaderboard shows player table with highest_throw and best_checkout in Details",
+    "Kiosk locked screen displays 'GESPERRT' message",
+    "Kiosk locked screen shows 'Top Spieler heute' rotation widget",
+    "Kiosk top player rotation displays player name (Max) with stats (6W / 6G)",
+    "Kiosk top player rotation animates (player changed from Max to TEST after 6s)",
+    "Kiosk pricing info displayed (Pro Spiel, 30 Min, 60 Min in EUR)",
+    "Kiosk pairing code displayed",
+    "/admin/system page loads showing MASTER mode",
+    "/admin/discovery page loads",
+    "Dashboard shows BOARD-1 and BOARD-2 with GESPERRT status"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_p2_stats_leaderboard.py",
+    "/app/test_reports/pytest/pytest_p2_stats.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [
+    "Stats computed correctly from MatchResult records with best_checkout and highest_throw from scores JSON",
+    "Case-insensitive player search working correctly",
+    "German localization consistent: Heute, Woche, Monat, Gesamt, Siege, Spiele, Quote",
+    "Top players rotation on kiosk locked screen fetches /api/stats/top-today and rotates every 5 seconds",
+    "Leaderboard sorting verified for games_won, games_played, win_rate"
+  ],
+
+  "updated_files": [],
+
+  "success_rate": {
+    "backend": "100% of P2 stats endpoints (18/20 overall - 2 auth-required existing endpoints)",
+    "frontend": "100% (Leaderboard page, Kiosk top players rotation)"
+  },
+
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123"}
+  },
+
+  "seed_data_present": "Max (6 games, 6 wins), Lisa (1 game, 1 win), Tom (1 game, 0 wins), TEST users from previous tests",
+
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "P2 Stats & Leaderboard fully tested. Key endpoints: GET /api/stats/leaderboard (params: period, sort_by, limit), GET /api/stats/player/{nickname}, GET /api/stats/top-today. Stats computed from MatchResult records. Leaderboard UI has podium (top 3), full table, period tabs (Heute/Woche/Monat/Gesamt), sort buttons (Siege/Spiele/Quote). Kiosk locked screen shows rotating top players with 5-second interval. All German localization working. WebSocket warning in console is non-critical (connection closed before established - likely from page navigation)."
+}

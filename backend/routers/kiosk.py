@@ -1,13 +1,15 @@
 """Kiosk Action Routes (called from kiosk UI, no auth)"""
 import secrets
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from pydantic import BaseModel
 
 from database import get_db
 from models import Board, Session, MatchResult, BoardStatus, SessionStatus, PricingMode
-from schemas import StartGameRequest
+from schemas import StartGameRequest, EndGameRequest
 from dependencies import get_active_session_for_board, log_audit
 from services.ws_manager import board_ws
 
@@ -52,7 +54,7 @@ async def kiosk_start_game(board_id: str, data: StartGameRequest, db: AsyncSessi
 
 
 @router.post("/kiosk/{board_id}/end-game")
-async def kiosk_end_game(board_id: str, db: AsyncSession = Depends(get_db)):
+async def kiosk_end_game(board_id: str, data: Optional[EndGameRequest] = None, db: AsyncSession = Depends(get_db)):
     """Called when a game ends (from autodarts integration or manual)"""
     result = await db.execute(select(Board).where(Board.board_id == board_id))
     board = result.scalar_one_or_none()
@@ -91,13 +93,18 @@ async def kiosk_end_game(board_id: str, db: AsyncSession = Depends(get_db)):
         duration = int((datetime.now(timezone.utc) - started).total_seconds())
 
     token = secrets.token_hex(16)
+    winner = (data.winner if data and data.winner else
+              session.players[0] if session.players else None)
+    scores = data.scores if data and data.scores else None
+
     match = MatchResult(
         public_token=token,
         board_id=board.board_id,
         board_name=board.name,
         game_type=session.game_type or "Dart",
         players=session.players or [],
-        winner=session.players[0] if session.players else None,
+        winner=winner,
+        scores=scores,
         duration_seconds=duration,
         expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
     )

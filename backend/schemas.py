@@ -79,6 +79,12 @@ class StartGameRequest(BaseModel):
     game_type: str
     players: List[str]
 
+class EndGameRequest(BaseModel):
+    winner: Optional[str] = None
+    scores: Optional[dict] = None
+    highest_throw: Optional[int] = None
+    best_checkout: Optional[int] = None
+
 class SessionResponse(BaseModel):
     id: str
     board_id: str

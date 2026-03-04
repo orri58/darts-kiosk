@@ -1,5 +1,54 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Lock, QrCode, Euro, Shield } from 'lucide-react';
+import { Lock, QrCode, Euro, Shield, Trophy, Crown } from 'lucide-react';
+
+function TopPlayersRotation() {
+  const [players, setPlayers] = useState([]);
+  const [current, setCurrent] = useState(0);
+
+  useEffect(() => {
+    const fetchTop = async () => {
+      try {
+        const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/stats/top-today?limit=5`);
+        if (res.ok) {
+          const data = await res.json();
+          setPlayers(data.players || []);
+        }
+      } catch { /* ignore */ }
+    };
+    fetchTop();
+    const iv = setInterval(fetchTop, 60000);
+    return () => clearInterval(iv);
+  }, []);
+
+  useEffect(() => {
+    if (players.length <= 1) return;
+    const iv = setInterval(() => setCurrent((c) => (c + 1) % players.length), 5000);
+    return () => clearInterval(iv);
+  }, [players.length]);
+
+  if (players.length === 0) return null;
+  const p = players[current];
+
+  return (
+    <div className="flex items-center gap-3 px-5 py-3 bg-zinc-800/50 border border-zinc-700 rounded-sm" data-testid="top-players-rotation">
+      <Crown className="w-5 h-5 text-amber-500 flex-shrink-0" />
+      <div className="min-w-0">
+        <p className="text-[11px] text-zinc-500 uppercase tracking-wider">Top Spieler heute</p>
+        <div className="flex items-center gap-2">
+          <span className="text-lg font-mono font-bold text-amber-400 truncate" data-testid="top-player-name">{p.nickname}</span>
+          <span className="text-xs text-zinc-500">{p.games_won}W / {p.games_played}G</span>
+        </div>
+      </div>
+      {players.length > 1 && (
+        <div className="flex gap-1 ml-auto">
+          {players.map((_, i) => (
+            <div key={i} className={`w-1.5 h-1.5 rounded-full ${i === current ? 'bg-amber-500' : 'bg-zinc-700'}`} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function PairingCode({ boardId }) {
   const [code, setCode] = useState('------');
@@ -128,6 +177,13 @@ export default function LockedScreen({ branding, pricing, boardId }) {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* Top Players of the Day */}
+      <div className="relative z-10 px-6 pb-4">
+        <div className="max-w-4xl mx-auto">
+          <TopPlayersRotation />
         </div>
       </div>
 

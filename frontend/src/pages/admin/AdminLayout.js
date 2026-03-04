@@ -12,7 +12,8 @@ import {
   X,
   Activity,
   Server,
-  Wifi
+  Wifi,
+  Trophy
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
@@ -27,6 +28,7 @@ const NAV_ITEMS = [
   { path: '/admin/health', icon: Activity, label: 'Health', adminOnly: true },
   { path: '/admin/system', icon: Server, label: 'System', adminOnly: true },
   { path: '/admin/discovery', icon: Wifi, label: 'Discovery', adminOnly: true },
+  { path: '/admin/leaderboard', icon: Trophy, label: 'Leaderboard' },
 ];
 
 export default function AdminLayout() {

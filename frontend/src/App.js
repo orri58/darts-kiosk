@@ -16,6 +16,7 @@ import AdminRevenue from "./pages/admin/Revenue";
 import AdminHealth from "./pages/admin/Health";
 import AdminSystem from "./pages/admin/System";
 import AdminDiscovery from "./pages/admin/Discovery";
+import AdminLeaderboard from "./pages/admin/Leaderboard";
 import MatchPublicPage from "./pages/MatchPublicPage";
 import SetupWizard from "./pages/admin/SetupWizard";
 
@@ -51,6 +52,7 @@ function App() {
               <Route path="health" element={<AdminHealth />} />
               <Route path="system" element={<AdminSystem />} />
               <Route path="discovery" element={<AdminDiscovery />} />
+              <Route path="leaderboard" element={<AdminLeaderboard />} />
             </Route>
             
             {/* Default redirect */}
