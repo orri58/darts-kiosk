@@ -8,10 +8,13 @@ from sqlalchemy import select
 from pydantic import BaseModel
 
 from database import get_db
-from models import Board, Session, MatchResult, BoardStatus, SessionStatus, PricingMode
+from models import Board, Session, MatchResult, Player, BoardStatus, SessionStatus, PricingMode
 from schemas import StartGameRequest, EndGameRequest
 from dependencies import get_active_session_for_board, log_audit
 from services.ws_manager import board_ws
+
+import logging
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -109,6 +112,25 @@ async def kiosk_end_game(board_id: str, data: Optional[EndGameRequest] = None, d
         expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
     )
     db.add(match)
+
+    # Update Player stats (guest + registered)
+    for name in (session.players or []):
+        result_p = await db.execute(
+            select(Player).where(Player.nickname_lower == name.strip().lower())
+        )
+        player = result_p.scalar_one_or_none()
+        if not player:
+            # Auto-create guest player record for stats tracking
+            player = Player(
+                nickname=name.strip(),
+                nickname_lower=name.strip().lower(),
+                is_registered=False,
+            )
+            db.add(player)
+        player.games_played = (player.games_played or 0) + 1
+        if winner and winner.strip().lower() == name.strip().lower():
+            player.games_won = (player.games_won or 0) + 1
+        player.last_played_at = datetime.now(timezone.utc)
 
     await db.flush()
 

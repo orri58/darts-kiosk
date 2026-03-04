@@ -12,7 +12,7 @@ from sqlalchemy import select
 from typing import Optional
 
 from database import get_db
-from models import MatchResult
+from models import MatchResult, Player
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,10 @@ async def _compute_stats(db: AsyncSession, since: Optional[datetime] = None) -> 
     result = await db.execute(query)
     matches = result.scalars().all()
 
+    # Pre-load registered player lookup
+    reg_result = await db.execute(select(Player).where(Player.is_registered == True))
+    registered = {p.nickname_lower: p for p in reg_result.scalars().all()}
+
     players = defaultdict(lambda: {
         "nickname": "",
         "games_played": 0,
@@ -46,6 +50,8 @@ async def _compute_stats(db: AsyncSession, since: Optional[datetime] = None) -> 
         "highest_throw": None,
         "game_types": defaultdict(int),
         "last_played": None,
+        "is_registered": False,
+        "player_id": None,
     })
 
     for m in matches:
@@ -58,6 +64,12 @@ async def _compute_stats(db: AsyncSession, since: Optional[datetime] = None) -> 
             p["nickname"] = name
             p["games_played"] += 1
             p["game_types"][m.game_type] += 1
+
+            # Check registered status
+            reg = registered.get(name.lower())
+            if reg:
+                p["is_registered"] = True
+                p["player_id"] = reg.id
 
             if not p["last_played"] or (played_at and played_at > p["last_played"]):
                 p["last_played"] = played_at
@@ -99,6 +111,8 @@ async def _compute_stats(db: AsyncSession, since: Optional[datetime] = None) -> 
             "highest_throw": data["highest_throw"],
             "game_types": dict(data["game_types"]),
             "last_played": data["last_played"].isoformat() if data["last_played"] else None,
+            "is_registered": data["is_registered"],
+            "player_id": data["player_id"],
         })
 
     return result_list

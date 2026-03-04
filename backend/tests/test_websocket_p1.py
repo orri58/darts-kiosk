@@ -18,7 +18,7 @@ import time
 from datetime import datetime, timezone
 
 # Use external URL for testing
-BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://darts-kiosk-admin.preview.emergentagent.com').rstrip('/')
+BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', 'https://darts-kiosk.preview.emergentagent.com').rstrip('/')
 WS_URL = BASE_URL.replace('https:', 'wss:').replace('http:', 'ws:') + '/api/ws/boards'
 
 # Test credentials

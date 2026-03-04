@@ -171,6 +171,25 @@ class MatchResult(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+class Player(Base):
+    """
+    Guest-first player model. Guests have just a nickname.
+    Registered players (Stammkunden) add a PIN and optionally a QR token.
+    """
+    __tablename__ = "players"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    nickname = Column(String(50), unique=True, nullable=False, index=True)
+    nickname_lower = Column(String(50), unique=True, nullable=False, index=True)
+    pin_hash = Column(String(255), nullable=True)  # None = guest
+    qr_token = Column(String(64), unique=True, nullable=True, index=True)
+    is_registered = Column(Boolean, default=False)
+    games_played = Column(Integer, default=0)
+    games_won = Column(Integer, default=0)
+    created_at = Column(DateTime, default=utcnow)
+    last_played_at = Column(DateTime, nullable=True)
+
+
 # Default palettes data
 DEFAULT_PALETTES = [
     {

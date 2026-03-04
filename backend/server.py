@@ -38,7 +38,7 @@ from services.ws_manager import board_ws
 from services.mdns_service import mdns_service
 
 # Routers
-from routers import auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats
+from routers import auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
 
 # Configuration
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/app/data'))
@@ -217,6 +217,7 @@ api_router.include_router(agent.router)
 api_router.include_router(discovery.router)
 api_router.include_router(matches.router)
 api_router.include_router(stats.router)
+api_router.include_router(players.router)
 
 app.include_router(api_router)
 
