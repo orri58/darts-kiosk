@@ -24,80 +24,89 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
 - Board management APIs
 - Kiosk UI: Locked, Setup, In-Game screens
 - Admin Panel: Dashboard, Boards, Settings, Users, Logs, Revenue
-- 8 color palettes, touch-optimized UI
 
 ### Phase 1.5 (2026-03-03) - Production Ready
 - Playwright Autodarts Integration service layer
 - Docker Compose with nginx reverse proxy
 - Session Scheduler (expiry + idle timeout)
-- SETUP_GUIDE.md documentation
-- Error screen with staff notification
 
 ### Phase 3 (2026-03-03) - Enterprise Hardening
-- First-Run Setup Wizard (/setup)
-- Security: LAN-only CORS, rate limiting, TrustedHostMiddleware
-- Observability: JSON logging with rotation, Admin Health page
-- Backups: Auto SQLite backups (6h interval, 30 retention)
-- Updates & Rollback: Version tracking, agent update endpoints
-- Automation Robustness: Circuit breaker, selector fallback
+- First-Run Setup Wizard, Security (LAN-only CORS, rate limiting)
+- JSON logging with rotation, Admin Health page
+- Auto SQLite backups, Updates & Rollback, Circuit breaker
 
 ### Phase 4 (2026-03-03) - One-Command Installer + System Management
-- **install.sh v2.0.0**: Idempotent installer for Ubuntu 24.04/22.04 LTS
-  - Offline/USB support (--offline flag)
-  - Dry-run mode (--check flag)
-  - Creates /opt/darts-kiosk and /data/darts with proper permissions
-  - Generates secrets with chmod 600
-  - Systemd services (darts-stack + darts-kiosk watchdog) with restart=always
-  - UFW firewall: LAN-only access
-  - Health verification after startup
-  - Prints /setup URL with detected IP
-- **System Management Page** (/admin/system):
-  - Overview: Version, Uptime, Disk Usage, Mode
-  - Backups tab: Create, list, download, restore, delete
-  - Updates tab: Current version, available versions, update history
-  - Logs tab: Live log viewer (color-coded), downloadable log bundle
-  - Details tab: Full system info (hostname, OS, Python, disk breakdown)
-- **Backend APIs**:
-  - GET /api/system/info - version, uptime, disk, OS info
-  - GET /api/system/logs - tail recent application logs
-  - GET /api/system/logs/bundle - downloadable tar.gz of all logs
+- install.sh v2.0.0: Ubuntu 24.04/22.04, idempotent, offline, systemd, firewall
+- /admin/system page with 4 tabs (Backups, Updates, Logs, Details)
+- Backend APIs: /api/system/info, /api/system/logs, /api/system/logs/bundle
 
-## Technical Stack
-- **Backend**: FastAPI, SQLAlchemy, SQLite, bcrypt, PyJWT
-- **Frontend**: React 19, Tailwind CSS, shadcn/ui, Recharts
-- **Browser Automation**: Playwright
-- **Deployment**: Docker Compose + nginx + systemd
-- **Logging**: JSON format with rotation
+### P1: Live Stability (2026-03-04)
+- **Autodarts Soak Test**: 200 cycles across 4 game modes (301, 501, Cricket, Training) - 100% pass
+  - Circuit Breaker unit tests (6 tests)
+  - Selector Fallback learning tests (3 tests)
+  - Mock Integration lifecycle tests (2 tests)
+  - Full soak test + integration tests (4 tests)
+- **WebSocket Real-Time Board Status**: Replaces 5s HTTP polling
+  - /api/ws/boards endpoint with auto-reconnect
+  - Broadcasts on: unlock, lock, extend, start-game, end-game
+  - Dashboard shows Live/Polling indicator
+  - Fallback to 30s polling if WS disconnects
+- **Refactoring**: server.py (1434 lines) -> modular architecture
+  - server.py: ~190 lines (config, lifespan, app setup, WS endpoint)
+  - schemas.py: All Pydantic models
+  - dependencies.py: Auth, password hashing, token management, DB helpers
+  - routers/auth.py: Authentication + User CRUD
+  - routers/boards.py: Board CRUD + Session Control (unlock/lock/extend)
+  - routers/kiosk.py: Kiosk Actions (start-game/end-game/call-staff)
+  - routers/settings.py: Settings + Asset Upload
+  - routers/admin.py: Logs, Revenue, Health, Setup, System
+  - routers/backups.py: Backup Management
+  - routers/updates.py: Update & Rollback
+  - routers/agent.py: Agent API (Master-Agent communication)
+  - 100% regression: 32/32 API tests passed, all soak + WS tests pass
 
-## API Endpoints Summary
+## Code Architecture
 ```
-Auth:     POST /api/auth/login, /api/auth/pin-login
-Boards:   GET/POST/PUT/DELETE /api/boards, /api/boards/{id}/unlock|lock|extend
-Kiosk:    POST /api/kiosk/{id}/start-game|end-game|call-staff
-Settings: GET/PUT /api/settings/branding|pricing|palettes
-Users:    GET/POST/PUT/DELETE /api/users
-Logs:     GET /api/logs/audit|sessions
-Revenue:  GET /api/revenue/summary
-Health:   GET /api/health, /api/health/detailed, /api/health/screenshots
-Backups:  GET /api/backups, POST create|restore, DELETE
-Setup:    GET /api/setup/status, POST /api/setup/complete
-Updates:  GET /api/updates/status, POST agent|all-agents|rollback
-System:   GET /api/system/info|logs|logs/bundle
+/app/backend/
+├── server.py           # App setup, lifespan, middleware, router includes (~190 lines)
+├── schemas.py          # All Pydantic request/response models
+├── dependencies.py     # Auth deps, helpers, shared DB utils
+├── database.py         # SQLAlchemy async setup
+├── models/             # SQLAlchemy ORM models
+├── routers/
+│   ├── auth.py         # /auth/login, /auth/pin-login, /auth/me, /users CRUD
+│   ├── boards.py       # /boards CRUD + /boards/{id}/unlock|lock|extend|session
+│   ├── kiosk.py        # /kiosk/{id}/start-game|end-game|call-staff
+│   ├── settings.py     # /settings/branding|pricing|palettes + /assets
+│   ├── admin.py        # /logs, /revenue, /health, /setup, /system
+│   ├── backups.py      # /backups CRUD
+│   ├── updates.py      # /updates management
+│   └── agent.py        # /agent/health|status|update
+├── services/
+│   ├── autodarts_integration.py  # Playwright automation + Circuit Breaker
+│   ├── scheduler.py              # Session expiry scheduler
+│   ├── backup_service.py         # Auto backups
+│   ├── health_monitor.py         # Health monitoring
+│   ├── update_service.py         # Version management
+│   ├── setup_wizard.py           # First-run wizard
+│   ├── system_service.py         # System info, logs
+│   └── ws_manager.py             # WebSocket broadcast manager
+└── tests/
+    ├── test_autodarts_soak.py    # 15 tests: soak + circuit breaker + selectors
+    ├── test_phase4_system.py     # Phase 4 system tests
+    ├── test_refactored_api.py    # 32 regression tests
+    └── test_websocket_p1.py      # WebSocket broadcast tests
 ```
 
 ## Remaining Backlog
 
-### P1 - Important
-- [ ] Real Autodarts DOM selector testing (requires Autodarts access)
-- [ ] WebSocket for real-time board status updates
-- [ ] mDNS board auto-discovery
+### P1 - Next
+- [ ] mDNS Discovery with secure pairing (discovery != trust)
 
-### P2 - Nice-to-Have
+### P2 - Upcoming
+- [ ] QR-Code Match Link (expiring public link, random token, 24h, no PII)
 - [ ] Player statistics & leaderboard
 - [ ] Stammkunde mode (QR/PIN login)
 - [ ] Custom palette editor
 - [ ] Sound effects for kiosk
 - [ ] Multi-language (EN/DE toggle)
-
-### Refactoring
-- [ ] Break server.py (~1400 lines) into APIRouter modules
