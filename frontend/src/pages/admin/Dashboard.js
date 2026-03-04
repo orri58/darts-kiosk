@@ -26,6 +26,7 @@ import {
 import { Input } from '../../components/ui/input';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
+import { useBoardWS } from '../../hooks/useBoardWS';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -65,11 +66,23 @@ export default function AdminDashboard() {
     }
   }, [token]);
 
+  // ---- WebSocket for real-time updates ----
+  const onWsEvent = useCallback((event, data) => {
+    // On any board status change -> refresh full list once
+    if (event === 'board_status' || event === 'session_extended') {
+      fetchBoards();
+    }
+  }, [fetchBoards]);
+  const { connected: wsConnected } = useBoardWS(onWsEvent);
+
   useEffect(() => {
     fetchBoards();
-    const interval = setInterval(fetchBoards, 5000);
+    // Fallback poll every 30s only if WS is disconnected
+    const interval = setInterval(() => {
+      if (!wsConnected) fetchBoards();
+    }, 30000);
     return () => clearInterval(interval);
-  }, [fetchBoards]);
+  }, [fetchBoards, wsConnected]);
 
   // Calculate price
   const calculatePrice = () => {
@@ -174,7 +187,13 @@ export default function AdminDashboard() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-heading uppercase tracking-wider text-white">Dashboard</h1>
-          <p className="text-zinc-500">Board-Übersicht und Steuerung</p>
+          <p className="text-zinc-500 flex items-center gap-2">
+            Board-Uebersicht und Steuerung
+            {wsConnected
+              ? <span className="inline-flex items-center gap-1 text-xs text-emerald-500" data-testid="ws-status-connected"><Wifi className="w-3 h-3" /> Live</span>
+              : <span className="inline-flex items-center gap-1 text-xs text-zinc-600" data-testid="ws-status-polling"><WifiOff className="w-3 h-3" /> Polling</span>
+            }
+          </p>
         </div>
         <Button
           onClick={fetchBoards}
