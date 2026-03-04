@@ -27,26 +27,34 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
 - Rate limited public endpoint (20 req/min/IP)
 
 ### P2: Player Statistics & Leaderboard (2026-03-04)
-- **Guest-first model**: Nickname only, no PII, no accounts required
-- **Stats per player**: games_played, games_won, win_rate, avg_score, best_checkout, highest_throw
-- **Computed from MatchResult records** (not public links)
-- **Leaderboard API**: `/api/stats/leaderboard` with period (today/week/month/all) and sort_by (games_won/games_played/win_rate/avg_score)
-- **Player API**: `/api/stats/player/{nickname}` with case-insensitive search
-- **Top Today API**: `/api/stats/top-today` for kiosk idle screen
-- **End-game enhanced**: Accepts optional winner, scores, best_checkout, highest_throw in request body
-- **Admin Leaderboard Page** (`/admin/leaderboard`):
-  - Top 3 podium with crown/medal icons
-  - Full player table with rank, games, wins, win rate, details
-  - Period tabs: Heute, Woche, Monat, Gesamt
-  - Sort buttons: Siege, Spiele, Quote
-- **Kiosk Idle Rotation**: Top players of the day rotate every 5s on locked screen
-- Tests: 100% pass rate (backend + frontend)
+- Guest-first model: Nickname only, no PII, no accounts required
+- Stats per player: games_played, games_won, win_rate, avg_score, best_checkout, highest_throw
+- Leaderboard API with period and sort_by filters
+- Admin Leaderboard Page with podium and detailed table
+
+### P0: Stammkunde Mode (2026-03-04) - COMPLETED
+- **Player model**: nickname, nickname_lower, pin_hash, qr_token, is_registered, games_played, games_won
+- **Backend endpoints** (routers/players.py):
+  - `POST /api/players/check` - Check if nickname is registered (case-insensitive)
+  - `POST /api/players/register` - Register guest→Stammkunde with 4-6 digit PIN, generates QR token
+  - `POST /api/players/pin-login` - Authenticate with nickname+PIN (rate limited: 5/min/IP)
+  - `POST /api/players/qr-login` - Authenticate with QR token
+  - `GET /api/players/registered` - List all Stammkunden
+- **Kiosk end-game** (routers/kiosk.py): Auto-creates guest Player records, updates games_played/games_won
+- **Stats enrichment** (routers/stats.py): Leaderboard returns `is_registered` and `player_id` fields
+- **Frontend SetupScreen**: 
+  - Auto-checks nickname on keyboard OK press
+  - PIN modal with 6-dot display for registered players
+  - Registration flow with 2-step PIN confirmation
+  - Verified "Stammkunde" badge (green ShieldCheck) for authenticated players
+  - UserPlus button for guest→Stammkunde registration
+- **Tests**: 21 backend tests + full frontend E2E tests, 100% pass rate
 
 ## Code Architecture
 ```
 /app/backend/routers/
   auth.py, boards.py, kiosk.py, settings.py, admin.py,
-  backups.py, updates.py, agent.py, discovery.py, matches.py, stats.py
+  backups.py, updates.py, agent.py, discovery.py, matches.py, stats.py, players.py
 
 /app/backend/services/
   autodarts_integration.py, scheduler.py, backup_service.py,
@@ -54,18 +62,21 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
   system_service.py, ws_manager.py, mdns_service.py, pairing_service.py
 
 /app/backend/models/
-  User, Board, Session, AuditLog, Settings, TrustedPeer, MatchResult
+  User, Board, Session, AuditLog, Settings, TrustedPeer, MatchResult, Player
 
 /app/frontend/src/pages/
   admin: Dashboard, Boards, Settings, Users, Logs, Revenue, Health, System, Discovery, Leaderboard
-  kiosk: LockedScreen (with TopPlayersRotation + PairingCode), SetupScreen, InGameScreen, MatchResultScreen, ErrorScreen
+  kiosk: LockedScreen, SetupScreen (with Stammkunde auth), InGameScreen, MatchResultScreen, ErrorScreen
   MatchPublicPage
 ```
 
 ## Remaining Backlog
 
-### P2 - Upcoming
-- [ ] Stammkunde mode (QR/PIN login) – builds on existing stats
+### P1 - Upcoming
+- [ ] Autodarts DOM Selector Tests (stability against Autodarts website changes)
+
+### P2 - Future
+- [ ] mDNS Discovery Enhancements
 - [ ] Custom palette editor
 - [ ] Sound effects for kiosk
 - [ ] Multi-language (EN/DE toggle)
