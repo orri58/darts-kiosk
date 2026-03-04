@@ -3,6 +3,7 @@ Player Statistics & Leaderboard Routes
 Stats computed from MatchResult records (not public links).
 Guest-first model: nickname only, no PII.
 """
+import time
 import logging
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
@@ -12,7 +13,7 @@ from sqlalchemy import select
 from typing import Optional
 
 from database import get_db
-from models import MatchResult, Player
+from models import MatchResult, Player, Settings, DEFAULT_STAMMKUNDE_DISPLAY
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,10 @@ PERIOD_DAYS = {
     "month": 30,
     "all": 9999,
 }
+
+# In-memory cache for top-registered endpoint (30-60s)
+_top_registered_cache: dict = {"data": None, "ts": 0, "key": ""}
+TOP_REGISTERED_CACHE_TTL = 45  # seconds
 
 
 async def _compute_stats(db: AsyncSession, since: Optional[datetime] = None) -> dict:
@@ -178,3 +183,73 @@ async def get_top_today(limit: int = 5, db: AsyncSession = Depends(get_db)):
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "players": stats[:limit],
     }
+
+
+
+@router.get("/stats/top-registered")
+async def get_top_registered(
+    period: str = "month",
+    limit: int = 3,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Top registered Stammkunden for the kiosk locked screen.
+    Cached in-memory for ~45s to avoid DB thrashing.
+    Returns only is_registered=True players, sorted by games_won.
+    Includes highlight stat (180+ > best_checkout > fallback).
+    """
+    global _top_registered_cache
+    cache_key = f"{period}:{limit}"
+    now = time.time()
+
+    if (
+        _top_registered_cache["data"] is not None
+        and _top_registered_cache["key"] == cache_key
+        and now - _top_registered_cache["ts"] < TOP_REGISTERED_CACHE_TTL
+    ):
+        return _top_registered_cache["data"]
+
+    days = PERIOD_DAYS.get(period, 30)
+    since = None
+    if days < 9999:
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    stats = await _compute_stats(db, since)
+    registered_only = [p for p in stats if p.get("is_registered")]
+    registered_only.sort(key=lambda p: (p["games_won"], p["games_played"]), reverse=True)
+    top = registered_only[:limit]
+
+    # Enrich with highlight stat
+    for p in top:
+        ht = p.get("highest_throw")
+        bc = p.get("best_checkout")
+        if ht and ht >= 180:
+            p["highlight"] = {"type": "180+", "value": ht, "label": "180!"}
+        elif bc and bc >= 80:
+            p["highlight"] = {"type": "checkout", "value": bc, "label": f"{bc} Checkout"}
+        elif ht and ht >= 100:
+            p["highlight"] = {"type": "throw", "value": ht, "label": f"Best: {ht}"}
+        else:
+            p["highlight"] = {"type": "winrate", "value": p["win_rate"], "label": f"{p['win_rate']}%"}
+
+    # Load display settings
+    result = await db.execute(select(Settings).where(Settings.key == "stammkunde_display"))
+    setting = result.scalar_one_or_none()
+    config = setting.value if setting else DEFAULT_STAMMKUNDE_DISPLAY
+
+    response = {
+        "period": period,
+        "players": top,
+        "config": config,
+    }
+
+    _top_registered_cache = {"data": response, "ts": now, "key": cache_key}
+    return response
+
+
+@router.get("/settings/stammkunde-display")
+async def get_stammkunde_display(db: AsyncSession = Depends(get_db)):
+    """Get Stammkunde display settings (no auth – kiosk needs it)."""
+    result = await db.execute(select(Settings).where(Settings.key == "stammkunde_display"))
+    setting = result.scalar_one_or_none()
+    return setting.value if setting else DEFAULT_STAMMKUNDE_DISPLAY

@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from database import get_db
 from models import User, Settings
-from models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES
+from models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY
 from schemas import SettingsUpdate
 from dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
 
@@ -68,6 +68,25 @@ async def update_palettes(data: SettingsUpdate, admin: User = Depends(require_ad
         db.add(setting)
     await db.flush()
     await log_audit(db, admin, "update_palettes", "settings", "palettes")
+    return setting.value
+
+
+@router.get("/settings/stammkunde-display")
+async def get_stammkunde_display_settings(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "stammkunde_display", DEFAULT_STAMMKUNDE_DISPLAY)
+
+
+@router.put("/settings/stammkunde-display")
+async def update_stammkunde_display(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "stammkunde_display"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="stammkunde_display", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_stammkunde_display", "settings", "stammkunde_display")
     return setting.value
 
 

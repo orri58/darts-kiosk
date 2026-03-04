@@ -78,6 +78,12 @@ export function SettingsProvider({ children }) {
     return response.data;
   };
 
+  const updatePalettes = async (newPalettes) => {
+    const response = await axios.put(`${API}/settings/palettes`, { value: newPalettes });
+    setPalettes(response.data);
+    return response.data;
+  };
+
   const getCurrentPalette = () => {
     return palettes.find(p => p.id === branding.palette_id) || palettes[0];
   };
@@ -90,6 +96,7 @@ export function SettingsProvider({ children }) {
       loading,
       updateBranding,
       updatePricing,
+      updatePalettes,
       getCurrentPalette,
       refreshSettings: fetchSettings
     }}>

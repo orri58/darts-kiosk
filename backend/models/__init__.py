@@ -311,6 +311,14 @@ DEFAULT_PRICING = {
     "allowed_game_types": ["301", "501", "Cricket", "Training"]
 }
 
+DEFAULT_STAMMKUNDE_DISPLAY = {
+    "enabled": False,
+    "period": "month",
+    "interval_seconds": 6,
+    "max_entries": 3,
+    "nickname_max_length": 15,
+}
+
 DEFAULT_BRANDING = {
     "cafe_name": "Dart Zone",
     "subtitle": "Darts & More",

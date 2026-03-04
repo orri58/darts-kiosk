@@ -2,7 +2,7 @@
 Pydantic Schemas for the Darts Kiosk API
 """
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Union, Any
 from pydantic import BaseModel
 
 
@@ -108,7 +108,7 @@ class AgentStatusResponse(BaseModel):
     mode: str
 
 class SettingsUpdate(BaseModel):
-    value: dict
+    value: Union[dict, list]  # Allow both dict and list for flexible settings storage
 
 class AuditLogResponse(BaseModel):
     id: str

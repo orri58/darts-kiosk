@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 import { 
   Palette, 
@@ -7,7 +7,14 @@ import {
   Upload, 
   Check, 
   Image as ImageIcon,
-  Save
+  Save,
+  ShieldCheck,
+  Plus,
+  Trash2,
+  AlertTriangle,
+  Download,
+  ClipboardCopy,
+  Eye
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -20,14 +27,180 @@ import axios from 'axios';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+// Hex validation
+const isValidHex = (hex) => /^#[0-9A-Fa-f]{6}$/.test(hex);
+
+// Relative luminance per WCAG 2.0
+function getLuminance(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const toLinear = (c) => c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  return 0.2126 * toLinear(r) + 0.7152 * toLinear(g) + 0.0722 * toLinear(b);
+}
+
+function getContrastRatio(hex1, hex2) {
+  if (!isValidHex(hex1) || !isValidHex(hex2)) return 0;
+  const l1 = getLuminance(hex1);
+  const l2 = getLuminance(hex2);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+const COLOR_FIELDS = [
+  { key: 'bg', label: 'Hintergrund' },
+  { key: 'surface', label: 'Oberfläche' },
+  { key: 'primary', label: 'Primär' },
+  { key: 'secondary', label: 'Sekundär' },
+  { key: 'accent', label: 'Akzent' },
+  { key: 'text', label: 'Text' },
+];
+
+const EMPTY_PALETTE = { bg: '#09090b', surface: '#18181b', primary: '#f59e0b', secondary: '#ffffff', accent: '#ef4444', text: '#e4e4e7' };
+
 export default function AdminSettings() {
-  const { branding, pricing, palettes, updateBranding, updatePricing } = useSettings();
+  const { branding, pricing, palettes, updateBranding, updatePricing, updatePalettes } = useSettings();
   const { token } = useAuth();
   
   const [localBranding, setLocalBranding] = useState(branding);
   const [localPricing, setLocalPricing] = useState(pricing);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+
+  // Palette editor state
+  const [editingPalette, setEditingPalette] = useState(null); // null=closed, object=editing
+  const [editingName, setEditingName] = useState('');
+  const [editingColors, setEditingColors] = useState({ ...EMPTY_PALETTE });
+  const [isNewPalette, setIsNewPalette] = useState(true);
+  const [jsonImport, setJsonImport] = useState('');
+  const [showJsonImport, setShowJsonImport] = useState(false);
+
+  // Contrast warnings
+  const contrastWarnings = useMemo(() => {
+    const warnings = [];
+    if (!isValidHex(editingColors.text) || !isValidHex(editingColors.bg)) return warnings;
+    const textOnBg = getContrastRatio(editingColors.text, editingColors.bg);
+    if (textOnBg < 4.5) warnings.push({ pair: 'Text / Hintergrund', ratio: textOnBg.toFixed(1), level: textOnBg < 3 ? 'critical' : 'warning' });
+    if (isValidHex(editingColors.surface)) {
+      const textOnSurface = getContrastRatio(editingColors.text, editingColors.surface);
+      if (textOnSurface < 4.5) warnings.push({ pair: 'Text / Oberfläche', ratio: textOnSurface.toFixed(1), level: textOnSurface < 3 ? 'critical' : 'warning' });
+    }
+    if (isValidHex(editingColors.primary) && isValidHex(editingColors.bg)) {
+      const primaryOnBg = getContrastRatio(editingColors.primary, editingColors.bg);
+      if (primaryOnBg < 3) warnings.push({ pair: 'Primär / Hintergrund', ratio: primaryOnBg.toFixed(1), level: 'warning' });
+    }
+    return warnings;
+  }, [editingColors]);
+
+  const openNewPalette = () => {
+    setEditingPalette('new');
+    setEditingName('Mein Theme');
+    setEditingColors({ ...EMPTY_PALETTE });
+    setIsNewPalette(true);
+  };
+
+  const openEditPalette = (palette) => {
+    setEditingPalette(palette.id);
+    setEditingName(palette.name);
+    setEditingColors({ ...palette.colors });
+    setIsNewPalette(false);
+  };
+
+  const closePaletteEditor = () => {
+    setEditingPalette(null);
+    setShowJsonImport(false);
+    setJsonImport('');
+  };
+
+  const handleSavePalette = async () => {
+    if (!editingName.trim()) { toast.error('Name erforderlich'); return; }
+    const invalid = COLOR_FIELDS.filter(f => !isValidHex(editingColors[f.key]));
+    if (invalid.length > 0) { toast.error(`Ungültiger Hex: ${invalid.map(f => f.label).join(', ')}`); return; }
+
+    setSaving(true);
+    try {
+      let updated;
+      if (isNewPalette) {
+        const id = editingName.trim().toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_');
+        const existing = palettes.find(p => p.id === id);
+        if (existing) { toast.error(`Palette "${id}" existiert bereits`); setSaving(false); return; }
+        updated = [...palettes, { id, name: editingName.trim(), colors: { ...editingColors }, custom: true }];
+      } else {
+        updated = palettes.map(p => p.id === editingPalette ? { ...p, name: editingName.trim(), colors: { ...editingColors } } : p);
+      }
+      await updatePalettes(updated);
+      closePaletteEditor();
+      toast.success('Farbschema gespeichert');
+    } catch { toast.error('Fehler beim Speichern'); }
+    finally { setSaving(false); }
+  };
+
+  const handleDeletePalette = async (paletteId) => {
+    if (localBranding.palette_id === paletteId) { toast.error('Aktives Schema kann nicht gelöscht werden'); return; }
+    setSaving(true);
+    try {
+      const updated = palettes.filter(p => p.id !== paletteId);
+      await updatePalettes(updated);
+      toast.success('Farbschema gelöscht');
+    } catch { toast.error('Fehler beim Löschen'); }
+    finally { setSaving(false); }
+  };
+
+  const handleJsonImport = () => {
+    try {
+      const parsed = JSON.parse(jsonImport);
+      if (parsed.colors) {
+        const c = parsed.colors;
+        const valid = COLOR_FIELDS.every(f => isValidHex(c[f.key]));
+        if (!valid) { toast.error('Ungültige Hex-Werte im Import'); return; }
+        setEditingColors({ ...c });
+        if (parsed.name) setEditingName(parsed.name);
+        setShowJsonImport(false);
+        setJsonImport('');
+        toast.success('Palette importiert');
+      } else {
+        toast.error('Ungültiges Format (benötigt "colors" Objekt)');
+      }
+    } catch { toast.error('Ungültiges JSON'); }
+  };
+
+  const handleJsonExport = () => {
+    const data = JSON.stringify({ name: editingName, colors: editingColors }, null, 2);
+    navigator.clipboard.writeText(data).then(() => toast.success('In Zwischenablage kopiert')).catch(() => toast.error('Kopieren fehlgeschlagen'));
+  };
+
+  // Stammkunde display settings
+  const [stammkundeDisplay, setStammkundeDisplay] = useState({
+    enabled: false, period: 'month', interval_seconds: 6, max_entries: 3, nickname_max_length: 15
+  });
+  const [stammkundeLoading, setStammkundeLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchStammkunde = async () => {
+      try {
+        const headers = { Authorization: `Bearer ${token}` };
+        const res = await axios.get(`${API}/settings/stammkunde-display`, { headers });
+        setStammkundeDisplay(res.data);
+      } catch { /* use defaults */ }
+      finally { setStammkundeLoading(false); }
+    };
+    fetchStammkunde();
+  }, [token]);
+
+  const handleSaveStammkundeDisplay = async () => {
+    setSaving(true);
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await axios.put(`${API}/settings/stammkunde-display`, { value: stammkundeDisplay }, { headers });
+      setStammkundeDisplay(res.data);
+      toast.success('Stammkunde-Anzeige gespeichert');
+    } catch (error) {
+      toast.error('Fehler beim Speichern');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const handleSaveBranding = async () => {
     setSaving(true);
@@ -105,6 +278,10 @@ export default function AdminSettings() {
           <TabsTrigger value="palettes" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Type className="w-4 h-4 mr-2" />
             Farbschema
+          </TabsTrigger>
+          <TabsTrigger value="stammkunde" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
+            <ShieldCheck className="w-4 h-4 mr-2" />
+            Stammkunde
           </TabsTrigger>
         </TabsList>
 
@@ -356,6 +533,7 @@ export default function AdminSettings() {
 
         {/* Palettes Tab */}
         <TabsContent value="palettes" className="space-y-6">
+          {/* Palette Selection */}
           <Card className="bg-zinc-900 border-zinc-800">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
@@ -366,19 +544,10 @@ export default function AdminSettings() {
             <CardContent>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {palettes.map((palette) => (
-                  <button
-                    key={palette.id}
-                    onClick={() => {
-                      setLocalBranding({ ...localBranding, palette_id: palette.id });
-                    }}
-                    data-testid={`palette-${palette.id}`}
-                    className={`p-4 rounded-sm border-2 transition-all ${
-                      localBranding.palette_id === palette.id
-                        ? 'border-amber-500 ring-2 ring-amber-500/30'
-                        : 'border-zinc-700 hover:border-zinc-600'
-                    }`}
-                  >
-                    {/* Color Preview */}
+                  <div key={palette.id} className={`relative group p-4 rounded-sm border-2 transition-all cursor-pointer ${
+                    localBranding.palette_id === palette.id ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-zinc-700 hover:border-zinc-600'
+                  }`} onClick={() => setLocalBranding({ ...localBranding, palette_id: palette.id })}
+                    data-testid={`palette-${palette.id}`}>
                     <div className="flex gap-1 mb-3 h-8">
                       <div className="flex-1 rounded-sm" style={{ backgroundColor: palette.colors.bg }}></div>
                       <div className="flex-1 rounded-sm" style={{ backgroundColor: palette.colors.surface }}></div>
@@ -387,25 +556,244 @@ export default function AdminSettings() {
                     </div>
                     <p className="text-sm text-center text-zinc-300">{palette.name}</p>
                     {localBranding.palette_id === palette.id && (
-                      <div className="flex justify-center mt-2">
-                        <Check className="w-5 h-5 text-amber-500" />
-                      </div>
+                      <div className="flex justify-center mt-2"><Check className="w-5 h-5 text-amber-500" /></div>
                     )}
-                  </button>
+                    {/* Edit + Delete for custom palettes */}
+                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button onClick={(e) => { e.stopPropagation(); openEditPalette(palette); }} data-testid={`edit-palette-${palette.id}`}
+                        className="p-1 bg-zinc-800 rounded-sm text-zinc-400 hover:text-amber-500 border border-zinc-700">
+                        <Eye className="w-3.5 h-3.5" />
+                      </button>
+                      {palette.custom && (
+                        <button onClick={(e) => { e.stopPropagation(); handleDeletePalette(palette.id); }} data-testid={`delete-palette-${palette.id}`}
+                          className="p-1 bg-zinc-800 rounded-sm text-zinc-400 hover:text-red-500 border border-zinc-700">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 ))}
+
+                {/* New Palette Button */}
+                <button onClick={openNewPalette} data-testid="new-palette-btn"
+                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-sm border-2 border-dashed border-zinc-700 text-zinc-500 hover:border-amber-500/50 hover:text-amber-500 transition-all min-h-[120px]">
+                  <Plus className="w-6 h-6" />
+                  <span className="text-xs uppercase tracking-wider">Neues Schema</span>
+                </button>
               </div>
 
               <div className="mt-6">
-                <Button
-                  onClick={handleSaveBranding}
-                  disabled={saving}
-                  data-testid="save-palette-btn"
-                  className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading"
-                >
+                <Button onClick={handleSaveBranding} disabled={saving} data-testid="save-palette-btn"
+                  className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading">
                   <Save className="w-4 h-4 mr-2" />
                   {saving ? 'Speichern...' : 'Farbschema anwenden'}
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Palette Editor (inline, below) */}
+          {editingPalette !== null && (
+            <Card className="bg-zinc-900 border-zinc-800 border-amber-500/30" data-testid="palette-editor">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <Palette className="w-5 h-5 text-amber-500" />
+                  {isNewPalette ? 'Neues Farbschema erstellen' : `"${editingName}" bearbeiten`}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Name */}
+                <div className="space-y-2">
+                  <label className="text-sm text-zinc-500 uppercase tracking-wider">Name</label>
+                  <Input value={editingName} onChange={(e) => setEditingName(e.target.value)} placeholder="Mein Theme"
+                    data-testid="palette-name-input" className="input-industrial max-w-xs" />
+                </div>
+
+                {/* Color inputs + live preview side by side */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {/* Color inputs */}
+                  <div className="space-y-3">
+                    {COLOR_FIELDS.map((field) => (
+                      <div key={field.key} className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-sm border border-zinc-700 flex-shrink-0 cursor-pointer relative overflow-hidden"
+                          style={{ backgroundColor: isValidHex(editingColors[field.key]) ? editingColors[field.key] : '#000' }}>
+                          <input type="color" value={isValidHex(editingColors[field.key]) ? editingColors[field.key] : '#000000'}
+                            onChange={(e) => setEditingColors({ ...editingColors, [field.key]: e.target.value })}
+                            className="absolute inset-0 opacity-0 cursor-pointer w-full h-full" />
+                        </div>
+                        <div className="flex-1">
+                          <label className="text-xs text-zinc-500 uppercase">{field.label}</label>
+                          <Input value={editingColors[field.key]} data-testid={`palette-color-${field.key}`}
+                            onChange={(e) => setEditingColors({ ...editingColors, [field.key]: e.target.value })}
+                            className={`input-industrial h-8 text-sm font-mono ${!isValidHex(editingColors[field.key]) ? 'border-red-500' : ''}`}
+                            placeholder="#000000" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Live Preview */}
+                  <div className="rounded-sm overflow-hidden border border-zinc-700" data-testid="palette-preview">
+                    <div className="p-4" style={{ backgroundColor: editingColors.bg }}>
+                      <p className="text-xs uppercase tracking-wider mb-2 opacity-60" style={{ color: editingColors.text }}>Vorschau</p>
+                      <h3 className="text-lg font-heading font-bold mb-3" style={{ color: editingColors.text }}>Dart Zone</h3>
+                      <div className="p-3 rounded-sm mb-3" style={{ backgroundColor: editingColors.surface }}>
+                        <p className="text-sm" style={{ color: editingColors.text }}>Oberflächen-Element</p>
+                        <p className="text-xs mt-1" style={{ color: editingColors.secondary }}>Sekundärer Text</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <div className="px-3 py-1.5 rounded-sm text-sm font-bold" style={{ backgroundColor: editingColors.primary, color: editingColors.bg }}>
+                          Primär
+                        </div>
+                        <div className="px-3 py-1.5 rounded-sm text-sm font-bold" style={{ backgroundColor: editingColors.accent, color: editingColors.bg }}>
+                          Akzent
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Contrast Warnings */}
+                {contrastWarnings.length > 0 && (
+                  <div className="space-y-2" data-testid="contrast-warnings">
+                    {contrastWarnings.map((w, i) => (
+                      <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded-sm border text-sm ${
+                        w.level === 'critical' ? 'bg-red-500/10 border-red-500/30 text-red-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                      }`}>
+                        <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                        <span>{w.pair}: Kontrast {w.ratio}:1 {w.level === 'critical' ? '(zu niedrig!)' : '(WCAG AA empfiehlt 4.5:1)'}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* JSON Import/Export */}
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={handleJsonExport} data-testid="palette-export-btn"
+                    className="text-zinc-400 border-zinc-700 hover:text-amber-500 hover:border-amber-500/50">
+                    <ClipboardCopy className="w-3.5 h-3.5 mr-1.5" /> JSON Export
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setShowJsonImport(!showJsonImport)} data-testid="palette-import-toggle"
+                    className="text-zinc-400 border-zinc-700 hover:text-amber-500 hover:border-amber-500/50">
+                    <Download className="w-3.5 h-3.5 mr-1.5" /> JSON Import
+                  </Button>
+                </div>
+
+                {showJsonImport && (
+                  <div className="space-y-2" data-testid="palette-import-area">
+                    <textarea value={jsonImport} onChange={(e) => setJsonImport(e.target.value)} rows={4} placeholder='{"name":"My Theme","colors":{"bg":"#09090b",...}}'
+                      className="w-full bg-zinc-800 border border-zinc-700 rounded-sm p-3 text-sm font-mono text-zinc-300 placeholder-zinc-600 focus:border-amber-500 focus:outline-none" />
+                    <Button size="sm" onClick={handleJsonImport} className="bg-amber-500 hover:bg-amber-400 text-black">Importieren</Button>
+                  </div>
+                )}
+
+                {/* Save / Cancel */}
+                <div className="flex gap-3">
+                  <Button onClick={handleSavePalette} disabled={saving} data-testid="save-custom-palette-btn"
+                    className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading">
+                    <Save className="w-4 h-4 mr-2" /> {saving ? 'Speichern...' : 'Farbschema speichern'}
+                  </Button>
+                  <Button variant="outline" onClick={closePaletteEditor} className="text-zinc-400 border-zinc-700 hover:text-white">
+                    Abbrechen
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+        {/* Stammkunde Display Tab */}
+        <TabsContent value="stammkunde" className="space-y-6">
+          <Card className="bg-zinc-900 border-zinc-800">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-amber-500" />
+                Stammkunde-Anzeige auf Kiosk
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {stammkundeLoading ? (
+                <p className="text-zinc-500">Lade...</p>
+              ) : (
+                <>
+                  {/* Enable Toggle */}
+                  <div className="flex items-center justify-between bg-zinc-800/50 rounded-sm p-4 border border-zinc-700">
+                    <div>
+                      <p className="text-zinc-300">Top Stammkunden auf Locked Screen</p>
+                      <p className="text-xs text-zinc-500 mt-1">Zeigt registrierte Top-Spieler auf dem gesperrten Kiosk-Bildschirm</p>
+                    </div>
+                    <Switch
+                      checked={stammkundeDisplay.enabled}
+                      onCheckedChange={(v) => setStammkundeDisplay({ ...stammkundeDisplay, enabled: v })}
+                      data-testid="stammkunde-display-toggle"
+                    />
+                  </div>
+
+                  {stammkundeDisplay.enabled && (
+                    <>
+                      {/* Period */}
+                      <div className="space-y-2">
+                        <label className="text-sm text-zinc-500 uppercase tracking-wider">Zeitraum</label>
+                        <div className="grid grid-cols-4 gap-2">
+                          {[
+                            { id: 'today', label: 'Heute' },
+                            { id: 'week', label: 'Woche' },
+                            { id: 'month', label: 'Monat' },
+                            { id: 'all', label: 'Gesamt' },
+                          ].map((p) => (
+                            <button key={p.id} onClick={() => setStammkundeDisplay({ ...stammkundeDisplay, period: p.id })}
+                              data-testid={`stammkunde-period-${p.id}`}
+                              className={`p-3 rounded-sm border-2 transition-all text-sm ${
+                                stammkundeDisplay.period === p.id
+                                  ? 'border-amber-500 bg-amber-500/20 text-amber-500'
+                                  : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                              }`}>
+                              {p.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Interval */}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-sm text-zinc-500 uppercase tracking-wider">Rotations-Intervall (Sek.)</label>
+                          <Input type="number" min="5" max="8" step="1"
+                            value={stammkundeDisplay.interval_seconds}
+                            onChange={(e) => setStammkundeDisplay({ ...stammkundeDisplay, interval_seconds: Math.min(8, Math.max(5, parseInt(e.target.value) || 6)) })}
+                            data-testid="stammkunde-interval-input"
+                            className="input-industrial h-10" />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm text-zinc-500 uppercase tracking-wider">Max. Einträge</label>
+                          <Input type="number" min="1" max="3" step="1"
+                            value={stammkundeDisplay.max_entries}
+                            onChange={(e) => setStammkundeDisplay({ ...stammkundeDisplay, max_entries: Math.min(3, Math.max(1, parseInt(e.target.value) || 3)) })}
+                            data-testid="stammkunde-max-entries-input"
+                            className="input-industrial h-10" />
+                        </div>
+                      </div>
+
+                      {/* Nickname truncation */}
+                      <div className="space-y-2">
+                        <label className="text-sm text-zinc-500 uppercase tracking-wider">Nickname Max. Länge</label>
+                        <Input type="number" min="8" max="30" step="1"
+                          value={stammkundeDisplay.nickname_max_length}
+                          onChange={(e) => setStammkundeDisplay({ ...stammkundeDisplay, nickname_max_length: Math.min(30, Math.max(8, parseInt(e.target.value) || 15)) })}
+                          data-testid="stammkunde-nickname-length-input"
+                          className="input-industrial h-10 max-w-xs" />
+                        <p className="text-xs text-zinc-600">Nicknames werden nach dieser Länge abgeschnitten</p>
+                      </div>
+                    </>
+                  )}
+
+                  <Button onClick={handleSaveStammkundeDisplay} disabled={saving}
+                    data-testid="save-stammkunde-display-btn"
+                    className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading">
+                    <Save className="w-4 h-4 mr-2" />
+                    {saving ? 'Speichern...' : 'Speichern'}
+                  </Button>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
