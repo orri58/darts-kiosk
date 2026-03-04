@@ -14,7 +14,8 @@ import {
   AlertTriangle,
   Download,
   ClipboardCopy,
-  Eye
+  Eye,
+  Volume2
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -176,6 +177,16 @@ export default function AdminSettings() {
   });
   const [stammkundeLoading, setStammkundeLoading] = useState(true);
 
+  // Sound config state
+  const [soundConfig, setSoundConfig] = useState({
+    enabled: false, volume: 70, sound_pack: 'default',
+    quiet_hours_enabled: false, quiet_hours_start: '22:00', quiet_hours_end: '08:00',
+    rate_limit_ms: 1500,
+  });
+  const [soundPacks, setSoundPacks] = useState([]);
+  const [soundLoading, setSoundLoading] = useState(true);
+  const [testingSound, setTestingSound] = useState(null);
+
   useEffect(() => {
     const fetchStammkunde = async () => {
       try {
@@ -186,6 +197,20 @@ export default function AdminSettings() {
       finally { setStammkundeLoading(false); }
     };
     fetchStammkunde();
+    // Fetch sound config + packs
+    const fetchSound = async () => {
+      try {
+        const headers = { Authorization: `Bearer ${token}` };
+        const [cfgRes, packsRes] = await Promise.all([
+          axios.get(`${API}/settings/sound`, { headers }),
+          axios.get(`${API}/sounds/packs`, { headers }),
+        ]);
+        setSoundConfig(cfgRes.data);
+        setSoundPacks(packsRes.data.packs || []);
+      } catch { /* use defaults */ }
+      finally { setSoundLoading(false); }
+    };
+    fetchSound();
   }, [token]);
 
   const handleSaveStammkundeDisplay = async () => {
@@ -200,6 +225,28 @@ export default function AdminSettings() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveSoundConfig = async () => {
+    setSaving(true);
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await axios.put(`${API}/settings/sound`, { value: soundConfig }, { headers });
+      setSoundConfig(res.data);
+      toast.success('Sound-Einstellungen gespeichert');
+    } catch { toast.error('Fehler beim Speichern'); }
+    finally { setSaving(false); }
+  };
+
+  const handleTestSound = async (event) => {
+    setTestingSound(event);
+    try {
+      const pack = soundConfig.sound_pack || 'default';
+      const audio = new Audio(`${API}/sounds/${pack}/${event}.wav`);
+      audio.volume = (soundConfig.volume || 70) / 100;
+      await audio.play();
+    } catch { toast.error('Sound konnte nicht abgespielt werden'); }
+    finally { setTimeout(() => setTestingSound(null), 1000); }
   };
 
   const handleSaveBranding = async () => {
@@ -282,6 +329,10 @@ export default function AdminSettings() {
           <TabsTrigger value="stammkunde" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <ShieldCheck className="w-4 h-4 mr-2" />
             Stammkunde
+          </TabsTrigger>
+          <TabsTrigger value="sound" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
+            <Volume2 className="w-4 h-4 mr-2" />
+            Sound
           </TabsTrigger>
         </TabsList>
 
@@ -788,6 +839,149 @@ export default function AdminSettings() {
 
                   <Button onClick={handleSaveStammkundeDisplay} disabled={saving}
                     data-testid="save-stammkunde-display-btn"
+                    className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading">
+                    <Save className="w-4 h-4 mr-2" />
+                    {saving ? 'Speichern...' : 'Speichern'}
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        {/* Sound Tab */}
+        <TabsContent value="sound" className="space-y-6">
+          <Card className="bg-zinc-900 border-zinc-800">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <Volume2 className="w-5 h-5 text-amber-500" />
+                Kiosk Sound-Effekte
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {soundLoading ? (
+                <p className="text-zinc-500">Lade...</p>
+              ) : (
+                <>
+                  {/* Enable Toggle */}
+                  <div className="flex items-center justify-between bg-zinc-800/50 rounded-sm p-4 border border-zinc-700">
+                    <div>
+                      <p className="text-zinc-300">Sound-Effekte aktivieren</p>
+                      <p className="text-xs text-zinc-500 mt-1">Spielt Sounds bei Spielereignissen auf dem Kiosk</p>
+                    </div>
+                    <Switch
+                      checked={soundConfig.enabled}
+                      onCheckedChange={(v) => setSoundConfig({ ...soundConfig, enabled: v })}
+                      data-testid="sound-enable-toggle"
+                    />
+                  </div>
+
+                  {soundConfig.enabled && (
+                    <>
+                      {/* Volume */}
+                      <div className="space-y-2">
+                        <label className="text-sm text-zinc-500 uppercase tracking-wider">
+                          Lautstärke: {soundConfig.volume}%
+                        </label>
+                        <input type="range" min="0" max="100" step="5"
+                          value={soundConfig.volume}
+                          onChange={(e) => setSoundConfig({ ...soundConfig, volume: parseInt(e.target.value) })}
+                          data-testid="sound-volume-slider"
+                          className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-amber-500" />
+                      </div>
+
+                      {/* Sound Pack */}
+                      <div className="space-y-2">
+                        <label className="text-sm text-zinc-500 uppercase tracking-wider">Sound-Pack</label>
+                        <div className="flex gap-2">
+                          {soundPacks.map((pack) => (
+                            <button key={pack.id} onClick={() => setSoundConfig({ ...soundConfig, sound_pack: pack.id })}
+                              data-testid={`sound-pack-${pack.id}`}
+                              className={`px-4 py-2 rounded-sm border-2 transition-all text-sm ${
+                                soundConfig.sound_pack === pack.id
+                                  ? 'border-amber-500 bg-amber-500/20 text-amber-500'
+                                  : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
+                              }`}>
+                              {pack.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Sound Preview / Test */}
+                      <div className="space-y-2">
+                        <label className="text-sm text-zinc-500 uppercase tracking-wider">Sounds testen</label>
+                        <div className="grid grid-cols-5 gap-2">
+                          {[
+                            { id: 'start', label: 'Start' },
+                            { id: 'one_eighty', label: '180!' },
+                            { id: 'checkout', label: 'Checkout' },
+                            { id: 'bust', label: 'Bust' },
+                            { id: 'win', label: 'Sieg' },
+                          ].map((s) => (
+                            <button key={s.id} onClick={() => handleTestSound(s.id)}
+                              data-testid={`test-sound-${s.id}`}
+                              className={`p-3 rounded-sm border text-sm transition-all ${
+                                testingSound === s.id
+                                  ? 'border-amber-500 bg-amber-500/20 text-amber-400'
+                                  : 'border-zinc-700 text-zinc-400 hover:border-zinc-600 hover:text-zinc-300'
+                              }`}>
+                              {s.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Rate Limit */}
+                      <div className="space-y-2">
+                        <label className="text-sm text-zinc-500 uppercase tracking-wider">
+                          Rate Limit: {soundConfig.rate_limit_ms}ms
+                        </label>
+                        <input type="range" min="500" max="5000" step="250"
+                          value={soundConfig.rate_limit_ms}
+                          onChange={(e) => setSoundConfig({ ...soundConfig, rate_limit_ms: parseInt(e.target.value) })}
+                          data-testid="sound-rate-limit-slider"
+                          className="w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer accent-amber-500" />
+                        <p className="text-xs text-zinc-600">Min. Abstand zwischen gleichen Sounds (+ max. 30/min global)</p>
+                      </div>
+
+                      {/* Quiet Hours */}
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between bg-zinc-800/50 rounded-sm p-4 border border-zinc-700">
+                          <div>
+                            <p className="text-zinc-300">Ruhezeiten</p>
+                            <p className="text-xs text-zinc-500 mt-1">Sounds während der Ruhezeit stumm schalten</p>
+                          </div>
+                          <Switch
+                            checked={soundConfig.quiet_hours_enabled}
+                            onCheckedChange={(v) => setSoundConfig({ ...soundConfig, quiet_hours_enabled: v })}
+                            data-testid="sound-quiet-hours-toggle"
+                          />
+                        </div>
+
+                        {soundConfig.quiet_hours_enabled && (
+                          <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <label className="text-sm text-zinc-500 uppercase tracking-wider">Von</label>
+                              <Input type="time" value={soundConfig.quiet_hours_start}
+                                onChange={(e) => setSoundConfig({ ...soundConfig, quiet_hours_start: e.target.value })}
+                                data-testid="sound-quiet-start"
+                                className="input-industrial h-10" />
+                            </div>
+                            <div className="space-y-2">
+                              <label className="text-sm text-zinc-500 uppercase tracking-wider">Bis</label>
+                              <Input type="time" value={soundConfig.quiet_hours_end}
+                                onChange={(e) => setSoundConfig({ ...soundConfig, quiet_hours_end: e.target.value })}
+                                data-testid="sound-quiet-end"
+                                className="input-industrial h-10" />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+
+                  <Button onClick={handleSaveSoundConfig} disabled={saving}
+                    data-testid="save-sound-config-btn"
                     className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading">
                     <Save className="w-4 h-4 mr-2" />
                     {saving ? 'Speichern...' : 'Speichern'}

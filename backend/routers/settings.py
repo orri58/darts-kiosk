@@ -7,11 +7,16 @@ from sqlalchemy import select
 
 from database import get_db
 from models import User, Settings
-from models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY
+from models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG
 from schemas import SettingsUpdate
 from dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
+from services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
 
 router = APIRouter()
+
+# Sound files directory
+SOUNDS_DIR = ASSETS_DIR.parent / "sounds"
+SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @router.get("/settings/branding")
@@ -118,3 +123,54 @@ async def get_asset(filename: str):
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Asset not found")
     return FileResponse(filepath)
+
+
+# ===== Sound Config =====
+
+@router.get("/settings/sound")
+async def get_sound_config(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "sound_config", DEFAULT_SOUND_CONFIG)
+
+
+@router.put("/settings/sound")
+async def update_sound_config(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "sound_config"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="sound_config", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_sound_config", "settings", "sound_config")
+    return setting.value
+
+
+@router.get("/sounds/packs")
+async def get_sound_packs():
+    """List available sound packs."""
+    ensure_sound_pack(SOUNDS_DIR, "default")
+    return {"packs": list_sound_packs(SOUNDS_DIR)}
+
+
+@router.get("/sounds/{pack}/{event}.wav")
+async def get_sound_file(pack: str, event: str):
+    """Serve a sound WAV file with strong cache headers."""
+    if event not in SOUND_EVENTS:
+        raise HTTPException(status_code=404, detail="Unknown sound event")
+
+    # Ensure pack exists (generates on first access)
+    ensure_sound_pack(SOUNDS_DIR, pack)
+
+    filepath = SOUNDS_DIR / pack / f"{event}.wav"
+    if not filepath.exists():
+        raise HTTPException(status_code=404, detail="Sound file not found")
+
+    return FileResponse(
+        filepath,
+        media_type="audio/wav",
+        headers={
+            "Cache-Control": "public, max-age=86400, immutable",
+            "Content-Disposition": f"inline; filename={event}.wav",
+        },
+    )

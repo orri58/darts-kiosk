@@ -319,6 +319,16 @@ DEFAULT_STAMMKUNDE_DISPLAY = {
     "nickname_max_length": 15,
 }
 
+DEFAULT_SOUND_CONFIG = {
+    "enabled": False,
+    "volume": 70,
+    "sound_pack": "default",
+    "quiet_hours_enabled": False,
+    "quiet_hours_start": "22:00",
+    "quiet_hours_end": "08:00",
+    "rate_limit_ms": 1500,
+}
+
 DEFAULT_BRANDING = {
     "cafe_name": "Dart Zone",
     "subtitle": "Darts & More",

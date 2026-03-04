@@ -47,6 +47,7 @@ async def kiosk_start_game(board_id: str, data: StartGameRequest, db: AsyncSessi
     await db.flush()
 
     await board_ws.broadcast("board_status", {"board_id": board_id, "status": "in_game", "game_type": data.game_type})
+    await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "start"})
 
     return {
         "message": "Game started",
@@ -135,6 +136,7 @@ async def kiosk_end_game(board_id: str, data: Optional[EndGameRequest] = None, d
     await db.flush()
 
     await board_ws.broadcast("board_status", {"board_id": board_id, "status": board.status})
+    await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "win" if winner else "checkout"})
 
     return {
         "message": "Game ended",
@@ -156,3 +158,16 @@ async def kiosk_call_staff(board_id: str, db: AsyncSession = Depends(get_db)):
 
     await log_audit(db, None, "call_staff", "board", board.id, {"board_id": board_id})
     return {"message": "Staff notified", "board_id": board_id}
+
+
+class SoundTrigger(BaseModel):
+    event: str  # start, one_eighty, checkout, bust, win
+
+@router.post("/kiosk/{board_id}/sound")
+async def kiosk_trigger_sound(board_id: str, data: SoundTrigger):
+    """Trigger a sound event on a kiosk (e.g. from Autodarts integration)."""
+    valid_events = {"start", "one_eighty", "checkout", "bust", "win"}
+    if data.event not in valid_events:
+        raise HTTPException(status_code=400, detail=f"Invalid event. Must be one of: {valid_events}")
+    await board_ws.broadcast("sound_event", {"board_id": board_id, "event": data.event})
+    return {"message": f"Sound '{data.event}' triggered", "board_id": board_id}

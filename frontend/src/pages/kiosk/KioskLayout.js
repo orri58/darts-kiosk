@@ -3,6 +3,8 @@ import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { useSettings } from '../../context/SettingsContext';
+import { useSoundManager } from '../../hooks/useSoundManager';
+import { useBoardWS } from '../../hooks/useBoardWS';
 import LockedScreen from './LockedScreen';
 import SetupScreen from './SetupScreen';
 import InGameScreen from './InGameScreen';
@@ -23,6 +25,15 @@ const STATES = {
 export default function KioskLayout() {
   const { boardId = 'BOARD-1' } = useParams();
   const { branding, pricing, loading: settingsLoading } = useSettings();
+  const { play: playSound } = useSoundManager(boardId);
+
+  // Listen for WS sound events (from Autodarts or manual triggers)
+  const handleWsEvent = useCallback((event, data) => {
+    if (event === 'sound_event' && data?.board_id === boardId) {
+      playSound(data.event);
+    }
+  }, [boardId, playSound]);
+  useBoardWS(handleWsEvent);
   
   const [kioskState, setKioskState] = useState(STATES.LOCKED);
   const [session, setSession] = useState(null);
@@ -83,6 +94,7 @@ export default function KioskLayout() {
         players: players
       });
       setKioskState(STATES.IN_GAME);
+      playSound('start');
       toast.success('SPIEL GESTARTET!');
       fetchBoardStatus();
     } catch (error) {
@@ -100,14 +112,17 @@ export default function KioskLayout() {
       const { match_token } = response.data;
 
       if (match_token) {
-        showingQrRef.current = true;  // Set ref BEFORE state change to prevent race
+        showingQrRef.current = true;
         setMatchToken(match_token);
         setKioskState(STATES.FINISHED);
+        playSound('win');
       } else if (response.data.should_lock) {
         setKioskState(STATES.LOCKED);
+        playSound('checkout');
         toast.info('Session beendet');
       } else {
         setKioskState(STATES.SETUP);
+        playSound('checkout');
         toast.success(`Noch ${response.data.credits_remaining} Spiele uebrig`);
       }
       fetchBoardStatus();
