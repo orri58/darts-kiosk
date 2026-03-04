@@ -16,6 +16,7 @@ import AdminRevenue from "./pages/admin/Revenue";
 import AdminHealth from "./pages/admin/Health";
 import AdminSystem from "./pages/admin/System";
 import AdminDiscovery from "./pages/admin/Discovery";
+import MatchPublicPage from "./pages/MatchPublicPage";
 import SetupWizard from "./pages/admin/SetupWizard";
 
 // Context
@@ -34,6 +35,9 @@ function App() {
             
             {/* Setup Wizard */}
             <Route path="/setup" element={<SetupWizard />} />
+            
+            {/* Public Match Result */}
+            <Route path="/match/:token" element={<MatchPublicPage />} />
             
             {/* Admin Routes */}
             <Route path="/admin/login" element={<AdminLogin />} />

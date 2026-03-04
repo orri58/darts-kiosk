@@ -1,11 +1,12 @@
 """Kiosk Action Routes (called from kiosk UI, no auth)"""
-from datetime import datetime, timezone
+import secrets
+from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from database import get_db
-from models import Board, Session, BoardStatus, SessionStatus, PricingMode
+from models import Board, Session, MatchResult, BoardStatus, SessionStatus, PricingMode
 from schemas import StartGameRequest
 from dependencies import get_active_session_for_board, log_audit
 from services.ws_manager import board_ws
@@ -81,6 +82,27 @@ async def kiosk_end_game(board_id: str, db: AsyncSession = Depends(get_db)):
     else:
         board.status = BoardStatus.UNLOCKED.value
 
+    # Create match result with public token
+    duration = None
+    if session.started_at:
+        started = session.started_at
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        duration = int((datetime.now(timezone.utc) - started).total_seconds())
+
+    token = secrets.token_hex(16)
+    match = MatchResult(
+        public_token=token,
+        board_id=board.board_id,
+        board_name=board.name,
+        game_type=session.game_type or "Dart",
+        players=session.players or [],
+        winner=session.players[0] if session.players else None,
+        duration_seconds=duration,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+    )
+    db.add(match)
+
     await db.flush()
 
     await board_ws.broadcast("board_status", {"board_id": board_id, "status": board.status})
@@ -89,7 +111,9 @@ async def kiosk_end_game(board_id: str, db: AsyncSession = Depends(get_db)):
         "message": "Game ended",
         "should_lock": should_lock,
         "credits_remaining": session.credits_remaining,
-        "board_status": board.status
+        "board_status": board.status,
+        "match_token": token,
+        "match_url": f"/match/{token}",
     }
 
 

@@ -153,6 +153,24 @@ class TrustedPeer(Base):
     metadata_json = Column(JSON, nullable=True)
 
 
+class MatchResult(Base):
+    """Public match result with expiring token for QR code sharing"""
+    __tablename__ = "match_results"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    public_token = Column(String(64), unique=True, nullable=False, index=True)
+    board_id = Column(String(50), nullable=False)
+    board_name = Column(String(100), nullable=True)
+    game_type = Column(String(50), nullable=False)
+    players = Column(JSON, default=list)
+    winner = Column(String(100), nullable=True)
+    scores = Column(JSON, nullable=True)
+    duration_seconds = Column(Integer, nullable=True)
+    played_at = Column(DateTime, default=utcnow)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+
 # Default palettes data
 DEFAULT_PALETTES = [
     {

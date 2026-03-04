@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import axios from 'axios';
 import { toast } from 'sonner';
@@ -6,6 +6,7 @@ import { useSettings } from '../../context/SettingsContext';
 import LockedScreen from './LockedScreen';
 import SetupScreen from './SetupScreen';
 import InGameScreen from './InGameScreen';
+import MatchResultScreen from './MatchResultScreen';
 import ErrorScreen from './ErrorScreen';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -28,6 +29,10 @@ export default function KioskLayout() {
   const [boardStatus, setBoardStatus] = useState('locked');
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState(null);
+  const [matchToken, setMatchToken] = useState(null);
+  
+  // Ref to track if QR screen is showing (avoids closure issues)
+  const showingQrRef = useRef(false);
 
   // Fetch board session status
   const fetchBoardStatus = useCallback(async () => {
@@ -35,6 +40,11 @@ export default function KioskLayout() {
       const response = await axios.get(`${API}/boards/${boardId}/session`);
       setBoardStatus(response.data.board_status);
       setSession(response.data.session);
+      
+      // Don't override FINISHED state while QR screen is showing (60s timeout handles transition)
+      if (showingQrRef.current) {
+        return;
+      }
       
       // Determine kiosk state based on board status
       switch (response.data.board_status) {
@@ -87,18 +97,32 @@ export default function KioskLayout() {
   const handleEndGame = async () => {
     try {
       const response = await axios.post(`${API}/kiosk/${boardId}/end-game`);
-      if (response.data.should_lock) {
+      const { match_token } = response.data;
+
+      if (match_token) {
+        showingQrRef.current = true;  // Set ref BEFORE state change to prevent race
+        setMatchToken(match_token);
+        setKioskState(STATES.FINISHED);
+      } else if (response.data.should_lock) {
         setKioskState(STATES.LOCKED);
         toast.info('Session beendet');
       } else {
         setKioskState(STATES.SETUP);
-        toast.success(`Noch ${response.data.credits_remaining} Spiele übrig`);
+        toast.success(`Noch ${response.data.credits_remaining} Spiele uebrig`);
       }
       fetchBoardStatus();
     } catch (error) {
       console.error('Failed to end game:', error);
     }
   };
+
+  // Handle QR screen timeout -> return to locked or setup
+  const handleMatchTimeout = useCallback(() => {
+    showingQrRef.current = false;  // Clear ref to allow polling to update state
+    setMatchToken(null);
+    setKioskState(STATES.LOCKED);
+    fetchBoardStatus();
+  }, [fetchBoardStatus]);
 
   // Handle call staff
   const handleCallStaff = async () => {
@@ -168,6 +192,15 @@ export default function KioskLayout() {
           onRetry={handleRetry}
           onLock={handleReturnToLocked}
           onCallStaff={handleCallStaff}
+        />
+      )}
+
+      {kioskState === STATES.FINISHED && matchToken && (
+        <MatchResultScreen
+          branding={branding}
+          matchToken={matchToken}
+          session={session}
+          onTimeout={handleMatchTimeout}
         />
       )}
     </div>
