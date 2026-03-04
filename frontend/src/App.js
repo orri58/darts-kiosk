@@ -15,6 +15,7 @@ import AdminLogs from "./pages/admin/Logs";
 import AdminRevenue from "./pages/admin/Revenue";
 import AdminHealth from "./pages/admin/Health";
 import AdminSystem from "./pages/admin/System";
+import AdminDiscovery from "./pages/admin/Discovery";
 import SetupWizard from "./pages/admin/SetupWizard";
 
 // Context
@@ -45,6 +46,7 @@ function App() {
               <Route path="revenue" element={<AdminRevenue />} />
               <Route path="health" element={<AdminHealth />} />
               <Route path="system" element={<AdminSystem />} />
+              <Route path="discovery" element={<AdminDiscovery />} />
             </Route>
             
             {/* Default redirect */}

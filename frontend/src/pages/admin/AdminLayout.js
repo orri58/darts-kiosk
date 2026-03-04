@@ -11,7 +11,8 @@ import {
   Menu,
   X,
   Activity,
-  Server
+  Server,
+  Wifi
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { path: '/admin/revenue', icon: TrendingUp, label: 'Umsatz', adminOnly: true },
   { path: '/admin/health', icon: Activity, label: 'Health', adminOnly: true },
   { path: '/admin/system', icon: Server, label: 'System', adminOnly: true },
+  { path: '/admin/discovery', icon: Wifi, label: 'Discovery', adminOnly: true },
 ];
 
 export default function AdminLayout() {

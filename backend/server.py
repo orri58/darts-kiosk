@@ -35,9 +35,10 @@ from services.scheduler import start_scheduler, stop_scheduler
 from services.backup_service import start_backup_service, stop_backup_service
 from services.health_monitor import health_monitor, start_health_monitor, stop_health_monitor
 from services.ws_manager import board_ws
+from services.mdns_service import mdns_service
 
 # Routers
-from routers import auth, boards, kiosk, settings, admin, backups, updates, agent
+from routers import auth, boards, kiosk, settings, admin, backups, updates, agent, discovery
 
 # Configuration
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/app/data'))
@@ -163,9 +164,21 @@ async def lifespan(app: FastAPI):
 
     await start_health_monitor()
 
+    # Start mDNS
+    try:
+        if MODE == "MASTER":
+            mdns_service.start_discovery()
+            logger.info("mDNS discovery started (MASTER mode)")
+        else:
+            mdns_service.advertise()
+            logger.info("mDNS advertisement started (AGENT mode)")
+    except Exception as exc:
+        logger.warning(f"mDNS start failed (non-critical): {exc}")
+
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
     yield
+    mdns_service.stop()
     await stop_health_monitor()
     await stop_backup_service()
     await stop_scheduler()
@@ -201,6 +214,7 @@ api_router.include_router(admin.router)
 api_router.include_router(backups.router)
 api_router.include_router(updates.router)
 api_router.include_router(agent.router)
+api_router.include_router(discovery.router)
 
 app.include_router(api_router)
 

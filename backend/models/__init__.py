@@ -135,6 +135,24 @@ class Settings(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
+class TrustedPeer(Base):
+    """Stores paired Master/Agent relationships after secure pairing"""
+    __tablename__ = "trusted_peers"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    board_id = Column(String(50), nullable=False, index=True)
+    role = Column(String(20), nullable=False)  # "master" or "agent"
+    ip = Column(String(50), nullable=False)
+    port = Column(Integer, nullable=True)
+    version = Column(String(20), nullable=True)
+    fingerprint = Column(String(64), nullable=False)
+    paired_token_hash = Column(String(255), nullable=False)
+    paired_at = Column(DateTime, default=utcnow)
+    last_seen = Column(DateTime, default=utcnow)
+    is_active = Column(Boolean, default=True)
+    metadata_json = Column(JSON, nullable=True)
+
+
 # Default palettes data
 DEFAULT_PALETTES = [
     {

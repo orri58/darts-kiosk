@@ -1,4 +1,48 @@
-import { Lock, QrCode, Euro } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Lock, QrCode, Euro, Shield } from 'lucide-react';
+
+function PairingCode({ boardId }) {
+  const [code, setCode] = useState('------');
+  const [remaining, setRemaining] = useState(0);
+
+  const fetchCode = useCallback(async () => {
+    try {
+      const res = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/agent/pair/code`);
+      if (res.ok) {
+        const data = await res.json();
+        setCode(data.code);
+        setRemaining(data.expires_in);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    fetchCode();
+    const iv = setInterval(fetchCode, 5000);
+    return () => clearInterval(iv);
+  }, [fetchCode]);
+
+  useEffect(() => {
+    if (remaining <= 0) return;
+    const iv = setInterval(() => setRemaining((r) => Math.max(0, r - 1)), 1000);
+    return () => clearInterval(iv);
+  }, [remaining]);
+
+  const pct = Math.max(0, (remaining / 60) * 100);
+
+  return (
+    <div className="flex items-center gap-4 px-5 py-3 bg-zinc-800/50 border border-zinc-700 rounded-sm" data-testid="pairing-code-display">
+      <Shield className="w-5 h-5 text-amber-500 flex-shrink-0" />
+      <div>
+        <p className="text-[11px] text-zinc-500 uppercase tracking-wider">Pairing-Code</p>
+        <p className="text-2xl font-mono font-bold tracking-[0.3em] text-amber-400" data-testid="pairing-code-value">{code}</p>
+      </div>
+      <div className="w-12 h-1 bg-zinc-700 rounded-full overflow-hidden ml-auto">
+        <div className="h-full bg-amber-500 transition-all duration-1000 ease-linear" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
 
 export default function LockedScreen({ branding, pricing, boardId }) {
   // Format price for display
@@ -94,6 +138,7 @@ export default function LockedScreen({ branding, pricing, boardId }) {
             <QrCode className="w-5 h-5" />
             <span className="text-sm uppercase tracking-wider">Board: {boardId}</span>
           </div>
+          <PairingCode boardId={boardId} />
           <div className="text-zinc-600 text-sm">
             Staff Panel: <span className="font-mono">/admin</span>
           </div>
