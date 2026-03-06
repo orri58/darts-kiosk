@@ -6,70 +6,91 @@ The user wants to build a production-ready, local-first “Darts Kiosk + Admin C
 - **Architecture:** A MASTER/AGENT model for multi-board control over a local LAN. Each AGENT is autonomous if the MASTER is offline.
 - **Roles:** Admin (full access: branding, pricing, management) and Staff (limited to session control: unlock/lock/extend).
 - **Authentication:** JWT-based with username/password, plus a quick PIN action for staff. A Stammkunde (registered player) mode with nickname/PIN login is also required.
-- **Customization (White-Label):** Admins can upload a logo, set the cafe name, and choose from pre-defined color palettes.
+- **Customization (White-Label):** Admins can upload a logo, set the cafe name, and choose from pre-defined or custom color palettes.
 - **Pricing Models:** Configurable pricing per game, per time, or per player.
 - **Autodarts Integration:** An MVP integration using Playwright to automate starting a game and detecting its completion on the Autodarts website.
 - **Real-time & Discovery:** The system must use WebSockets for real-time status updates and mDNS for automatic discovery of agent PCs on the network.
-- **Player Features:** Public QR-code links to match results, guest-based player statistics, and leaderboards.
+- **Player Features:** Public QR-code links to match results, guest-based player statistics, and leaderboards. Stammkunde mode for registered players to track stats.
+- **Sound & Language:** Configurable sound effects for game events and a language toggle (DE/EN) for the entire UI.
 - **Tech Stack:** FastAPI (Python) backend, React frontend, SQLAlchemy with SQLite.
 - **Reliability:** The system must be robust, with heartbeats, offline capability, logging, a circuit breaker for the Autodarts integration, and automated database backups.
-- **Deployment:** An appliance-like experience on Linux, with a one-command  script and a web-based setup wizard.
+- **Deployment:** An appliance-like experience on Linux via  and a simple test bundle for Windows ().
 
 **User's preferred language**: German
 
 **what currently exists?**
-The application is a full-stack Darts Kiosk system with a FastAPI backend and a React frontend. The initial monolithic backend () has been successfully refactored into a modular structure using FastAPI's  for different domains (auth, boards, admin, stats, discovery, etc.).
-
-Key implemented features include:
-- A comprehensive Admin Panel and a Kiosk UI with multiple states (Locked, Setup, In-Game, Finished, QR-Code).
-- A robust  script for deployment.
-- A system management page in the admin panel for health checks, backups, and log viewing.
-- Real-time admin dashboard updates via WebSockets, replacing the previous polling mechanism.
-- mDNS-based discovery of agent PCs on the local network, with a secure pairing flow using a rotating PIN.
-- Generation of public, expiring QR-code links to a non-PII match summary page after each game.
-- Guest-based player statistics and a multi-period leaderboard (Today, Week, Month, All-time).
-- Successful soak testing (200 cycles) of the Playwright-based Autodarts integration.
+The application is a feature-rich Darts Kiosk system. The backend is a modular FastAPI application, and the frontend is built with React.
+Key completed features include:
+- A comprehensive Admin Panel for managing boards, users, settings, and system health.
+- A Kiosk UI with multiple states (Locked, Setup, In-Game, Finished).
+- Real-time admin dashboard updates via WebSockets.
+- mDNS-based discovery and secure pairing of agent PCs.
+- Public QR-code links to match summary pages.
+- Guest and Stammkunde (registered player) statistics with leaderboards.
+- Top Stammkunden rotation on the locked screen.
+- Admin-configurable sound effects for key game events (e.g., start, win, checkout).
+- A full i18n implementation for German (default) and English, covering the Kiosk and the entire Admin Panel.
+- A custom color palette editor for white-labeling.
+- A build script that generates release packages for Linux ( with ) and Windows ( with  scripts for a non-Docker setup).
+- A critical fix ensuring all data paths (database, assets) are resolved as absolute paths from the project root, preventing issues with the working directory.
 
 **Last working item**:
-- **Last item agent was working:** The agent was in the middle of implementing the Stammkunde (registered player) feature. It had just created the necessary database model and the backend router for player management.
+- **Last item agent was working:** The agent was investigating two critical bugs found by the user during testing on a Windows machine.
+    1.  **LAN Access Issue:** The frontend is inaccessible from other devices on the local network (e.g., a phone), returning 404 errors. This points to a host binding ( vs. ) or URL configuration problem in the non-Docker Windows setup.
+    2.  **Autodarts Silent Failure:** The  endpoint returns a 200 OK status, but the Playwright automation for Autodarts does not trigger, and there are no logs to indicate why.
 - **Status:** IN PROGRESS
 - **Agent Testing Done:** N
-- **Which testing method agent to use?** both. The new backend endpoints for player registration and login () need to be tested via . The new frontend UI for PIN prompts on the Kiosk  needs to be verified with the  tool. A full regression test using  is required upon completion.
+- **Which testing method agent to use?** manual testing by curl. The agent needs to fix the backend server startup configuration to bind to  to resolve the LAN issue. For the Autodarts issue, the agent must add detailed logging to the  and  router to trace the execution flow and identify the point of failure. After implementing the fixes,  can be used to test the endpoint, and logs must be inspected to confirm the automation runs.
 - **User Testing Done:** N
 
 **All Pending/In progress Issue list**:
-There are no known bugs or regressions. The only pending item is the completion of the Stammkunde feature.
+- **Issue 1: Fix LAN Access on Windows** (Priority: P0)
+    - **Attempted fixes:** The agent started investigating by reading  and .
+    - **Next debug checklist:**
+        1.  Modify  startup command in  and potentially  to use  instead of the default .
+        2.  Verify the  in the frontend's  file is correctly configured for LAN access during the build process for the Windows bundle.
+        3.  Check for any hardcoded  URLs in the frontend code.
+    - **Why fix this issue and what will be achieved with the fix?** The application must be accessible from other devices on the LAN (e.g., staff phones, admin PC) to be useful. This fix will enable core network functionality.
+    - **Status:** IN PROGRESS
+    - **Is recurring issue?** N
+    - **Should Test frontend/backend/both after fix?** both
+    - **Blocked on other issue:** No.
+- **Issue 2: Fix Silent Failure in Autodarts Integration** (Priority: P0)
+    - **Attempted fixes:** The agent started investigating by reading .
+    - **Next debug checklist:**
+        1.  Add detailed logging (e.g., Endpoint entered, Session validated, Playwright launch started, Navigating to URL, Selector found/failed) throughout the  function in  and the  methods.
+        2.  Wrap the Playwright calls in a  block with explicit error logging to catch any exceptions that are currently being suppressed.
+        3.  Run the  script and trigger the  endpoint, then inspect the console logs for the new trace information.
+    - **Why fix this issue and what will be achieved with the fix?** The Autodarts integration is a core feature. Without it, the kiosk cannot automate games. This fix will restore that functionality.
+    - **Status:** IN PROGRESS
+    - **Is recurring issue?** N
+    - **Should Test frontend/backend/both after fix?** backend
+    - **Blocked on other issue:** No.
 
 **In progress Task List**:
-- **Task 1: Complete Stammkunde (Registered Player) Mode** (Priority: P0)
-  - **Where to resume:** The  model () and the base  router () have been created. The next steps are:
-    1.  Import and include the  in .
-    2.  Update the stats aggregation logic in  to correctly link game results to registered players using the new  model.
-    3.  Modify the kiosk  logic in  to handle stat assignment for guest and registered players.
-    4.  Implement the frontend changes in  to add a PIN prompt when a registered nickname is entered, and provide an option for QR-code based login.
-    5.  Write tests to validate the new registration, PIN login, and QR login flows.
-  - **What will be achieved with this?** This will enable a loyalty mode where returning players can register with a PIN to track their stats over time, a core user requirement.
-  - **Status:** IN PROGRESS
-  - **Should Test frontend/backend/both after fix?** both
-  - **Blocked on something:** No.
+None. The current focus is on fixing the two critical bugs.
 
 **Upcoming and Future Tasks**
 - **Upcoming Tasks:**
-    - **P1: Implement Robust Autodarts DOM Selector Tests:** The user requested dedicated tests for the Playwright automation to ensure stability against minor changes on the Autodarts website. This should be done after the Stammkunde feature is complete.
+  - **P1: Implement Robust Autodarts DOM Selector Tests:** The user requested dedicated tests for the Playwright automation to ensure stability against minor changes on the Autodarts website. This was deferred and should be prioritized after the current bugs are fixed.
 - **Future Tasks:**
-    - **P2: mDNS Discovery Enhancements:** The user mentioned this as a nice-to-have for further refinement after core stability features were implemented.
+  - **P2: mDNS Discovery Enhancements:** A nice-to-have for further refinement.
 
 **Completed work in this session**
-- **Phase 4 & System Management:** Implemented , the backend APIs, and the frontend UI for the  page.
-- **P1 Live Stability & WebSockets:** Completed a 200-cycle soak test for Autodarts integration and replaced HTTP polling with a real-time WebSocket implementation for the admin dashboard.
-- **Major Refactoring:** Decomposed the monolithic  into a modular architecture with multiple  files (, , , etc.), schemas, and dependencies.
-- **P1 mDNS Discovery & Pairing:** Built the mDNS service for agent discovery and a secure pairing flow with a rotating PIN code display on the kiosk.
-- **P2 QR-Code Match Link:** Implemented the feature to show a QR code on the kiosk post-game, linking to a public, temporary match results page.
-- **Player Statistics & Leaderboard:** Created the backend logic and frontend UI for guest-based player statistics and a comprehensive leaderboard.
-- **Initial work on Stammkunde Mode:** Created the  model and the  router.
+- **Stammkunde (Registered Player) Mode:** Completed the full feature, including backend logic, PIN/QR login, and frontend UI in the .
+- **Top Stammkunden Leaderboard:** Implemented a rotating leaderboard of top registered players on the Kiosk's locked screen, with admin settings for customization.
+- **Custom Palette Editor:** Created a UI in the admin panel for creating, editing, and applying custom color schemes.
+- **Sound Effects:** Implemented a full sound system with synthetic sound generation (), admin controls (toggle, volume, quiet hours), and event triggers on the kiosk.
+- **i18n (DE/EN) Language System:** Made the entire application, including all Admin Panel pages and navigation, fully translatable with a language switcher. Over 150 translation keys were added.
+- **Release Packaging:** Created a  script to generate three deployment artifacts: a non-Docker Windows Test Bundle, a Linux Production Bundle, and a Source Export.
+- **Path Resolution Fix:** Refactored the backend to use absolute paths derived from the project root for all data files (, assets), resolving a critical bug related to the startup directory.
 
 **Earlier issues found/mentioned but not fixed**
-None. All identified issues were resolved.
+- **Issue 1: Autodarts DOM Selector Tests**
+    - **Debug checklist:** Write a new test suite using Playwright or Pytest-Playwright that specifically targets the selectors used in  to log in and start a game. The test should fail if any key element is not found.
+    - **Why to solve this issue and what will be achieved with this?** This will make the Autodarts integration more resilient to UI changes on the external website, preventing future breakages.
+    - **Should Test frontend/backend/both after fix:** backend
+    - **Is recurring issue?** N
 
 **Known issue recurrence from previous fork**
 None.
@@ -78,85 +99,89 @@ None.
 
 
 **Key Technical Concepts**
-- **Backend:** FastAPI, SQLAlchemy ORM, Pydantic, APScheduler, Zeroconf (for mDNS).
-- **Frontend:** React, React Router, Tailwind CSS, Shadcn/UI,  hook for real-time data.
+- **Backend:** FastAPI, SQLAlchemy ORM, Pydantic, Zeroconf,  for sound generation.
+- **Frontend:** React, React Router, Tailwind CSS, Shadcn/UI,  for translation.
 - **Database:** SQLite.
-- **Architecture:** Distributed Master/Agent system for LAN; modular backend with routers.
-- **Integration:** Playwright for browser automation, WebSockets for real-time UI updates, mDNS for service discovery.
-- **Deployment:** Docker Compose, Nginx reverse proxy, custom  script.
+- **Architecture:** Distributed Master/Agent system; modular backend.
+- **Integration:** Playwright for browser automation, WebSockets for real-time UI.
+- **Deployment:** Docker Compose (for dev), Nginx, custom  and  scripts.
 
 **key DB schema**
 - **users**: uid=0(root) gid=0(root) groups=0(root), , , , 
 - **boards**: uid=0(root) gid=0(root) groups=0(root), , , , 
 - **sessions**: uid=0(root) gid=0(root) groups=0(root), , , , 
-- **settings**: , 
-- **trusted_peers**: uid=0(root) gid=0(root) groups=0(root), , , , 
+- **settings**: ,  (JSON for complex settings like palettes, sound config)
 - **match_results**: uid=0(root) gid=0(root) groups=0(root), , ,  (JSON), 
-- **players**: uid=0(root) gid=0(root) groups=0(root),  (unique), ,  (IN PROGRESS)
+- **players**: uid=0(root) gid=0(root) groups=0(root),  (unique), , 
 
 **changes in tech stack**
--  for mDNS discovery.
--  for rate limiting public endpoints.
--  for generating QR codes.
+-  and  for internationalization.
+-  for programmatic audio generation.
 
 **All files of reference**
-- : The newly created router for Stammkunde logic (IN PROGRESS).
-- : The frontend component that needs to be updated for the PIN/QR login flow.
-- : The main application file where the new player router must be included.
-- : The stats router that needs to be updated to use the new  model.
-- : Contains the new  model definition.
-- : The product requirements document, which should be updated upon task completion.
+- **For LAN Access Bug:**
+    - : Contains the  startup command for Windows.
+    - : Where the FastAPI app is configured. Might need  parameter.
+    - : To check proxy settings (though less relevant for non-Docker).
+- **For Autodarts Bug:**
+    - : Contains the  API endpoint logic.
+    - : Contains the core Playwright automation logic.
+- **General Context:**
+    - : Defines how the Windows bundle is created.
 
 **Areas that need refactoring**:
-The major refactoring of  was successfully completed. No immediate, large-scale refactoring is required.
+None. The recent centralization of  path logic was a significant improvement.
 
 **key api endpoints**
-- : WebSocket endpoint for real-time status updates.
-- : Lists discovered agents via mDNS.
-- : Initiates the secure pairing flow.
-- : Public endpoint for viewing match results.
-- : Retrieves leaderboard data.
-- : Retrieves stats for a specific player.
-- : Endpoints for system management (health, backups, logs).
-- : (IN PROGRESS) Endpoints for player registration, PIN login, and QR login.
+- : WebSocket endpoint.
+- : Endpoint for starting an Autodarts game (CURRENTLY BUGGED).
+- : GET/POST for custom color palettes.
+- : GET/POST for sound configuration.
+- : GET/POST for UI language.
+- : Serves generated sound files.
+- : GET endpoint for the Stammkunden leaderboard.
 
 **Critical Info for New Agent**
 - **You MUST respond to the user in German.**
-- Your primary task is to complete the in-progress Stammkunde (registered player) feature. The backend models and router have been created, but need to be integrated into the main application, and the corresponding frontend changes must be implemented.
-- Refer to the  for the detailed next steps to complete the feature.
-- After completing the feature, perform thorough testing and then run the  for a full regression test before finishing.
+- Your immediate and only priority is to fix the two critical bugs reported from Windows testing: **LAN access failure** and the **silent Autodarts automation failure**.
+- **For LAN Access:** The most likely cause is the backend server binding to  (localhost) by default. You need to force it to bind to  in the  script to make it accessible across the local network.
+- **For Autodarts:** The function is failing silently. Your first step MUST be to add extensive, step-by-step logging to the  flow in  and  to trace where the execution stops.
+- Do not work on any other features until these two P0 bugs are resolved, tested, and confirmed fixed.
 
 **documents and test reports created in this job**
--  (updated multiple times)
-- : Contains multiple successful test reports from  for each completed feature.
+-  (updated with all new features)
+- : Contains the generated , , and  bundles.
+- : Contains multiple successful test reports from .
 
 **Last 10 User Messages and any pending HUMAN messages**
-- **User (Msg 157):** Requested P1 mDNS Discovery + Secure Pairing feature with detailed requirements. (Completed)
-- **Agent (Msg 198):** Announced successful completion and testing of the mDNS feature.
-- **User (Msg 202):** Requested P2 QR-Code Match-Link feature with requirements. (Completed)
-- **Agent (Msg 267):** Announced successful completion and testing of the QR code feature, noting a fix made by the testing agent.
-- **User (Msg 273):** Requested Player Statistics and Leaderboard feature. (Completed)
-- **Agent (Msg 308):** Announced successful completion and testing of the stats/leaderboard feature.
-- **User (Msg 312):** Requested the Stammkunde (registered player) mode with nickname/PIN and QR login requirements. (Current task)
-- **Agent (Msg 313):** Acknowledged the request and started analysis.
-- **Agent (Msg 315):** Outlined the implementation plan for the Stammkunde feature.
-- **Agent (Msg 318):** Created the  router file, which was the last action taken.
+- **User (Msg 444):** Requested the creation of three release packages: a Windows Test Bundle, a Linux Production Bundle, and a Source Export.
+- **User (Msg 447):** Clarified that the Windows bundle should NOT use Docker and should use local Python/Node for easier testing with Autodarts.
+- **Agent (Msg 462):** Confirmed all three packages were successfully built and verified their contents.
+- **User (Msg 470):** Reported a critical bug from Windows testing: the SQLite path was incorrect because the backend was started from the wrong working directory.
+- **Agent (Msg 471):** Acknowledged the bug and planned to fix it at the root in  and the  scripts.
+- **Agent (Msg 505):** Confirmed the path issue was fixed, and the release packages were rebuilt.
+- **User (Msg 509):** Provided clear findings from further Windows testing, reporting two new critical bugs: 1) LAN/Phone access fails, and 2) Autodarts automation fails silently.
+- **Agent (Msg 510):** Acknowledged the two new problems.
+- **Agent (Msg 511):** Started investigation by reading the relevant source files (, , ). (Last action)
 
 **Project Health Check:**
-- **Broken:** None
-- **Mocked:** None. The Autodarts integration uses real browser automation.
+- **Broken:**
+    - LAN access for the Windows build.
+    - Autodarts integration trigger on .
+- **Mocked:**
+    - None.
 
 **3rd Party Integrations**
 - **Autodarts:** Integrated via Playwright for live browser automation.
 
 **Testing status**
-- **Testing agent used after significant changes:** YES. The agent has consistently used  after each feature phase, which has successfully verified implementations and even found/fixed bugs.
+- **Testing agent used after significant changes:** YES, for all feature development.
 - **Troubleshoot agent used after agent stuck in loop:** NO.
-- **Test files created:** Yes, the agent has created several test scripts, including  and . The testing agent has also created regression test files like .
-- **Known regressions:** None.
+- **Test files created:** Yes, multiple test scripts exist.
+- **Known regressions:** The Autodarts integration, which was previously working, is now failing silently in the Windows test environment.
 
 **Credentials to test flow:**
-The system uses a setup wizard to create the initial admin user. For testing game flows, nicknames can be entered on the kiosk screen. The new Stammkunde feature will require creating and then using a PIN for a registered player.
+Use the web-based setup wizard (running  or ) to create the initial admin user. Game flow testing can be done with guest nicknames on the kiosk screen.
 
 **What agent forgot to execute**
-- The user's request for Autodarts DOM Selector Tests to ensure stability against UI changes on the Autodarts website has not been implemented yet. It was part of the P1 Live-Stabilität request but was deferred after the soak test was completed. This should be prioritized after the current Stammkunde feature is done.</analysis>
+- The user's request for Autodarts DOM Selector Tests to ensure stability against UI changes on the Autodarts website has been deferred multiple times and is still not implemented. This remains a pending technical debt item.</analysis>
