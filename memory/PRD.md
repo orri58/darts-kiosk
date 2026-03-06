@@ -16,59 +16,77 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
 - install.sh v2.0.0, /admin/system page, System APIs
 
 ### P1: Live Stability (2026-03-04)
-- Autodarts Soak Test: 200 cycles, 4 modes, 15 tests
-- WebSocket real-time board status, Dashboard Live indicator
-- Refactoring: server.py 1434->190 lines, 10 router modules
-- mDNS Discovery + Secure Pairing (Zeroconf, challenge-response, TrustedPeer)
+- Autodarts Soak Test, WebSocket real-time, Modular refactoring
+- mDNS Discovery + Secure Pairing
 
 ### P2: QR-Code Match-Link (2026-03-04)
-- MatchResult model with 128-bit public token, 24h expiry
-- Kiosk QR screen for 60s after game end, public match page
+- MatchResult with public token, 24h expiry, kiosk QR screen
 
 ### P2: Player Statistics & Leaderboard (2026-03-04)
 - Guest-first model, stats per player, leaderboard API, admin page
 
-### P0: Stammkunde Mode (2026-03-04) - COMPLETED
+### P0: Stammkunde Mode (2026-03-04)
 - Player model with nickname+PIN, QR token, registration/login
 - Auto guest Player creation on game end, stats tracking
 - Frontend PIN dialog, registration flow, verified badges
 
-### Top Stammkunden Rotation (2026-03-04) - COMPLETED
-- **Backend**: `GET /api/stats/top-registered?period=&limit=` with 45s in-memory cache
-- **Settings**: `stammkunde_display` (enabled=false, period=month, interval_seconds=6, max_entries=3, nickname_max_length=15)
-- **Admin UI**: Settings > Stammkunde tab with toggle, period selector, interval/entries/nickname length controls
-- **Kiosk LockedScreen**: Dedicated rotation slide with rank badge, truncated nickname, ShieldCheck badge, stats (S/G + Quote), highlight stat
-- **Highlight priority**: 180+ throw > checkout >= 80 > throw >= 100 > win rate fallback
-- **Fallback**: CTA "Werde Stammkunde!" when no registered players exist
-- **Fade transition** on player rotation, no UI flicker
-- Tests: 15 backend + full frontend, 100% pass
+### Top Stammkunden Rotation (2026-03-04)
+- `GET /api/stats/top-registered` with 45s cache, highlight priority
+- Admin settings: toggle, period, interval, max entries, nickname truncation
+- Kiosk LockedScreen: rotation with rank badge, stats, highlight, CTA fallback
 
-### Custom Palette Editor (2026-03-04) - COMPLETED
-- **Palette Selection**: Grid of all palettes (default + custom) with hover edit/delete actions
-- **Palette Editor**: Inline editor below grid with:
-  - Name field
-  - 6 color inputs (bg, surface, primary, secondary, accent, text) with native color pickers
-  - Live preview panel showing actual UI elements
-  - WCAG contrast warnings (critical <3:1, warning <4.5:1) for text/bg, text/surface, primary/bg
-- **Custom palette CRUD**: Create new, edit existing, delete (cannot delete active palette)
-- **JSON Import/Export**: Import from JSON textarea, export to clipboard
-- **Default palettes**: 8 built-in (Industrial, Midnight, Forest, Crimson, Ocean, Sunset, Slate, Emerald) — not deletable
-- **Schema fix**: SettingsUpdate.value changed to Union[dict, list] to support palette lists
-- Tests: Full backend + frontend, 100% pass
+### Custom Palette Editor (2026-03-04)
+- Create/edit/delete custom color palettes, live preview
+- WCAG contrast warnings, JSON import/export
+- 8 default palettes protected from deletion
+
+### Kiosk Sound Effects (2026-03-06) - COMPLETED
+- **Sound Generator** (`services/sound_generator.py`): Pure Python WAV synthesis
+  - 5 events: start (0.5s), one_eighty (0.7s), checkout (0.4s), bust (0.5s), win (0.8s)
+  - ADSR envelopes, normalized volume, 22050Hz/16-bit/mono
+  - Auto-generated on first access to `/data/assets/sounds/default/`
+- **Backend**:
+  - `GET/PUT /api/settings/sound` - Config (enabled=false, volume=70, pack, quiet hours, rate_limit_ms=1500)
+  - `GET /api/sounds/packs` - List available packs
+  - `GET /api/sounds/{pack}/{event}.wav` - Serve with `Cache-Control: public, max-age=86400, immutable`
+  - `POST /api/kiosk/{board_id}/sound` - Manual trigger via WS broadcast
+  - WS `sound_event` broadcast on game start + end
+- **Frontend** (`hooks/useSoundManager.js`):
+  - Web Audio API with AudioContext, preload all sounds on first touch
+  - Autoplay-unlock via click/touchstart/keydown listeners
+  - Per-event rate limit (configurable, default 1.5s) + global max 30/min
+  - Quiet hours check, volume control
+- **Admin Settings > Sound tab**: Enable toggle, volume slider, pack selection, test buttons, rate limit slider, quiet hours with time inputs
+- Tests: 17 backend + full frontend, 100% pass
+
+### EN/DE Language Toggle (i18n) (2026-03-06) - COMPLETED
+- **Translations** (`i18n/translations.js`): ~150 DE/EN keys covering:
+  - Kiosk: locked, setup, stammkunde, in-game, finished screens
+  - Admin: all settings tabs (branding, pricing, palette, stammkunde, sound, language)
+- **I18nContext** (`context/I18nContext.js`):
+  - Fetches language from `GET /api/settings/language` on mount
+  - `t(key, params)` function with interpolation (`{name}`, `{count}`)
+  - `switchLang(lang)` for runtime switching
+  - Falls back to DE keys if EN key missing
+- **Backend**: `GET/PUT /api/settings/language` (default: `{language: "de"}`)
+- **Admin Settings > Sprache tab**: DE/EN flag buttons with checkmark, save
+- **Kiosk LockedScreen**: All texts use `t()` - LOCKED/GESPERRT, Prices/Preise, etc.
+- **Kiosk SetupScreen**: All texts use `t()` - game prep, player names, stammkunde flow
+- Tests: Backend verified via curl + pytest, frontend verified via screenshots (EN shows "LOCKED", "PRICES", "TOP REGULARS")
 
 ## Code Architecture
 ```
-/app/backend/routers/
-  auth.py, boards.py, kiosk.py, settings.py, admin.py,
-  backups.py, updates.py, agent.py, discovery.py, matches.py, stats.py, players.py
+/app/backend/
+  routers/: auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
+  services/: autodarts, scheduler, backup, health_monitor, update, setup_wizard, system, ws_manager, mdns, pairing, sound_generator
+  models/: User, Board, Session, AuditLog, Settings, TrustedPeer, MatchResult, Player
 
-/app/backend/models/
-  User, Board, Session, AuditLog, Settings, TrustedPeer, MatchResult, Player
-
-/app/frontend/src/pages/
-  admin: Dashboard, Boards, Settings (Branding/Preise/Farbschema+Editor/Stammkunde), Users, Logs, Revenue, Health, System, Discovery, Leaderboard
-  kiosk: LockedScreen (TopStammkunden+TopPlayers+PairingCode), SetupScreen (Stammkunde auth), InGameScreen, MatchResultScreen, ErrorScreen
-  MatchPublicPage
+/app/frontend/src/
+  context/: AuthContext, SettingsContext, I18nContext
+  hooks/: useBoardWS, useSoundManager
+  i18n/: translations.js
+  pages/admin/: Dashboard, Boards, Settings (6 tabs), Users, Logs, Revenue, Health, System, Discovery, Leaderboard
+  pages/kiosk/: LockedScreen, SetupScreen, InGameScreen, MatchResultScreen, ErrorScreen
 ```
 
 ## Remaining Backlog
@@ -78,5 +96,3 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
 
 ### P2 - Future
 - [ ] mDNS Discovery Enhancements
-- [ ] Sound effects for kiosk
-- [ ] Multi-language (EN/DE toggle)

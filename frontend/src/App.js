@@ -23,11 +23,13 @@ import SetupWizard from "./pages/admin/SetupWizard";
 // Context
 import { AuthProvider } from "./context/AuthContext";
 import { SettingsProvider } from "./context/SettingsContext";
+import { I18nProvider } from "./context/I18nContext";
 
 function App() {
   return (
     <AuthProvider>
       <SettingsProvider>
+        <I18nProvider>
         <BrowserRouter>
           <Routes>
             {/* Kiosk Routes */}
@@ -60,6 +62,7 @@ function App() {
             <Route path="*" element={<Navigate to="/kiosk" replace />} />
           </Routes>
         </BrowserRouter>
+        </I18nProvider>
         <Toaster 
           position="top-center" 
           theme="dark"

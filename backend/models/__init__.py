@@ -329,6 +329,10 @@ DEFAULT_SOUND_CONFIG = {
     "rate_limit_ms": 1500,
 }
 
+DEFAULT_LANGUAGE = {
+    "language": "de",
+}
+
 DEFAULT_BRANDING = {
     "cafe_name": "Dart Zone",
     "subtitle": "Darts & More",

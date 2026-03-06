@@ -3,6 +3,7 @@ import { Target, Users, Play, ChevronRight, Delete, Clock, Coins, ShieldCheck, L
 import Keyboard from 'react-simple-keyboard';
 import 'react-simple-keyboard/build/css/index.css';
 import { Button } from '../../components/ui/button';
+import { useI18n } from '../../context/I18nContext';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -85,6 +86,7 @@ function PinPad({ title, subtitle, onSubmit, onCancel, error, loading }) {
 
 export default function SetupScreen({ branding, pricing, session, onStartGame }) {
   const [step, setStep] = useState(1);
+  const { t } = useI18n();
   const [selectedGame, setSelectedGame] = useState(null);
   const [players, setPlayers] = useState(['']);
   const [activePlayerIndex, setActivePlayerIndex] = useState(0);
@@ -105,11 +107,11 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
   const getRemainingInfo = () => {
     if (!session) return null;
     if (session.pricing_mode === 'per_game') {
-      return { type: 'credits', value: session.credits_remaining, label: 'Spiele übrig' };
+      return { type: 'credits', value: session.credits_remaining, label: t('games_remaining') };
     }
     if (session.pricing_mode === 'per_time' && session.expires_at) {
       const minutesLeft = Math.max(0, Math.round((new Date(session.expires_at) - new Date()) / 60000));
-      return { type: 'time', value: minutesLeft, label: 'Minuten übrig' };
+      return { type: 'time', value: minutesLeft, label: t('minutes_remaining') };
     }
     return null;
   };
@@ -213,9 +215,9 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
       const { data } = await axios.post(`${API}/players/pin-login`, { nickname, pin });
       setPlayerAuth(prev => ({ ...prev, [pinModalIndex]: { status: 'verified', nickname: data.nickname, player_id: data.player_id } }));
       setPinModalIndex(null);
-      toast.success(`Willkommen zurück, ${data.nickname}!`);
+      toast.success(t('welcome_back', { name: data.nickname }));
     } catch (err) {
-      setPinError(err.response?.data?.detail || 'Falscher PIN');
+      setPinError(err.response?.data?.detail || t('wrong_pin'));
     } finally {
       setPinLoading(false);
     }
@@ -239,7 +241,7 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
     }
     // Step 2: confirm PIN
     if (pin !== firstPin) {
-      setPinError('PINs stimmen nicht überein');
+      setPinError(t('pins_dont_match'));
       setRegisterStep(1);
       setFirstPin('');
       return;
@@ -252,7 +254,7 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
       setPlayerAuth(prev => ({ ...prev, [pinModalIndex]: { status: 'verified', nickname: data.nickname, player_id: data.player_id, qr_token: data.qr_token } }));
       setPinModalIndex(null);
       setRegisterStep(0);
-      toast.success(`${data.nickname} als Stammkunde registriert!`);
+      toast.success(t('registered_as_stammkunde', { name: data.nickname }));
     } catch (err) {
       setPinError(err.response?.data?.detail || 'Registrierung fehlgeschlagen');
     } finally {
@@ -295,19 +297,19 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
     if (auth.status === 'verified') {
       return (
         <span className="flex items-center gap-1 text-xs text-emerald-400 bg-emerald-400/10 px-2 py-1 rounded-sm" data-testid={`player-verified-${index}`}>
-          <ShieldCheck className="w-3.5 h-3.5" /> Stammkunde
+          <ShieldCheck className="w-3.5 h-3.5" /> {t('stammkunde')}
         </span>
       );
     }
     if (auth.status === 'needs_pin') {
       return (
         <span className="flex items-center gap-1 text-xs text-amber-400 bg-amber-400/10 px-2 py-1 rounded-sm animate-pulse" data-testid={`player-needs-pin-${index}`}>
-          <Lock className="w-3.5 h-3.5" /> PIN erforderlich
+          <Lock className="w-3.5 h-3.5" /> {t('pin_required')}
         </span>
       );
     }
     if (auth.status === 'checking') {
-      return <span className="text-xs text-zinc-500">Prüfe...</span>;
+      return <span className="text-xs text-zinc-500">{t('checking')}</span>;
     }
     return null;
   };
@@ -321,7 +323,7 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
             <h1 className="text-2xl font-heading font-bold uppercase tracking-wider text-white">
               {branding.cafe_name}
             </h1>
-            <p className="text-zinc-500 text-sm">Spielvorbereitung</p>
+            <p className="text-zinc-500 text-sm">{t('game_preparation')}</p>
           </div>
           {remainingInfo && (
             <div className="flex items-center gap-3 bg-zinc-900 border border-zinc-700 rounded-sm px-4 py-2">
@@ -343,7 +345,7 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
             <div className="animate-slide-up" data-testid="step-game-type">
               <div className="flex items-center gap-3 mb-8">
                 <Target className="w-8 h-8 text-amber-500" />
-                <h2 className="text-3xl font-heading uppercase tracking-wider text-white">Spielart wählen</h2>
+                <h2 className="text-3xl font-heading uppercase tracking-wider text-white">{t('choose_game_type')}</h2>
               </div>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
                 {GAME_TYPES.map((game) => (
@@ -360,7 +362,7 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
                 <div className="flex justify-center">
                   <Button onClick={() => setStep(2)} data-testid="next-to-players-btn"
                     className="btn-industrial h-20 px-16 text-2xl bg-amber-500 hover:bg-amber-400 text-black">
-                    <span>WEITER</span>
+                    <span>{t('next')}</span>
                     <ChevronRight className="w-8 h-8 ml-2" />
                   </Button>
                 </div>
@@ -373,14 +375,14 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
             <div className="animate-slide-up" data-testid="step-players">
               <button onClick={() => setStep(1)} className="flex items-center gap-2 text-zinc-500 hover:text-white mb-6 transition-colors">
                 <ChevronRight className="w-5 h-5 rotate-180" />
-                <span className="uppercase tracking-wider text-sm">Zurück</span>
+                <span className="uppercase tracking-wider text-sm">{t('back')}</span>
               </button>
 
               <div className="flex items-center gap-3 mb-8">
                 <Users className="w-8 h-8 text-amber-500" />
-                <h2 className="text-3xl font-heading uppercase tracking-wider text-white">Spielernamen eingeben</h2>
+                <h2 className="text-3xl font-heading uppercase tracking-wider text-white">{t('enter_player_names')}</h2>
                 <span className="text-xl text-zinc-500 ml-auto">
-                  Spielart: <span className="text-amber-500 font-heading">{selectedGame}</span>
+                  {t('game_type')}: <span className="text-amber-500 font-heading">{selectedGame}</span>
                 </span>
               </div>
 
@@ -401,11 +403,11 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <p className="text-xs text-zinc-500 uppercase">Spieler {index + 1}</p>
+                        <p className="text-xs text-zinc-500 uppercase">{t('player')} {index + 1}</p>
                         {getPlayerBadge(index)}
                       </div>
                       <p className="text-xl font-mono text-white min-h-[28px]">
-                        {player || <span className="text-zinc-600">Name eingeben...</span>}
+                        {player || <span className="text-zinc-600">{t('enter_name')}</span>}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -439,7 +441,7 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
                   <button onClick={addPlayer} data-testid="add-player-btn"
                     className="flex items-center justify-center gap-3 bg-zinc-900/50 border-2 border-dashed border-zinc-700 rounded-sm p-4 text-zinc-500 hover:border-amber-500/50 hover:text-amber-500 transition-all min-h-[96px]">
                     <Users className="w-6 h-6" />
-                    <span className="uppercase tracking-wider">Spieler hinzufügen</span>
+                    <span className="uppercase tracking-wider">{t('add_player')}</span>
                   </button>
                 )}
               </div>
@@ -473,7 +475,7 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
                     canStart ? 'bg-emerald-500 hover:bg-emerald-400 text-black animate-pulse-glow' : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
                   }`}>
                   <Play className="w-10 h-10 mr-3" />
-                  <span>START</span>
+                  <span>{t('start')}</span>
                 </Button>
               </div>
             </div>
@@ -484,8 +486,8 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
       {/* PIN Modal */}
       {pinModalIndex !== null && pinModalMode === 'login' && (
         <PinPad
-          title="Stammkunde Login"
-          subtitle={`PIN für "${players[pinModalIndex]?.trim()}" eingeben`}
+          title={t('stammkunde_login')}
+          subtitle={t('enter_pin_for', { name: players[pinModalIndex]?.trim() })}
           onSubmit={handlePinLogin}
           onCancel={closePinModal}
           error={pinError}
@@ -496,10 +498,10 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
       {/* Register PIN Modal */}
       {pinModalIndex !== null && pinModalMode === 'register' && (
         <PinPad
-          title={registerStep === 1 ? 'Stammkunde werden' : 'PIN bestätigen'}
+          title={registerStep === 1 ? t('become_stammkunde_title') : t('confirm_pin')}
           subtitle={registerStep === 1
-            ? `Wähle einen 4-6 stelligen PIN für "${players[pinModalIndex]?.trim()}"`
-            : 'PIN zur Bestätigung erneut eingeben'
+            ? t('choose_pin', { name: players[pinModalIndex]?.trim() })
+            : t('confirm_pin_desc')
           }
           onSubmit={handleRegisterPin}
           onCancel={closePinModal}

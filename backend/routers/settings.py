@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from database import get_db
 from models import User, Settings
-from models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG
+from models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE
 from schemas import SettingsUpdate
 from dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
 from services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
@@ -151,6 +151,27 @@ async def get_sound_packs():
     """List available sound packs."""
     ensure_sound_pack(SOUNDS_DIR, "default")
     return {"packs": list_sound_packs(SOUNDS_DIR)}
+
+
+# ===== Language Settings =====
+
+@router.get("/settings/language")
+async def get_language(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "language", DEFAULT_LANGUAGE)
+
+
+@router.put("/settings/language")
+async def update_language(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "language"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="language", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_language", "settings", "language")
+    return setting.value
 
 
 @router.get("/sounds/{pack}/{event}.wav")

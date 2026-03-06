@@ -1,11 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Lock, QrCode, Euro, Shield, Trophy, Crown, ShieldCheck, Target } from 'lucide-react';
+import { useI18n } from '../../context/I18nContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 function TopPlayersRotation() {
   const [players, setPlayers] = useState([]);
   const [current, setCurrent] = useState(0);
+  const { t } = useI18n();
 
   useEffect(() => {
     const fetchTop = async () => {
@@ -35,7 +37,7 @@ function TopPlayersRotation() {
     <div className="flex items-center gap-3 px-5 py-3 bg-zinc-800/50 border border-zinc-700 rounded-sm" data-testid="top-players-rotation">
       <Crown className="w-5 h-5 text-amber-500 flex-shrink-0" />
       <div className="min-w-0">
-        <p className="text-[11px] text-zinc-500 uppercase tracking-wider">Top Spieler heute</p>
+        <p className="text-[11px] text-zinc-500 uppercase tracking-wider">{t('top_players_today')}</p>
         <div className="flex items-center gap-2">
           <span className="text-lg font-mono font-bold text-amber-400 truncate" data-testid="top-player-name">{p.nickname}</span>
           <span className="text-xs text-zinc-500">{p.games_won}W / {p.games_played}G</span>
@@ -57,6 +59,7 @@ function TopStammkundenRotation() {
   const [config, setConfig] = useState(null);
   const [current, setCurrent] = useState(0);
   const [fade, setFade] = useState(true);
+  const { t } = useI18n();
 
   // Fetch config + top registered players
   useEffect(() => {
@@ -111,8 +114,8 @@ function TopStammkundenRotation() {
         <div className="flex items-center gap-3">
           <ShieldCheck className="w-5 h-5 text-amber-500 flex-shrink-0" />
           <div>
-            <p className="text-sm text-zinc-300">Werde Stammkunde!</p>
-            <p className="text-xs text-zinc-500">Registriere dich beim Spielstart und tracke deine Stats</p>
+            <p className="text-sm text-zinc-300">{t('become_stammkunde')}</p>
+            <p className="text-xs text-zinc-500">{t('become_stammkunde_desc')}</p>
           </div>
         </div>
       </div>
@@ -128,7 +131,7 @@ function TopStammkundenRotation() {
       <div className="flex items-center gap-2 mb-3">
         <Trophy className="w-4 h-4 text-amber-500" />
         <p className="text-[11px] text-amber-500/80 uppercase tracking-widest font-heading">
-          Top Stammkunden
+          {t('top_stammkunden')}
         </p>
         {players.length > 1 && (
           <div className="flex gap-1 ml-auto">
@@ -190,6 +193,7 @@ function TopStammkundenRotation() {
 function PairingCode({ boardId }) {
   const [code, setCode] = useState('------');
   const [remaining, setRemaining] = useState(0);
+  const { t } = useI18n();
 
   const fetchCode = useCallback(async () => {
     try {
@@ -220,7 +224,7 @@ function PairingCode({ boardId }) {
     <div className="flex items-center gap-4 px-5 py-3 bg-zinc-800/50 border border-zinc-700 rounded-sm" data-testid="pairing-code-display">
       <Shield className="w-5 h-5 text-amber-500 flex-shrink-0" />
       <div>
-        <p className="text-[11px] text-zinc-500 uppercase tracking-wider">Pairing-Code</p>
+        <p className="text-[11px] text-zinc-500 uppercase tracking-wider">{t('pairing_code')}</p>
         <p className="text-2xl font-mono font-bold tracking-[0.3em] text-amber-400" data-testid="pairing-code-value">{code}</p>
       </div>
       <div className="w-12 h-1 bg-zinc-700 rounded-full overflow-hidden ml-auto">
@@ -231,6 +235,7 @@ function PairingCode({ boardId }) {
 }
 
 export default function LockedScreen({ branding, pricing, boardId }) {
+  const { t } = useI18n();
   const formatPrice = (amount, currency = 'EUR') => {
     return `${amount.toFixed(2)} ${currency}`;
   };
@@ -270,10 +275,10 @@ export default function LockedScreen({ branding, pricing, boardId }) {
         {/* Lock Message */}
         <div className="text-center mb-16">
           <h2 className="text-4xl font-heading font-bold uppercase tracking-wider text-zinc-300 mb-4" data-testid="locked-message">
-            GESPERRT
+            {t('locked')}
           </h2>
           <p className="text-2xl text-zinc-500">
-            Bitte an der Theke freischalten lassen
+            {t('locked_message')}
           </p>
         </div>
 
@@ -283,25 +288,25 @@ export default function LockedScreen({ branding, pricing, boardId }) {
             <div className="flex items-center gap-3 mb-6">
               <Euro className="w-6 h-6 text-amber-500" />
               <h3 className="text-xl font-heading uppercase tracking-wider text-zinc-300">
-                Preise
+                {t('prices')}
               </h3>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <div className="text-center p-4 bg-zinc-800/50 rounded-sm border border-zinc-700">
-                <p className="text-zinc-500 uppercase text-sm mb-2">Pro Spiel</p>
+                <p className="text-zinc-500 uppercase text-sm mb-2">{t('per_game')}</p>
                 <p className="text-3xl font-mono font-bold text-white">
                   {formatPrice(pricing.per_game?.price_per_credit || 2.0)}
                 </p>
               </div>
               <div className="text-center p-4 bg-zinc-800/50 rounded-sm border border-zinc-700">
-                <p className="text-zinc-500 uppercase text-sm mb-2">30 Minuten</p>
+                <p className="text-zinc-500 uppercase text-sm mb-2">{t('per_30_min')}</p>
                 <p className="text-3xl font-mono font-bold text-white">
                   {formatPrice(pricing.per_time?.price_per_30_min || 5.0)}
                 </p>
               </div>
               <div className="text-center p-4 bg-zinc-800/50 rounded-sm border border-zinc-700">
-                <p className="text-zinc-500 uppercase text-sm mb-2">60 Minuten</p>
+                <p className="text-zinc-500 uppercase text-sm mb-2">{t('per_60_min')}</p>
                 <p className="text-3xl font-mono font-bold text-white">
                   {formatPrice(pricing.per_time?.price_per_60_min || 8.0)}
                 </p>
@@ -324,7 +329,7 @@ export default function LockedScreen({ branding, pricing, boardId }) {
         <div className="flex items-center justify-between max-w-4xl mx-auto">
           <div className="flex items-center gap-3 text-zinc-600">
             <QrCode className="w-5 h-5" />
-            <span className="text-sm uppercase tracking-wider">Board: {boardId}</span>
+            <span className="text-sm uppercase tracking-wider">{t('board')}: {boardId}</span>
           </div>
           <PairingCode boardId={boardId} />
           <div className="text-zinc-600 text-sm">
