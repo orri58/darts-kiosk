@@ -17,24 +17,26 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
+import { useI18n } from '../../context/I18nContext';
 
 const NAV_ITEMS = [
-  { path: '/admin', icon: LayoutDashboard, label: 'Dashboard', exact: true },
-  { path: '/admin/boards', icon: Target, label: 'Boards' },
-  { path: '/admin/settings', icon: Settings, label: 'Einstellungen', adminOnly: true },
-  { path: '/admin/users', icon: Users, label: 'Benutzer', adminOnly: true },
-  { path: '/admin/logs', icon: FileText, label: 'Logs', adminOnly: true },
-  { path: '/admin/revenue', icon: TrendingUp, label: 'Umsatz', adminOnly: true },
-  { path: '/admin/health', icon: Activity, label: 'Health', adminOnly: true },
-  { path: '/admin/system', icon: Server, label: 'System', adminOnly: true },
-  { path: '/admin/discovery', icon: Wifi, label: 'Discovery', adminOnly: true },
-  { path: '/admin/leaderboard', icon: Trophy, label: 'Leaderboard' },
+  { path: '/admin', icon: LayoutDashboard, labelKey: 'dashboard', tid: 'nav-dashboard', exact: true },
+  { path: '/admin/boards', icon: Target, labelKey: 'boards', tid: 'nav-boards' },
+  { path: '/admin/settings', icon: Settings, labelKey: 'settings', tid: 'nav-settings', adminOnly: true },
+  { path: '/admin/users', icon: Users, labelKey: 'users', tid: 'nav-users', adminOnly: true },
+  { path: '/admin/logs', icon: FileText, labelKey: 'logs', tid: 'nav-logs', adminOnly: true },
+  { path: '/admin/revenue', icon: TrendingUp, labelKey: 'revenue', tid: 'nav-revenue', adminOnly: true },
+  { path: '/admin/health', icon: Activity, labelKey: 'health', tid: 'nav-health', adminOnly: true },
+  { path: '/admin/system', icon: Server, labelKey: 'system', tid: 'nav-system', adminOnly: true },
+  { path: '/admin/discovery', icon: Wifi, labelKey: 'discovery', tid: 'nav-discovery', adminOnly: true },
+  { path: '/admin/leaderboard', icon: Trophy, labelKey: 'leaderboard', tid: 'nav-leaderboard' },
 ];
 
 export default function AdminLayout() {
   const navigate = useNavigate();
   const { user, logout, loading, isAdmin, isAuthenticated } = useAuth();
   const { branding } = useSettings();
+  const { t } = useI18n();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Redirect if not authenticated
@@ -105,7 +107,7 @@ export default function AdminLayout() {
                 to={item.path}
                 end={item.exact}
                 onClick={() => setSidebarOpen(false)}
-                data-testid={`nav-${item.label.toLowerCase()}`}
+                data-testid={item.tid}
                 className={({ isActive }) => `
                   flex items-center gap-3 px-4 py-3 rounded-sm transition-all
                   ${isActive
@@ -115,7 +117,7 @@ export default function AdminLayout() {
                 `}
               >
                 <item.icon className="w-5 h-5" />
-                <span className="font-medium">{item.label}</span>
+                <span className="font-medium">{t(item.labelKey)}</span>
               </NavLink>
             );
           })}
@@ -140,7 +142,7 @@ export default function AdminLayout() {
             className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 text-zinc-400 rounded-sm transition-all"
           >
             <LogOut className="w-5 h-5" />
-            <span>Abmelden</span>
+            <span>{t('logout')}</span>
           </button>
         </div>
       </aside>

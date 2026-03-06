@@ -26,6 +26,7 @@ import {
 import { Input } from '../../components/ui/input';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/I18nContext';
 import { useBoardWS } from '../../hooks/useBoardWS';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -40,6 +41,7 @@ const STATUS_STYLES = {
 export default function AdminDashboard() {
   const { pricing } = useSettings();
   const { token } = useAuth();
+  const { t } = useI18n();
   const [boards, setBoards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedBoard, setSelectedBoard] = useState(null);
@@ -186,9 +188,9 @@ export default function AdminDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">Dashboard</h1>
+          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('dashboard')}</h1>
           <p className="text-zinc-500 flex items-center gap-2">
-            Board-Uebersicht und Steuerung
+            {t('board_overview')}
             {wsConnected
               ? <span className="inline-flex items-center gap-1 text-xs text-emerald-500" data-testid="ws-status-connected"><Wifi className="w-3 h-3" /> Live</span>
               : <span className="inline-flex items-center gap-1 text-xs text-zinc-600" data-testid="ws-status-polling"><WifiOff className="w-3 h-3" /> Polling</span>
@@ -201,7 +203,7 @@ export default function AdminDashboard() {
           className="border-zinc-700 text-zinc-400 hover:text-white"
         >
           <RefreshCw className="w-4 h-4 mr-2" />
-          Aktualisieren
+          {t('refresh')}
         </Button>
       </div>
 
@@ -227,9 +229,9 @@ export default function AdminDashboard() {
                   <div className={`flex items-center gap-2 px-3 py-1 rounded-sm ${statusStyle.bg}`}>
                     <StatusIcon className={`w-4 h-4 ${statusStyle.text}`} />
                     <span className={`text-xs uppercase font-medium ${statusStyle.text}`}>
-                      {board.status === 'in_game' ? 'Im Spiel' : 
-                       board.status === 'unlocked' ? 'Offen' :
-                       board.status === 'offline' ? 'Offline' : 'Gesperrt'}
+                      {board.status === 'in_game' ? t('in_game_status') : 
+                       board.status === 'unlocked' ? t('unlocked_status') :
+                       board.status === 'offline' ? t('offline_status') : t('locked_status')}
                     </span>
                   </div>
                 </div>
@@ -238,7 +240,7 @@ export default function AdminDashboard() {
                 {/* Location */}
                 {board.location && (
                   <p className="text-sm text-zinc-500">
-                    <span className="text-zinc-600">Standort:</span> {board.location}
+                    <span className="text-zinc-600">{t('location')}:</span> {board.location}
                   </p>
                 )}
 
@@ -251,7 +253,7 @@ export default function AdminDashboard() {
                       className="flex-1 bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading tracking-wider"
                     >
                       <Unlock className="w-4 h-4 mr-2" />
-                      Freischalten
+                      {t('unlock_btn')}
                     </Button>
                   ) : (
                     <>
@@ -262,7 +264,7 @@ export default function AdminDashboard() {
                         className="flex-1 border-amber-500/50 text-amber-500 hover:bg-amber-500/20"
                       >
                         <Plus className="w-4 h-4 mr-2" />
-                        Verlängern
+                        {t('extend_btn')}
                       </Button>
                       <Button
                         onClick={() => handleLock(board)}
@@ -271,7 +273,7 @@ export default function AdminDashboard() {
                         className="flex-1 border-red-500/50 text-red-500 hover:bg-red-500/20"
                       >
                         <Lock className="w-4 h-4 mr-2" />
-                        Sperren
+                        {t('lock_btn')}
                       </Button>
                     </>
                   )}

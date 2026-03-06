@@ -13,11 +13,13 @@ import {
   DialogFooter,
 } from '../../components/ui/dialog';
 import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/I18nContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function AdminBoards() {
   const { token, isAdmin } = useAuth();
+  const { t } = useI18n();
   const [boards, setBoards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showDialog, setShowDialog] = useState(false);
@@ -123,7 +125,7 @@ export default function AdminBoards() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">Boards</h1>
+          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('boards')}</h1>
           <p className="text-zinc-500">Dartboard-Verwaltung</p>
         </div>
         {isAdmin && (

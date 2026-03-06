@@ -5,11 +5,13 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/I18nContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function AdminLogs() {
   const { token } = useAuth();
+  const { t } = useI18n();
   const [auditLogs, setAuditLogs] = useState([]);
   const [sessionLogs, setSessionLogs] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -77,7 +79,7 @@ export default function AdminLogs() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">Logs</h1>
+          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('logs')}</h1>
           <p className="text-zinc-500">Audit- und Session-Protokolle</p>
         </div>
         <Button

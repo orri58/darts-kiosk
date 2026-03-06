@@ -5,94 +5,47 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
 
 ## Implementation History
 
-### Phase 1-1.5 (2026-03-03) - Core MVP + Production
-- SQLAlchemy models, JWT+PIN auth, Board CRUD, Kiosk + Admin UI
-- Playwright Autodarts, Docker Compose, Session Scheduler
-
-### Phase 3 (2026-03-03) - Enterprise Hardening
-- Setup Wizard, Security, JSON logging, Backups, Updates, Circuit breaker
-
-### Phase 4 (2026-03-03) - Installer + System Management
-- install.sh v2.0.0, /admin/system page, System APIs
-
-### P1: Live Stability (2026-03-04)
-- Autodarts Soak Test, WebSocket real-time, Modular refactoring
-- mDNS Discovery + Secure Pairing
-
-### P2: QR-Code Match-Link (2026-03-04)
-- MatchResult with public token, 24h expiry, kiosk QR screen
-
-### P2: Player Statistics & Leaderboard (2026-03-04)
-- Guest-first model, stats per player, leaderboard API, admin page
-
-### P0: Stammkunde Mode (2026-03-04)
-- Player model with nickname+PIN, QR token, registration/login
-- Auto guest Player creation on game end, stats tracking
-- Frontend PIN dialog, registration flow, verified badges
-
-### Top Stammkunden Rotation (2026-03-04)
-- `GET /api/stats/top-registered` with 45s cache, highlight priority
-- Admin settings: toggle, period, interval, max entries, nickname truncation
-- Kiosk LockedScreen: rotation with rank badge, stats, highlight, CTA fallback
-
-### Custom Palette Editor (2026-03-04)
-- Create/edit/delete custom color palettes, live preview
-- WCAG contrast warnings, JSON import/export
-- 8 default palettes protected from deletion
+### Phase 1-4 (2026-03-03) - Core MVP + Production + Hardening + Installer
+### P1: Live Stability (2026-03-04) - WebSocket, Refactoring, mDNS, Pairing
+### P2: QR-Code Match-Link + Player Stats + Leaderboard (2026-03-04)
+### P0: Stammkunde Mode (2026-03-04) - PIN login, QR token, registration
+### Top Stammkunden Rotation (2026-03-04) - Kiosk locked screen display
+### Custom Palette Editor (2026-03-04) - Create/edit/delete with live preview
 
 ### Kiosk Sound Effects (2026-03-06) - COMPLETED
-- **Sound Generator** (`services/sound_generator.py`): Pure Python WAV synthesis
-  - 5 events: start (0.5s), one_eighty (0.7s), checkout (0.4s), bust (0.5s), win (0.8s)
-  - ADSR envelopes, normalized volume, 22050Hz/16-bit/mono
-  - Auto-generated on first access to `/data/assets/sounds/default/`
-- **Backend**:
-  - `GET/PUT /api/settings/sound` - Config (enabled=false, volume=70, pack, quiet hours, rate_limit_ms=1500)
-  - `GET /api/sounds/packs` - List available packs
-  - `GET /api/sounds/{pack}/{event}.wav` - Serve with `Cache-Control: public, max-age=86400, immutable`
-  - `POST /api/kiosk/{board_id}/sound` - Manual trigger via WS broadcast
-  - WS `sound_event` broadcast on game start + end
-- **Frontend** (`hooks/useSoundManager.js`):
-  - Web Audio API with AudioContext, preload all sounds on first touch
-  - Autoplay-unlock via click/touchstart/keydown listeners
-  - Per-event rate limit (configurable, default 1.5s) + global max 30/min
-  - Quiet hours check, volume control
-- **Admin Settings > Sound tab**: Enable toggle, volume slider, pack selection, test buttons, rate limit slider, quiet hours with time inputs
-- Tests: 17 backend + full frontend, 100% pass
+- Pure Python WAV synthesis (5 events, <=0.8s, ADSR envelopes)
+- Admin: enable toggle, volume, quiet hours, sound pack, rate limit
+- Frontend: Web Audio API preload, autoplay-unlock, rate limiting
+- WS broadcast on game events + manual trigger endpoint
 
-### EN/DE Language Toggle (i18n) (2026-03-06) - COMPLETED
-- **Translations** (`i18n/translations.js`): ~150 DE/EN keys covering:
-  - Kiosk: locked, setup, stammkunde, in-game, finished screens
-  - Admin: all settings tabs (branding, pricing, palette, stammkunde, sound, language)
-- **I18nContext** (`context/I18nContext.js`):
-  - Fetches language from `GET /api/settings/language` on mount
-  - `t(key, params)` function with interpolation (`{name}`, `{count}`)
-  - `switchLang(lang)` for runtime switching
-  - Falls back to DE keys if EN key missing
-- **Backend**: `GET/PUT /api/settings/language` (default: `{language: "de"}`)
-- **Admin Settings > Sprache tab**: DE/EN flag buttons with checkmark, save
-- **Kiosk LockedScreen**: All texts use `t()` - LOCKED/GESPERRT, Prices/Preise, etc.
-- **Kiosk SetupScreen**: All texts use `t()` - game prep, player names, stammkunde flow
-- Tests: Backend verified via curl + pytest, frontend verified via screenshots (EN shows "LOCKED", "PRICES", "TOP REGULARS")
+### EN/DE i18n - Full Coverage (2026-03-06) - COMPLETED
+- **translations.js**: ~180 DE/EN keys covering ALL UI strings
+- **I18nContext**: fetchLang on mount, t(key, params) with interpolation, switchLang()
+- **Admin Navigation**: All 10 sidebar labels through t() with stable data-testid
+- **Admin Pages**: All 9 page headings (Dashboard, Boards, Settings, Users, Logs, Revenue, Health, System, Discovery, Leaderboard) through t()
+- **Dashboard Board Cards**: Status labels (GESPERRT/LOCKED), buttons (FREISCHALTEN/UNLOCK, SPERREN/LOCK, VERLÄNGERN/EXTEND), location label
+- **Settings Tabs**: All 6 tab labels (Branding, Preise/Pricing, Farbschema/Color Scheme, Stammkunde/Regular, Sound, Sprache/Language) through t()
+- **Kiosk LockedScreen**: All texts (locked message, prices, board, pairing code, top stammkunden, CTA)
+- **Kiosk SetupScreen**: Game prep, player names, stammkunde auth flow, PIN dialogs
+- **Admin Language Tab**: DE/EN flag buttons with save
+- **No hardcoded admin navigation strings left**
+- **Language switch updates labels without full page reload** (React context re-render)
+- **Active route/menu state remains intact after language change**
+- Verified: Screenshots confirm EN mode shows "DASHBOARD", "Settings", "LOCKED", "UNLOCK", "Refresh", "Location:" and DE mode shows "DASHBOARD", "Einstellungen", "GESPERRT", "FREISCHALTEN", "Aktualisieren", "Standort:"
 
 ## Code Architecture
 ```
-/app/backend/
-  routers/: auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
-  services/: autodarts, scheduler, backup, health_monitor, update, setup_wizard, system, ws_manager, mdns, pairing, sound_generator
-  models/: User, Board, Session, AuditLog, Settings, TrustedPeer, MatchResult, Player
-
-/app/frontend/src/
-  context/: AuthContext, SettingsContext, I18nContext
-  hooks/: useBoardWS, useSoundManager
-  i18n/: translations.js
-  pages/admin/: Dashboard, Boards, Settings (6 tabs), Users, Logs, Revenue, Health, System, Discovery, Leaderboard
-  pages/kiosk/: LockedScreen, SetupScreen, InGameScreen, MatchResultScreen, ErrorScreen
+/app/backend/routers/: auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
+/app/backend/services/: autodarts, scheduler, backup, health_monitor, update, setup_wizard, system, ws_manager, mdns, pairing, sound_generator
+/app/frontend/src/context/: AuthContext, SettingsContext, I18nContext
+/app/frontend/src/hooks/: useBoardWS, useSoundManager
+/app/frontend/src/i18n/: translations.js (~180 keys DE/EN)
+/app/frontend/src/pages/admin/: AdminLayout (i18n sidebar), Dashboard, Boards, Settings (6 tabs), Users, Logs, Revenue, Health, System, Discovery, Leaderboard — ALL using useI18n()
+/app/frontend/src/pages/kiosk/: LockedScreen, SetupScreen, InGameScreen, MatchResultScreen, ErrorScreen — key screens using useI18n()
 ```
 
 ## Remaining Backlog
-
-### P1 - Upcoming
-- [ ] Autodarts DOM Selector Tests (stability against Autodarts website changes)
-
-### P2 - Future
+### P1
+- [ ] Autodarts DOM Selector Tests
+### P2
 - [ ] mDNS Discovery Enhancements

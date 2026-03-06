@@ -16,6 +16,7 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/I18nContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -39,6 +40,7 @@ function RankBadge({ rank }) {
 
 export default function Leaderboard() {
   const { token } = useAuth();
+  const { t } = useI18n();
   const [period, setPeriod] = useState('all');
   const [sortBy, setSortBy] = useState('games_won');
   const [data, setData] = useState(null);
@@ -80,7 +82,7 @@ export default function Leaderboard() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">Leaderboard</h1>
+          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('leaderboard')}</h1>
           <p className="text-zinc-500">{data?.total_players || 0} Spieler | Zeitraum: {period}</p>
         </div>
         <Button onClick={fetchLeaderboard} variant="outline" className="border-zinc-700 text-zinc-400 hover:text-white" data-testid="leaderboard-refresh-btn">

@@ -22,11 +22,13 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/I18nContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function AdminHealth() {
   const { token } = useAuth();
+  const { t } = useI18n();
   const [health, setHealth] = useState(null);
   const [backups, setBackups] = useState(null);
   const [screenshots, setScreenshots] = useState([]);
@@ -144,7 +146,7 @@ export default function AdminHealth() {
     <div data-testid="admin-health">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">System Health</h1>
+          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('system_health')}</h1>
           <p className="text-zinc-500">Überwachung und Backups</p>
         </div>
         <Button

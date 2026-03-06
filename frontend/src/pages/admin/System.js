@@ -23,6 +23,7 @@ import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/I18nContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -43,6 +44,7 @@ function formatBytes(bytes) {
 
 export default function AdminSystem() {
   const { token } = useAuth();
+  const { t } = useI18n();
   const [sysInfo, setSysInfo] = useState(null);
   const [backups, setBackups] = useState(null);
   const [updates, setUpdates] = useState(null);
@@ -167,7 +169,7 @@ export default function AdminSystem() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">System</h1>
+          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('system')}</h1>
           <p className="text-zinc-500">Verwaltung, Backups & Logs</p>
         </div>
         <Button onClick={fetchAll} variant="outline" className="border-zinc-700 text-zinc-400 hover:text-white" data-testid="system-refresh-btn">

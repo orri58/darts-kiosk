@@ -190,7 +190,7 @@ export default function AdminSettings() {
   const [testingSound, setTestingSound] = useState(null);
 
   // Language state
-  const { lang, switchLang } = useI18n();
+  const { lang, t, switchLang } = useI18n();
   const [languageSetting, setLanguageSetting] = useState('de');
   const [langLoading, setLangLoading] = useState(true);
 
@@ -337,35 +337,35 @@ export default function AdminSettings() {
   return (
     <div data-testid="admin-settings">
       <div className="mb-6">
-        <h1 className="text-2xl font-heading uppercase tracking-wider text-white">Einstellungen</h1>
-        <p className="text-zinc-500">Branding, Preise und Konfiguration</p>
+        <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('settings')}</h1>
+        <p className="text-zinc-500">{t('branding_pricing_config')}</p>
       </div>
 
       <Tabs defaultValue="branding" className="space-y-6">
         <TabsList className="bg-zinc-900 border border-zinc-800 p-1">
           <TabsTrigger value="branding" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Palette className="w-4 h-4 mr-2" />
-            Branding
+            {t('branding')}
           </TabsTrigger>
           <TabsTrigger value="pricing" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Euro className="w-4 h-4 mr-2" />
-            Preise
+            {t('pricing')}
           </TabsTrigger>
           <TabsTrigger value="palettes" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Type className="w-4 h-4 mr-2" />
-            Farbschema
+            {t('color_scheme')}
           </TabsTrigger>
           <TabsTrigger value="stammkunde" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <ShieldCheck className="w-4 h-4 mr-2" />
-            Stammkunde
+            {t('stammkunde')}
           </TabsTrigger>
           <TabsTrigger value="sound" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Volume2 className="w-4 h-4 mr-2" />
-            Sound
+            {t('sound')}
           </TabsTrigger>
           <TabsTrigger value="language" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Globe className="w-4 h-4 mr-2" />
-            Sprache
+            {t('language')}
           </TabsTrigger>
         </TabsList>
 
