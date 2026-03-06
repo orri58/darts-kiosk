@@ -47,7 +47,7 @@
 
 **Backend startet nicht:**
 - `logs\backend.log` prüfen
-- Port 8001 belegt? → `netstat -aon | findstr :8001`
+- Port 8001 belegt? → ` `
 
 **Frontend startet nicht:**
 - `logs\frontend.log` prüfen  

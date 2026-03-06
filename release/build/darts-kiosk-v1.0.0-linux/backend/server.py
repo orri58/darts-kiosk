@@ -41,7 +41,7 @@ from services.mdns_service import mdns_service
 from routers import auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
 
 # Configuration
-DATA_DIR = Path(os.environ.get('DATA_DIR', '/app/data'))
+from database import DATA_DIR
 LOGS_DIR = DATA_DIR / 'logs'
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 

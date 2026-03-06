@@ -14,7 +14,7 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from database import get_db
+from database import get_db, DATA_DIR
 from models import User, Session, Settings, AuditLog, UserRole, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -24,7 +24,6 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 MODE = os.environ.get('MODE', 'MASTER')
 AGENT_SECRET = os.environ.get('AGENT_SECRET', 'agent-secret-key')
-DATA_DIR = Path(os.environ.get('DATA_DIR', '/app/data'))
 ASSETS_DIR = DATA_DIR / 'assets'
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 

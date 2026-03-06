@@ -1,6 +1,10 @@
 @echo off
 chcp 65001 >nul 2>&1
 title Darts Kiosk - Gestartet
+
+:: Resolve to the directory where this .bat lives (project root)
+cd /d %~dp0
+
 echo.
 echo ================================================================
 echo   DARTS KIOSK - Starten
@@ -17,6 +21,7 @@ if not exist "backend\.env" (
 
 :: Create logs dir
 if not exist "logs" mkdir logs
+if not exist "data\db" mkdir data\db
 
 :: Kill any existing instances
 echo [1/3] Alte Prozesse beenden...
@@ -24,9 +29,9 @@ taskkill /F /FI "WINDOWTITLE eq Darts Backend" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Darts Frontend" >nul 2>&1
 timeout /t 2 /nobreak >nul
 
-:: Start Backend
+:: Start Backend (from project root, uvicorn targets backend/server.py)
 echo [2/3] Backend starten (Port 8001)...
-start "Darts Backend" /MIN cmd /c "cd /d %~dp0backend && python -m uvicorn server:app --host 0.0.0.0 --port 8001 --reload > ..\logs\backend.log 2>&1"
+start "Darts Backend" /MIN cmd /c "cd /d %~dp0 && python -m uvicorn backend.server:app --host 0.0.0.0 --port 8001 --reload --app-dir . > logs\backend.log 2>&1"
 echo   [OK] Backend gestartet (Log: logs\backend.log)
 
 :: Wait for backend
@@ -48,7 +53,7 @@ if %ERRORLEVEL% NEQ 0 (
     echo   [OK]   Backend laeuft!
 )
 
-:: Start Frontend
+:: Start Frontend (from frontend dir)
 echo [3/3] Frontend starten (Port 3000)...
 start "Darts Frontend" /MIN cmd /c "cd /d %~dp0frontend && set PORT=3000 && set BROWSER=none && call yarn start > ..\logs\frontend.log 2>&1"
 echo   [OK] Frontend gestartet (Log: logs\frontend.log)

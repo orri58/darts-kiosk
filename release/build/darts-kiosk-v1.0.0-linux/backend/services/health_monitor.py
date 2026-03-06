@@ -14,7 +14,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(os.environ.get('DATA_DIR', '/app/data'))
+from database import DATA_DIR
 SCREENSHOTS_DIR = DATA_DIR / 'autodarts_debug'
 
 

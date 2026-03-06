@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(os.environ.get('DATA_DIR', '/app/data'))
+from database import DATA_DIR
 SETUP_FLAG_FILE = DATA_DIR / '.setup_complete'
 SECRETS_FILE = DATA_DIR / '.secrets'
 

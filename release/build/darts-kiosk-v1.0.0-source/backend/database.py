@@ -1,6 +1,7 @@
 """
 SQLite Database Configuration with SQLAlchemy
-Designed for migration to PostgreSQL later
+Paths are resolved to absolute paths from the project root (parent of backend/),
+so the app works regardless of which directory uvicorn is launched from.
 """
 import os
 from sqlalchemy import create_engine
@@ -8,12 +9,44 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.orm import sessionmaker, declarative_base
 from pathlib import Path
 
-# Database path from environment or default
-DATA_DIR = Path(os.environ.get('DATA_DIR', '/app/data'))
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+# Project root = parent of the directory this file lives in (backend/)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-DATABASE_URL = os.environ.get('DATABASE_URL', f'sqlite+aiosqlite:///{DATA_DIR}/db.sqlite')
-SYNC_DATABASE_URL = os.environ.get('SYNC_DATABASE_URL', f'sqlite:///{DATA_DIR}/db.sqlite')
+def _resolve_data_dir():
+    raw = os.environ.get('DATA_DIR', '')
+    if raw:
+        p = Path(raw)
+        return p if p.is_absolute() else (PROJECT_ROOT / p).resolve()
+    return PROJECT_ROOT / 'data'
+
+DATA_DIR = _resolve_data_dir()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+(DATA_DIR / 'db').mkdir(parents=True, exist_ok=True)
+
+def _resolve_sqlite_url(raw_url: str, prefix: str) -> str:
+    """Turn a relative sqlite path into an absolute one anchored at PROJECT_ROOT."""
+    if not raw_url:
+        return f'{prefix}:///{DATA_DIR}/db.sqlite'
+    # Extract the file path from sqlite:///./relative or sqlite:////absolute
+    for tag in (f'{prefix}:///', f'{prefix}://'):
+        if raw_url.startswith(tag):
+            fpath = raw_url[len(tag):]
+            p = Path(fpath)
+            if not p.is_absolute():
+                p = (PROJECT_ROOT / p).resolve()
+                p.parent.mkdir(parents=True, exist_ok=True)
+                return f'{tag}{p}'
+            return raw_url
+    return raw_url
+
+DATABASE_URL = _resolve_sqlite_url(
+    os.environ.get('DATABASE_URL', ''),
+    'sqlite+aiosqlite'
+)
+SYNC_DATABASE_URL = _resolve_sqlite_url(
+    os.environ.get('SYNC_DATABASE_URL', ''),
+    'sqlite'
+)
 
 # Async engine for FastAPI
 async_engine = create_async_engine(

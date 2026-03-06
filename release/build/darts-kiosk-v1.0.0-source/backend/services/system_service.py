@@ -14,7 +14,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path(os.environ.get('DATA_DIR', '/app/data'))
+from database import DATA_DIR
 LOGS_DIR = DATA_DIR / 'logs'
 APP_VERSION = os.environ.get('APP_VERSION', '1.0.0')
 DOCKER_IMAGE = os.environ.get('DOCKER_IMAGE', 'darts-kiosk')

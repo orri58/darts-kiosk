@@ -1,6 +1,7 @@
 @echo off
 chcp 65001 >nul 2>&1
 title Darts Kiosk - Windows Setup
+cd /d %~dp0
 echo.
 echo ================================================================
 echo   DARTS KIOSK - Einmalige Einrichtung
@@ -71,10 +72,9 @@ python -m pip install --upgrade pip >nul 2>&1
 python -m pip install -r requirements.txt 2>&1 | findstr /I "error fail" && (
     echo   [WARN] Einige Pakete hatten Probleme, versuche Basis-Pakete...
 )
-:: Install core packages explicitly in case full requirements fails
 python -m pip install fastapi uvicorn sqlalchemy aiosqlite pydantic python-jose passlib bcrypt python-multipart python-dotenv apscheduler slowapi pillow qrcode zeroconf websockets >nul 2>&1
 echo   [OK] Backend-Pakete installiert
-cd ..
+cd /d %~dp0
 
 :: Install Playwright
 echo.
@@ -88,14 +88,13 @@ if %ERRORLEVEL% NEQ 0 (
 ) else (
     echo   [OK] Playwright Chromium installiert
 )
-cd ..
+cd /d %~dp0
 
 :: Install frontend dependencies
 echo.
 echo [5/6] Frontend-Pakete installieren (kann 3-5 Min dauern)...
 cd frontend
 
-:: Install yarn if not available
 call yarn --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo   yarn nicht gefunden, installiere via npm...
@@ -104,7 +103,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 call yarn install --frozen-lockfile 2>&1 || call yarn install 2>&1
 echo   [OK] Frontend-Pakete installiert
-cd ..
+cd /d %~dp0
 
 :: Summary
 echo.

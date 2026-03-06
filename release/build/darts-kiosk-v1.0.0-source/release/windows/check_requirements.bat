@@ -1,6 +1,7 @@
 @echo off
 chcp 65001 >nul 2>&1
 title Darts Kiosk - Voraussetzungen pruefen
+cd /d %~dp0
 echo.
 echo ================================================================
 echo   DARTS KIOSK - Voraussetzungen pruefen
