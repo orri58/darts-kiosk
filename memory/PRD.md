@@ -17,6 +17,11 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
 - Top Stammkunden Rotation on Locked Screen
 - System Management (health, backups, logs)
 
+### Bug Fixes (2026-03-06)
+- **LAN Access Fix:** `start.bat` now sets `HOST=0.0.0.0` for frontend, auto-detects LAN IP, writes dynamic `REACT_APP_BACKEND_URL`. `CORS_ORIGINS=*` for Windows bundle.
+- **Autodarts Trigger Fix:** `/api/kiosk/{board_id}/start-game` now properly triggers Autodarts Playwright integration as background task when board has `autodarts_target_url`. Added `autodarts-status` and `autodarts-reset` endpoints.
+- **Package-Safe Imports:** All backend imports converted to absolute `from backend.xxx import ...` form. `server.py` includes `sys.path` adjustment for backward compatibility with `directory=/app/backend` startup. Works with both `uvicorn server:app` (from backend/) and `uvicorn backend.server:app` (from project root).
+
 ### Release Packages (v1.0.0)
 | Package | File | Size | Description |
 |---------|------|------|-------------|
@@ -27,10 +32,10 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
 #### Windows Bundle Contents
 - `check_requirements.bat` — Prüft Python 3.11+ & Node 18+
 - `setup_windows.bat` — Installiert Backend/Frontend Deps + Playwright
-- `start.bat` — One-Click Start (Backend + Frontend), öffnet Browser
+- `start.bat` — One-Click Start (Backend + Frontend), LAN-IP-Erkennung, öffnet Browser
 - `stop.bat` — Beendet alle Prozesse
 - `README.md` — 3-5 Schritte Anleitung
-- Vorkonfigurierte `.env` Dateien für localhost
+- Vorkonfigurierte `.env` Dateien (CORS=* für LAN)
 
 #### Linux Bundle Contents
 - `install.sh` v2.0.0 — Ubuntu 22.04/24.04, Docker, systemd, Firewall
@@ -46,7 +51,11 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
 - Windows-Scripts unter `scripts/windows/`
 
 ## Remaining Backlog
+### P0
+- [ ] Rebuild release packages with fixed imports + LAN fix + Autodarts trigger
+
 ### P1
 - [ ] Autodarts DOM Selector Tests
+
 ### P2
 - [ ] mDNS Discovery Enhancements

@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional
 
-from database import get_db
-from models import MatchResult, Player, Settings, DEFAULT_STAMMKUNDE_DISPLAY
+from backend.database import get_db
+from backend.models import MatchResult, Player, Settings, DEFAULT_STAMMKUNDE_DISPLAY
 
 logger = logging.getLogger(__name__)
 

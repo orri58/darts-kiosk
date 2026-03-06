@@ -44,7 +44,7 @@ if not exist "backend\.env" (
         echo DATA_DIR=./data
         echo JWT_SECRET=darts-local-dev-secret-change-in-production
         echo AGENT_SECRET=agent-local-dev-secret
-        echo CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+        echo CORS_ORIGINS=*
         echo MODE=STANDALONE
         echo BOARD_ID=BOARD-1
         echo AUTODARTS_URL=https://play.autodarts.io

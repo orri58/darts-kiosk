@@ -3,10 +3,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from database import get_db
-from models import User, Board
-from dependencies import require_admin, log_audit
-from services.update_service import update_service
+from backend.database import get_db
+from backend.models import User, Board
+from backend.dependencies import require_admin, log_audit
+from backend.services.update_service import update_service
 
 router = APIRouter()
 

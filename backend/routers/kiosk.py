@@ -8,12 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from pydantic import BaseModel
 
-from database import get_db, AsyncSessionLocal
-from models import Board, Session, MatchResult, Player, BoardStatus, SessionStatus, PricingMode
-from schemas import StartGameRequest, EndGameRequest
-from dependencies import get_active_session_for_board, log_audit
-from services.ws_manager import board_ws
-from services.autodarts_integration import (
+from backend.database import get_db, AsyncSessionLocal
+from backend.models import Board, Session, MatchResult, Player, BoardStatus, SessionStatus, PricingMode
+from backend.schemas import StartGameRequest, EndGameRequest
+from backend.dependencies import get_active_session_for_board, log_audit
+from backend.services.ws_manager import board_ws
+from backend.services.autodarts_integration import (
     get_autodarts_integration, GameConfig, AutodartsError
 )
 
@@ -109,8 +109,6 @@ async def _run_autodarts_game(board_id: str, config: GameConfig):
                         session = await get_active_session_for_board(db, board.id)
                         if session:
                             logger.info(f"[Autodarts] Auto-ending game for board {board_id} via DB update")
-                            # Trigger end-game via internal call
-                            from routers.kiosk import _end_game_internal
                             await _end_game_internal(
                                 db, board, session, board_id,
                                 winner=game_status.winner,

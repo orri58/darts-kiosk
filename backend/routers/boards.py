@@ -6,17 +6,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from typing import List
 
-from database import get_db
-from models import User, Board, Session, BoardStatus, SessionStatus, PricingMode
-from schemas import (
+from backend.database import get_db
+from backend.models import User, Board, Session, BoardStatus, SessionStatus, PricingMode
+from backend.schemas import (
     BoardCreate, BoardUpdate, BoardResponse,
     UnlockRequest, ExtendRequest, SessionResponse
 )
-from dependencies import (
+from backend.dependencies import (
     get_current_user, require_admin, log_audit,
     get_active_session_for_board
 )
-from services.ws_manager import board_ws
+from backend.services.ws_manager import board_ws
 
 router = APIRouter()
 

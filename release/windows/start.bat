@@ -53,7 +53,7 @@ echo.>> frontend\.env
 
 :: Start Backend (from project root, uvicorn targets backend/server.py)
 echo [3/4] Backend starten (Port 8001, 0.0.0.0)...
-start "Darts Backend" /MIN cmd /c "cd /d %~dp0 && python -m uvicorn backend.server:app --host 0.0.0.0 --port 8001 --reload --app-dir . > logs\backend.log 2>&1"
+start "Darts Backend" /MIN cmd /c "cd /d %~dp0 && python -m uvicorn backend.server:app --host 0.0.0.0 --port 8001 --reload > logs\backend.log 2>&1"
 echo   [OK] Backend gestartet (Log: logs\backend.log)
 
 :: Wait for backend
