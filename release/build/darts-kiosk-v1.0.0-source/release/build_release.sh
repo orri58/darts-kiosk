@@ -113,13 +113,14 @@ SYNC_DATABASE_URL=sqlite:///./data/db/darts.sqlite
 DATA_DIR=./data
 JWT_SECRET=darts-local-dev-secret-change-in-production
 AGENT_SECRET=agent-local-dev-secret
-CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+CORS_ORIGINS=*
 MODE=STANDALONE
 BOARD_ID=BOARD-1
 AUTODARTS_URL=https://play.autodarts.io
 AUTODARTS_MOCK=false
 EOF
 
+# Frontend .env will be dynamically updated by start.bat with LAN IP
 cat > "${WIN_DIR}/frontend/.env" << 'EOF'
 REACT_APP_BACKEND_URL=http://localhost:8001
 EOF

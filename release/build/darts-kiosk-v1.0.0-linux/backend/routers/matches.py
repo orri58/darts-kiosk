@@ -14,8 +14,8 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Optional
 
-from database import get_db
-from models import MatchResult, Board
+from backend.database import get_db
+from backend.models import MatchResult, Board
 
 logger = logging.getLogger(__name__)
 

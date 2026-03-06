@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration
 AUTODARTS_URL = os.environ.get('AUTODARTS_URL', 'https://play.autodarts.io')
-from database import DATA_DIR
+from backend.database import DATA_DIR
 SCREENSHOTS_DIR = DATA_DIR / 'autodarts_debug'
 SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 

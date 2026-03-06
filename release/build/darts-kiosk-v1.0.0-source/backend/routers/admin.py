@@ -8,18 +8,18 @@ from typing import List, Optional
 from pathlib import Path
 import os
 
-from database import get_db
-from models import User, Board, Session, AuditLog, SessionStatus
-from schemas import AuditLogResponse, SessionResponse
-from dependencies import (
+from backend.database import get_db
+from backend.models import User, Board, Session, AuditLog, SessionStatus
+from backend.schemas import AuditLogResponse, SessionResponse
+from backend.dependencies import (
     get_current_user, require_admin, log_audit, DATA_DIR,
     get_active_session_for_board
 )
-from services.health_monitor import health_monitor
-from services.setup_wizard import (
+from backend.services.health_monitor import health_monitor
+from backend.services.setup_wizard import (
     check_setup_status, complete_setup, SetupConfig
 )
-from services.system_service import system_service
+from backend.services.system_service import system_service
 
 router = APIRouter()
 

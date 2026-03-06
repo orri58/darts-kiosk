@@ -129,9 +129,9 @@ class UpdateService:
     
     async def update_all_agents(self, target_version: str = "latest") -> List[UpdateResult]:
         """Update all registered agents"""
-        from database import AsyncSessionLocal
+        from backend.database import AsyncSessionLocal
         from sqlalchemy import select
-        from models import Board
+        from backend.models import Board
         
         results = []
         

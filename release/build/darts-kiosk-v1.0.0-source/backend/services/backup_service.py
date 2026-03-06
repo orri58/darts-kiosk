@@ -14,7 +14,7 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
-from database import DATA_DIR
+from backend.database import DATA_DIR
 BACKUP_DIR = DATA_DIR / 'backups'
 DB_PATH = DATA_DIR / 'db.sqlite'
 

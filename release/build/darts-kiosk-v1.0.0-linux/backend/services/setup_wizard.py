@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
-from database import DATA_DIR
+from backend.database import DATA_DIR
 SETUP_FLAG_FILE = DATA_DIR / '.setup_complete'
 SECRETS_FILE = DATA_DIR / '.secrets'
 
@@ -99,7 +99,7 @@ def get_setup_timestamp() -> Optional[str]:
 
 async def check_setup_status(db: AsyncSession) -> SetupStatus:
     """Check current setup status"""
-    from models import User, UserRole
+    from backend.models import User, UserRole
     import bcrypt
     
     is_complete = is_setup_complete()
@@ -153,7 +153,7 @@ async def check_setup_status(db: AsyncSession) -> SetupStatus:
 
 async def complete_setup(db: AsyncSession, config: SetupConfig) -> dict:
     """Complete the first-run setup"""
-    from models import User, Settings, UserRole
+    from backend.models import User, Settings, UserRole
     import bcrypt
     
     results = {

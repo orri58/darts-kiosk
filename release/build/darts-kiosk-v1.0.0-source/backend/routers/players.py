@@ -18,8 +18,8 @@ from typing import Optional
 
 import bcrypt
 
-from database import get_db
-from models import Player
+from backend.database import get_db
+from backend.models import Player
 
 logger = logging.getLogger(__name__)
 

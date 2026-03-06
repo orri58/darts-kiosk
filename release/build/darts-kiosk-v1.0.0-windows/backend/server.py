@@ -2,13 +2,20 @@
 Main FastAPI Application - Darts Kiosk + Admin Control System
 Refactored: routes split into routers/, schemas in schemas.py, deps in dependencies.py
 """
+import sys
+from pathlib import Path
+
+# Ensure 'from backend.xxx' works regardless of working directory
+_project_root = str(Path(__file__).resolve().parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy import select
 from datetime import datetime, timezone
-from pathlib import Path
 import os
 import logging
 import logging.handlers
@@ -20,28 +27,28 @@ from dotenv import load_dotenv
 load_dotenv(ROOT_DIR / '.env')
 
 # Load secrets from file if available
-from services.setup_wizard import load_secrets_to_env, is_setup_complete
+from backend.services.setup_wizard import load_secrets_to_env, is_setup_complete
 load_secrets_to_env()
 
-from database import get_db, init_db, Base, async_engine, AsyncSessionLocal
-from models import (
+from backend.database import get_db, init_db, Base, async_engine, AsyncSessionLocal
+from backend.models import (
     User, Board, UserRole, BoardStatus,
     DEFAULT_PALETTES, DEFAULT_PRICING, DEFAULT_BRANDING
 )
-from dependencies import hash_password, get_or_create_setting, MODE
+from backend.dependencies import hash_password, get_or_create_setting, MODE
 
 # Services
-from services.scheduler import start_scheduler, stop_scheduler
-from services.backup_service import start_backup_service, stop_backup_service
-from services.health_monitor import health_monitor, start_health_monitor, stop_health_monitor
-from services.ws_manager import board_ws
-from services.mdns_service import mdns_service
+from backend.services.scheduler import start_scheduler, stop_scheduler
+from backend.services.backup_service import start_backup_service, stop_backup_service
+from backend.services.health_monitor import health_monitor, start_health_monitor, stop_health_monitor
+from backend.services.ws_manager import board_ws
+from backend.services.mdns_service import mdns_service
 
 # Routers
-from routers import auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
+from backend.routers import auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
 
 # Configuration
-from database import DATA_DIR
+from backend.database import DATA_DIR
 LOGS_DIR = DATA_DIR / 'logs'
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 

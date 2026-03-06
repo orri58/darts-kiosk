@@ -6,10 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from database import get_db
-from models import Board
-from schemas import AgentStatusResponse, SessionResponse
-from dependencies import get_active_session_for_board, verify_agent_secret
+from backend.database import get_db
+from backend.models import Board
+from backend.schemas import AgentStatusResponse, SessionResponse
+from backend.dependencies import get_active_session_for_board, verify_agent_secret
 
 logger = logging.getLogger(__name__)
 

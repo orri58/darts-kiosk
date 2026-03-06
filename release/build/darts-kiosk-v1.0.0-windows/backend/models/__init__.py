@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 import uuid
 import enum
 
-from database import Base
+from backend.database import Base
 
 
 def generate_uuid():

@@ -14,7 +14,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-from database import DATA_DIR
+from backend.database import DATA_DIR
 SCREENSHOTS_DIR = DATA_DIR / 'autodarts_debug'
 
 
@@ -125,9 +125,9 @@ class HealthMonitor:
     
     async def _check_agents(self):
         """Check health of all registered agents"""
-        from database import AsyncSessionLocal
+        from backend.database import AsyncSessionLocal
         from sqlalchemy import select
-        from models import Board
+        from backend.models import Board
         
         try:
             async with AsyncSessionLocal() as db:

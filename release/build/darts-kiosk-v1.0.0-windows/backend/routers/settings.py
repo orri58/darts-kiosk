@@ -5,12 +5,12 @@ from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from database import get_db
-from models import User, Settings
-from models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE
-from schemas import SettingsUpdate
-from dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
-from services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
+from backend.database import get_db
+from backend.models import User, Settings
+from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE
+from backend.schemas import SettingsUpdate
+from backend.dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
+from backend.services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
 
 router = APIRouter()
 

@@ -4,13 +4,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from typing import List
 
-from database import get_db
-from models import User, UserRole
-from schemas import (
+from backend.database import get_db
+from backend.models import User, UserRole
+from backend.schemas import (
     LoginRequest, PinLoginRequest, TokenResponse,
     UserCreate, UserUpdate, UserResponse
 )
-from dependencies import (
+from backend.dependencies import (
     get_current_user, require_admin, log_audit,
     hash_password, verify_password, create_token
 )

@@ -11,8 +11,8 @@ from contextlib import asynccontextmanager
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database import AsyncSessionLocal
-from models import Board, Session, Settings, BoardStatus, SessionStatus
+from backend.database import AsyncSessionLocal
+from backend.models import Board, Session, Settings, BoardStatus, SessionStatus
 
 logger = logging.getLogger(__name__)
 

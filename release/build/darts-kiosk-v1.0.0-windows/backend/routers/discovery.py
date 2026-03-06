@@ -13,11 +13,11 @@ from sqlalchemy import select
 from pydantic import BaseModel
 from typing import Optional
 
-from database import get_db
-from models import User, TrustedPeer
-from dependencies import require_admin, get_current_user, log_audit
-from services.mdns_service import mdns_service
-from services.pairing_service import pairing_service
+from backend.database import get_db
+from backend.models import User, TrustedPeer
+from backend.dependencies import require_admin, get_current_user, log_audit
+from backend.services.mdns_service import mdns_service
+from backend.services.pairing_service import pairing_service
 
 logger = logging.getLogger(__name__)
 MODE = os.environ.get('MODE', 'MASTER')

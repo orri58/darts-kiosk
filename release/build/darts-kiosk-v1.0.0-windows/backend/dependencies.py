@@ -14,8 +14,8 @@ from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from database import get_db, DATA_DIR
-from models import User, Session, Settings, AuditLog, UserRole, SessionStatus
+from backend.database import get_db, DATA_DIR
+from backend.models import User, Session, Settings, AuditLog, UserRole, SessionStatus
 
 logger = logging.getLogger(__name__)
 
