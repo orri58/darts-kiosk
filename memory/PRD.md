@@ -3,46 +3,47 @@
 ## Original Problem Statement
 Production-ready, local-first Darts Kiosk + Admin Control system for a cafe running on Mini-PCs. Master/Agent architecture for multi-board control over LAN.
 
-## Implementation History
+## Version 1.0.0 (2026-03-06)
 
-### Phase 1-4 (2026-03-03) - Core MVP + Production + Hardening + Installer
-### P1: Live Stability (2026-03-04) - WebSocket, Refactoring, mDNS, Pairing
-### P2: QR-Code Match-Link + Player Stats + Leaderboard (2026-03-04)
-### P0: Stammkunde Mode (2026-03-04) - PIN login, QR token, registration
-### Top Stammkunden Rotation (2026-03-04) - Kiosk locked screen display
-### Custom Palette Editor (2026-03-04) - Create/edit/delete with live preview
+### Implemented Features
+- Core MVP: Kiosk UI, Admin Panel, JWT+PIN Auth, Board CRUD, Pricing
+- Stammkunde Mode (PIN/QR login, player stats, leaderboard)
+- Autodarts Integration (Playwright, circuit breaker, soak-tested)
+- mDNS Discovery + Secure Pairing
+- QR Match Links (24h expiry)
+- Custom Palette Editor (live preview, WCAG contrast, JSON import/export)
+- Sound Effects (synthetic WAV, admin controls, rate limiting)
+- EN/DE i18n (180+ keys, full admin + kiosk coverage)
+- Top Stammkunden Rotation on Locked Screen
+- System Management (health, backups, logs)
 
-### Kiosk Sound Effects (2026-03-06) - COMPLETED
-- Pure Python WAV synthesis (5 events, <=0.8s, ADSR envelopes)
-- Admin: enable toggle, volume, quiet hours, sound pack, rate limit
-- Frontend: Web Audio API preload, autoplay-unlock, rate limiting
-- WS broadcast on game events + manual trigger endpoint
+### Release Packages (v1.0.0)
+| Package | File | Size | Description |
+|---------|------|------|-------------|
+| Windows Test | `darts-kiosk-v1.0.0-windows.zip` | 1.9 MB | Direct Python+Node, BAT scripts, pre-built frontend |
+| Linux Prod | `darts-kiosk-v1.0.0-linux.tar.gz` | 1.6 MB | install.sh, systemd, nginx, offline-ready |
+| Source | `darts-kiosk-v1.0.0-source.zip` | 484 KB | GitHub-ready, Docker Compose, .env.example |
 
-### EN/DE i18n - Full Coverage (2026-03-06) - COMPLETED
-- **translations.js**: ~180 DE/EN keys covering ALL UI strings
-- **I18nContext**: fetchLang on mount, t(key, params) with interpolation, switchLang()
-- **Admin Navigation**: All 10 sidebar labels through t() with stable data-testid
-- **Admin Pages**: All 9 page headings (Dashboard, Boards, Settings, Users, Logs, Revenue, Health, System, Discovery, Leaderboard) through t()
-- **Dashboard Board Cards**: Status labels (GESPERRT/LOCKED), buttons (FREISCHALTEN/UNLOCK, SPERREN/LOCK, VERLÄNGERN/EXTEND), location label
-- **Settings Tabs**: All 6 tab labels (Branding, Preise/Pricing, Farbschema/Color Scheme, Stammkunde/Regular, Sound, Sprache/Language) through t()
-- **Kiosk LockedScreen**: All texts (locked message, prices, board, pairing code, top stammkunden, CTA)
-- **Kiosk SetupScreen**: Game prep, player names, stammkunde auth flow, PIN dialogs
-- **Admin Language Tab**: DE/EN flag buttons with save
-- **No hardcoded admin navigation strings left**
-- **Language switch updates labels without full page reload** (React context re-render)
-- **Active route/menu state remains intact after language change**
-- Verified: Screenshots confirm EN mode shows "DASHBOARD", "Settings", "LOCKED", "UNLOCK", "Refresh", "Location:" and DE mode shows "DASHBOARD", "Einstellungen", "GESPERRT", "FREISCHALTEN", "Aktualisieren", "Standort:"
+#### Windows Bundle Contents
+- `check_requirements.bat` — Prüft Python 3.11+ & Node 18+
+- `setup_windows.bat` — Installiert Backend/Frontend Deps + Playwright
+- `start.bat` — One-Click Start (Backend + Frontend), öffnet Browser
+- `stop.bat` — Beendet alle Prozesse
+- `README.md` — 3-5 Schritte Anleitung
+- Vorkonfigurierte `.env` Dateien für localhost
 
-## Code Architecture
-```
-/app/backend/routers/: auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
-/app/backend/services/: autodarts, scheduler, backup, health_monitor, update, setup_wizard, system, ws_manager, mdns, pairing, sound_generator
-/app/frontend/src/context/: AuthContext, SettingsContext, I18nContext
-/app/frontend/src/hooks/: useBoardWS, useSoundManager
-/app/frontend/src/i18n/: translations.js (~180 keys DE/EN)
-/app/frontend/src/pages/admin/: AdminLayout (i18n sidebar), Dashboard, Boards, Settings (6 tabs), Users, Logs, Revenue, Health, System, Discovery, Leaderboard — ALL using useI18n()
-/app/frontend/src/pages/kiosk/: LockedScreen, SetupScreen, InGameScreen, MatchResultScreen, ErrorScreen — key screens using useI18n()
-```
+#### Linux Bundle Contents
+- `install.sh` v2.0.0 — Ubuntu 22.04/24.04, Docker, systemd, Firewall
+- Pre-built Frontend (kein Node auf Prod nötig)
+- `serve-frontend.py` — Einfacher SPA-Server als Fallback
+- nginx.conf, docker-compose.yml
+
+#### Source Bundle Contents
+- Kompletter Quellcode ohne Runtime-Artefakte
+- `.env.example` für Backend + Frontend
+- `RELEASE_NOTES.md` mit Feature-Liste
+- `.gitignore` GitHub-ready
+- Windows-Scripts unter `scripts/windows/`
 
 ## Remaining Backlog
 ### P1

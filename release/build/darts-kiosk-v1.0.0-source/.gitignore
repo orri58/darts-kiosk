@@ -1,0 +1,21 @@
+# Darts Kiosk System
+
+/data/
+*.sqlite
+*.sqlite-journal
+node_modules/
+__pycache__/
+*.pyc
+.env
+!.env.example
+logs/
+*.log
+.DS_Store
+Thumbs.db
+dist/
+build/
+.cache/
+*.egg-info/
+.pytest_cache/
+playwright-report/
+test-results/
