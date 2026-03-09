@@ -122,6 +122,13 @@ async def health():
     return {"status": "healthy", "mode": MODE}
 
 
+@router.get("/system/version")
+async def get_system_version():
+    """Public version endpoint for update checks and health verification."""
+    from backend.services.system_service import APP_VERSION
+    return {"installed_version": APP_VERSION}
+
+
 # ===== Health Monitoring =====
 
 @router.get("/health/detailed")

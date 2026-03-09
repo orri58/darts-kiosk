@@ -16,7 +16,16 @@ logger = logging.getLogger(__name__)
 
 from backend.database import DATA_DIR
 LOGS_DIR = DATA_DIR / 'logs'
-APP_VERSION = os.environ.get('APP_VERSION', '1.0.0')
+
+# Read version from VERSION file (single source of truth)
+_VERSION_FILE = Path(__file__).resolve().parent.parent.parent / 'VERSION'
+def _read_version() -> str:
+    try:
+        return _VERSION_FILE.read_text().strip()
+    except FileNotFoundError:
+        return os.environ.get('APP_VERSION', '0.0.0')
+
+APP_VERSION = _read_version()
 DOCKER_IMAGE = os.environ.get('DOCKER_IMAGE', 'darts-kiosk')
 
 

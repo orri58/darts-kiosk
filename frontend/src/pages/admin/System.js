@@ -99,6 +99,11 @@ export default function AdminSystem() {
   const [downloadedAssets, setDownloadedAssets] = useState([]);
   const [updateHistory, setUpdateHistory] = useState([]);
   const [expandedRelease, setExpandedRelease] = useState(null);
+  const [installing, setInstalling] = useState(false);
+  const [rollbackInProgress, setRollbackInProgress] = useState(false);
+  const [appBackups, setAppBackups] = useState([]);
+  const [updateResult, setUpdateResult] = useState(null);
+  const [creatingAppBackup, setCreatingAppBackup] = useState(false);
   const headers = { Authorization: `Bearer ${token}` };
 
   const fetchAll = useCallback(async () => {
@@ -157,7 +162,23 @@ export default function AdminSystem() {
     } catch { /* ignore */ }
   };
 
-  useEffect(() => { fetchDownloads(); }, []);
+  const fetchAppBackups = async () => {
+    try {
+      const res = await axios.get(`${API}/updates/backups`, { headers });
+      setAppBackups(res.data.backups || []);
+    } catch { /* ignore */ }
+  };
+
+  const fetchUpdateResult = async () => {
+    try {
+      const res = await axios.get(`${API}/updates/result`, { headers });
+      if (res.data.has_result) {
+        setUpdateResult(res.data.result);
+      }
+    } catch { /* ignore */ }
+  };
+
+  useEffect(() => { fetchDownloads(); fetchAppBackups(); fetchUpdateResult(); }, []);
 
   const createBackup = async () => {
     setCreating(true);
@@ -228,6 +249,107 @@ export default function AdminSystem() {
     } catch {
       toast.error('Loeschen fehlgeschlagen');
     }
+  };
+
+  const handleInstallUpdate = async (assetFilename, targetVersion) => {
+    if (!window.confirm(
+      `Update auf v${targetVersion} installieren?\n\n` +
+      `Das System erstellt ein Backup, stoppt alle Dienste, ersetzt die Dateien und startet neu.\n` +
+      `Laufzeitdaten (Datenbank, Chrome-Profil, .env) werden NICHT ueberschrieben.`
+    )) return;
+    setInstalling(true);
+    try {
+      const res = await axios.post(
+        `${API}/updates/install?asset_filename=${encodeURIComponent(assetFilename)}&target_version=${encodeURIComponent(targetVersion)}`,
+        {},
+        { headers }
+      );
+      toast.success(res.data.message || 'Update gestartet');
+      // Poll for result after a delay
+      setTimeout(() => {
+        const pollInterval = setInterval(async () => {
+          try {
+            const r = await axios.get(`${API}/updates/result`, { headers });
+            if (r.data.has_result) {
+              setUpdateResult(r.data.result);
+              clearInterval(pollInterval);
+              setInstalling(false);
+            }
+          } catch {
+            // Backend might be restarting — keep polling
+          }
+        }, 5000);
+        // Stop polling after 3 minutes
+        setTimeout(() => { clearInterval(pollInterval); setInstalling(false); }, 180000);
+      }, 10000);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Installation fehlgeschlagen');
+      setInstalling(false);
+    }
+  };
+
+  const handleRollback = async (backupFilename) => {
+    if (!window.confirm(
+      `Rollback mit Backup "${backupFilename}" durchfuehren?\n\n` +
+      `Das System stoppt alle Dienste, stellt die Dateien wieder her und startet neu.`
+    )) return;
+    setRollbackInProgress(true);
+    try {
+      const res = await axios.post(
+        `${API}/updates/rollback?backup_filename=${encodeURIComponent(backupFilename)}`,
+        {},
+        { headers }
+      );
+      toast.success(res.data.message || 'Rollback gestartet');
+      setTimeout(() => {
+        const pollInterval = setInterval(async () => {
+          try {
+            const r = await axios.get(`${API}/updates/result`, { headers });
+            if (r.data.has_result) {
+              setUpdateResult(r.data.result);
+              clearInterval(pollInterval);
+              setRollbackInProgress(false);
+            }
+          } catch { /* Backend restarting */ }
+        }, 5000);
+        setTimeout(() => { clearInterval(pollInterval); setRollbackInProgress(false); }, 180000);
+      }, 10000);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Rollback fehlgeschlagen');
+      setRollbackInProgress(false);
+    }
+  };
+
+  const handleCreateAppBackup = async () => {
+    setCreatingAppBackup(true);
+    try {
+      const res = await axios.post(`${API}/updates/backups/create`, {}, { headers });
+      toast.success(`App-Backup erstellt: ${res.data.filename}`);
+      fetchAppBackups();
+    } catch {
+      toast.error('App-Backup fehlgeschlagen');
+    } finally {
+      setCreatingAppBackup(false);
+    }
+  };
+
+  const handleDeleteAppBackup = async (filename) => {
+    if (!window.confirm(`App-Backup "${filename}" wirklich loeschen?`)) return;
+    try {
+      await axios.delete(`${API}/updates/backups/${encodeURIComponent(filename)}`, { headers });
+      toast.success('Backup geloescht');
+      fetchAppBackups();
+    } catch {
+      toast.error('Loeschen fehlgeschlagen');
+    }
+  };
+
+  const handleClearUpdateResult = async () => {
+    try {
+      await axios.post(`${API}/updates/result/clear`, {}, { headers });
+      setUpdateResult(null);
+      fetchAll();
+    } catch { /* ignore */ }
   };
 
   const downloadBackup = async (filename) => {
@@ -395,6 +517,76 @@ export default function AdminSystem() {
         {/* ===== Updates Tab ===== */}
         <TabsContent value="updates">
           <div className="space-y-6">
+            {/* Update Result Banner (from external updater) */}
+            {updateResult && (
+              <Card className={`border ${updateResult.success ? 'bg-emerald-500/10 border-emerald-500/30' : updateResult.rolled_back ? 'bg-amber-500/10 border-amber-500/30' : 'bg-red-500/10 border-red-500/30'}`} data-testid="update-result-banner">
+                <CardContent className="p-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-3 flex-1">
+                      {updateResult.success ? (
+                        <CheckCircle className="w-6 h-6 text-emerald-500 mt-0.5 flex-shrink-0" />
+                      ) : updateResult.rolled_back ? (
+                        <RotateCcw className="w-6 h-6 text-amber-500 mt-0.5 flex-shrink-0" />
+                      ) : (
+                        <XCircle className="w-6 h-6 text-red-500 mt-0.5 flex-shrink-0" />
+                      )}
+                      <div>
+                        <p className={`font-medium text-lg ${updateResult.success ? 'text-emerald-400' : updateResult.rolled_back ? 'text-amber-400' : 'text-red-400'}`}>
+                          {updateResult.action === 'install_update'
+                            ? updateResult.success
+                              ? `Update auf v${updateResult.target_version} erfolgreich`
+                              : updateResult.rolled_back
+                                ? `Update fehlgeschlagen — Rollback auf v${updateResult.previous_version} durchgefuehrt`
+                                : `Update auf v${updateResult.target_version} fehlgeschlagen`
+                            : updateResult.success
+                              ? `Rollback erfolgreich (${updateResult.backup_used})`
+                              : 'Rollback fehlgeschlagen'
+                          }
+                        </p>
+                        {updateResult.error && (
+                          <p className="text-sm text-red-400/80 mt-1">Fehler: {updateResult.error}</p>
+                        )}
+                        {updateResult.files_replaced > 0 && (
+                          <p className="text-xs text-zinc-500 mt-1">{updateResult.files_replaced} Dateien ersetzt</p>
+                        )}
+                        {updateResult.completed_at && (
+                          <p className="text-xs text-zinc-600 mt-1">{formatDate(updateResult.completed_at)}</p>
+                        )}
+                      </div>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleClearUpdateResult}
+                      className="border-zinc-700 text-zinc-400 hover:text-white flex-shrink-0"
+                      data-testid="clear-update-result-btn"
+                    >
+                      Bestaetigen
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Installing/Rollback Progress */}
+            {(installing || rollbackInProgress) && (
+              <Card className="bg-blue-500/10 border border-blue-500/30" data-testid="update-progress-banner">
+                <CardContent className="p-5">
+                  <div className="flex items-center gap-3">
+                    <RefreshCw className="w-6 h-6 text-blue-400 animate-spin flex-shrink-0" />
+                    <div>
+                      <p className="text-blue-400 font-medium text-lg">
+                        {installing ? 'Update wird installiert...' : 'Rollback wird durchgefuehrt...'}
+                      </p>
+                      <p className="text-sm text-zinc-400 mt-1">
+                        Dienste werden gestoppt, Dateien ersetzt, und neu gestartet.
+                        Diese Seite laedt automatisch neu wenn der Vorgang abgeschlossen ist.
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
             {/* Current Version & Check */}
             <Card className="bg-zinc-900 border-zinc-800">
               <CardHeader>
@@ -620,26 +812,43 @@ export default function AdminSystem() {
                       <FileDown className="w-4 h-4" /> Heruntergeladene Pakete
                     </p>
                     <div className="space-y-2">
-                      {downloadedAssets.map((a) => (
-                        <div key={a.name} className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid={`downloaded-${a.name}`}>
-                          <div className="flex items-center gap-2 min-w-0">
-                            <Package className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                            <span className="text-sm text-white font-mono truncate">{a.name}</span>
-                            <span className="text-xs text-zinc-500">{formatBytes(a.size)}</span>
+                      {downloadedAssets.map((a) => {
+                        // Extract version from filename: darts-kiosk-v1.7.0-windows.zip → 1.7.0
+                        const vMatch = a.name?.match(/v?([\d.]+)/);
+                        const assetVersion = vMatch ? vMatch[1] : '';
+                        return (
+                          <div key={a.name} className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid={`downloaded-${a.name}`}>
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Package className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                              <span className="text-sm text-white font-mono truncate">{a.name}</span>
+                              <span className="text-xs text-zinc-500">{formatBytes(a.size)}</span>
+                            </div>
+                            <div className="flex gap-2 items-center">
+                              <span className="text-xs text-zinc-600">{formatDate(a.downloaded_at)}</span>
+                              {assetVersion && a.name?.includes('windows') && (
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleInstallUpdate(a.name, assetVersion)}
+                                  disabled={installing || rollbackInProgress}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+                                  data-testid={`install-btn-${a.name}`}
+                                >
+                                  <ArrowUpCircle className="w-3 h-3 mr-1" />
+                                  {installing ? 'Installiert...' : `v${assetVersion} installieren`}
+                                </Button>
+                              )}
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleDeleteDownload(a.name)}
+                                className="text-zinc-400 hover:text-red-500 h-6 w-6"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </Button>
+                            </div>
                           </div>
-                          <div className="flex gap-1">
-                            <span className="text-xs text-zinc-600">{formatDate(a.downloaded_at)}</span>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => handleDeleteDownload(a.name)}
-                              className="text-zinc-400 hover:text-red-500 h-6 w-6"
-                            >
-                              <Trash2 className="w-3 h-3" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -740,6 +949,14 @@ export default function AdminSystem() {
                           <ShieldCheck className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                         ) : h.action === 'download_started' ? (
                           <Download className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                        ) : h.action === 'install_started' ? (
+                          <ArrowUpCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                        ) : h.action === 'rollback_started' ? (
+                          <RotateCcw className="w-4 h-4 text-orange-500 flex-shrink-0" />
+                        ) : h.action === 'app_backup_created' ? (
+                          <Archive className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                        ) : h.action === 'update_result_acknowledged' ? (
+                          <CheckCircle className="w-4 h-4 text-zinc-500 flex-shrink-0" />
                         ) : (
                           <Clock className="w-4 h-4 text-zinc-500 flex-shrink-0" />
                         )}
@@ -747,7 +964,11 @@ export default function AdminSystem() {
                           <span className="text-zinc-300">
                             {h.action === 'prepare_update' && `Update vorbereitet: v${h.target_version}`}
                             {h.action === 'download_started' && `Download: ${h.asset_name}`}
-                            {!['prepare_update', 'download_started'].includes(h.action) && h.action}
+                            {h.action === 'install_started' && `Installation gestartet: v${h.target_version}`}
+                            {h.action === 'rollback_started' && `Rollback gestartet: ${h.backup_filename}`}
+                            {h.action === 'app_backup_created' && `App-Backup: ${h.filename}`}
+                            {h.action === 'update_result_acknowledged' && `Update ${h.success ? 'erfolgreich' : 'fehlgeschlagen'}: v${h.target_version || '?'}`}
+                            {!['prepare_update', 'download_started', 'install_started', 'rollback_started', 'app_backup_created', 'update_result_acknowledged'].includes(h.action) && h.action}
                           </span>
                           {h.backup_created && (
                             <span className="text-xs text-emerald-500 ml-2">+ Backup</span>
@@ -765,6 +986,71 @@ export default function AdminSystem() {
 
         {/* ===== Backups Tab ===== */}
         <TabsContent value="backups">
+          <div className="space-y-6">
+            {/* App Backups (for Updates & Rollback) */}
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-white flex items-center gap-2">
+                    <Archive className="w-5 h-5 text-amber-500" /> Anwendungs-Backups
+                  </CardTitle>
+                  <Button
+                    onClick={handleCreateAppBackup}
+                    disabled={creatingAppBackup}
+                    className="bg-amber-500 hover:bg-amber-400 text-black"
+                    data-testid="app-backup-create-btn"
+                  >
+                    {creatingAppBackup ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Archive className="w-4 h-4 mr-2" />}
+                    App-Backup erstellen
+                  </Button>
+                </div>
+                <p className="text-xs text-zinc-500 mt-1">
+                  Vollstaendiges Backup von Backend, Frontend, Scripts und VERSION. Fuer Updates und Rollback.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                  {appBackups.length > 0 ? (
+                    appBackups.map((b) => (
+                      <div key={b.filename} className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm group" data-testid={`app-backup-${b.filename}`}>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-white font-mono text-sm truncate">{b.filename}</p>
+                          <p className="text-xs text-zinc-500">
+                            {formatDate(b.created_at)} | {b.size_mb} MB
+                          </p>
+                        </div>
+                        <div className="flex gap-2 ml-3">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleRollback(b.filename)}
+                            disabled={rollbackInProgress || installing}
+                            className="border-zinc-700 text-zinc-400 hover:text-amber-500 hover:border-amber-500/50 text-xs"
+                            data-testid={`rollback-btn-${b.filename}`}
+                          >
+                            <RotateCcw className="w-3 h-3 mr-1" />
+                            {rollbackInProgress ? 'Rollback...' : 'Rollback'}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleDeleteAppBackup(b.filename)}
+                            className="text-zinc-400 hover:text-red-500 h-8 w-8"
+                            title="Loeschen"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-center text-zinc-500 py-6">Keine App-Backups vorhanden</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* DB Backups */}
           <Card className="bg-zinc-900 border-zinc-800">
             <CardHeader>
               <div className="flex items-center justify-between">
@@ -813,6 +1099,7 @@ export default function AdminSystem() {
               </div>
             </CardContent>
           </Card>
+          </div>
         </TabsContent>
 
         {/* ===== Logs Tab ===== */}

@@ -18,7 +18,15 @@ logger = logging.getLogger(__name__)
 
 from backend.database import DATA_DIR
 
-CURRENT_VERSION = os.environ.get('APP_VERSION', '1.0.0')
+# Read version from VERSION file (single source of truth)
+_VERSION_FILE = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'VERSION')))
+def _read_version() -> str:
+    try:
+        return _VERSION_FILE.read_text().strip()
+    except FileNotFoundError:
+        return os.environ.get('APP_VERSION', '0.0.0')
+
+CURRENT_VERSION = _read_version()
 GITHUB_REPO = os.environ.get('GITHUB_REPO', '')
 GITHUB_API = "https://api.github.com"
 DOWNLOADS_DIR = DATA_DIR / 'downloads'

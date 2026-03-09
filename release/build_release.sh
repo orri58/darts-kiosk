@@ -8,7 +8,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="${SCRIPT_DIR}/build"
-VERSION="1.0.0"
+
+# Read version from VERSION file (single source of truth)
+VERSION_FILE="${APP_DIR}/VERSION"
+if [[ -f "$VERSION_FILE" ]]; then
+    VERSION=$(cat "$VERSION_FILE" | tr -d '[:space:]')
+else
+    echo "ERROR: VERSION file not found at ${VERSION_FILE}"
+    exit 1
+fi
+
+echo -e "${CYAN}Building release v${VERSION}${NC}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -109,6 +119,12 @@ cp "${SCRIPT_DIR}/windows/credits_overlay.py" "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/setup_profile.bat" "${WIN_DIR}/" 2>/dev/null || true
 cp "${SCRIPT_DIR}/windows/README.md" "${WIN_DIR}/"
 
+# Copy VERSION file (single source of truth)
+cp "${APP_DIR}/VERSION" "${WIN_DIR}/"
+
+# Copy updater
+cp "${APP_DIR}/updater.py" "${WIN_DIR}/"
+
 # Create Windows .env files
 cat > "${WIN_DIR}/backend/.env" << 'EOF'
 DATABASE_URL=sqlite+aiosqlite:///./data/db/darts.sqlite
@@ -125,6 +141,8 @@ AUTODARTS_HEADLESS=false
 AUTODARTS_MOCK=false
 UPDATE_CHECK_ENABLED=true
 UPDATE_CHECK_INTERVAL_HOURS=24
+GITHUB_REPO=
+GITHUB_TOKEN=
 EOF
 
 # Frontend .env will be dynamically updated by start.bat with LAN IP
@@ -161,6 +179,10 @@ fi
 # Copy install.sh
 cp "${APP_DIR}/install.sh" "${LINUX_DIR}/"
 chmod +x "${LINUX_DIR}/install.sh"
+
+# Copy VERSION file and updater
+cp "${APP_DIR}/VERSION" "${LINUX_DIR}/"
+cp "${APP_DIR}/updater.py" "${LINUX_DIR}/"
 
 # Copy docker files
 cp "${APP_DIR}/docker-compose.yml" "${LINUX_DIR}/" 2>/dev/null || true

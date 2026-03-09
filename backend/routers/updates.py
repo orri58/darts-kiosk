@@ -8,6 +8,7 @@ from backend.database import get_db
 from backend.models import User
 from backend.dependencies import require_admin, log_audit
 from backend.services.update_service import update_service
+from backend.services.updater_service import updater_service
 
 router = APIRouter()
 
@@ -147,3 +148,176 @@ async def snooze_update_notification(
     """Snooze the update notification for a number of hours (default 48)."""
     await update_service.snooze_notification(db, version, hours)
     return {"message": f"Erinnerung fuer v{version} in {hours}h", "snooze_hours": hours}
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# App Backup Endpoints
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/updates/backups")
+async def list_app_backups(admin: User = Depends(require_admin)):
+    """List all full application backups."""
+    return {"backups": updater_service.list_app_backups()}
+
+
+@router.post("/updates/backups/create")
+async def create_app_backup(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a full application backup (backend + frontend + scripts + VERSION)."""
+    result = updater_service.create_app_backup()
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Backup fehlgeschlagen"))
+
+    await update_service.record_update_event(db, {
+        "action": "app_backup_created",
+        "filename": result["filename"],
+        "size_bytes": result["size_bytes"],
+    })
+    await log_audit(db, admin, "create_app_backup", "system", "backup", {"filename": result["filename"]})
+    return result
+
+
+@router.delete("/updates/backups/{filename}")
+async def delete_app_backup(filename: str, admin: User = Depends(require_admin)):
+    """Delete a specific application backup."""
+    if updater_service.delete_app_backup(filename):
+        return {"message": f"Backup {filename} geloescht"}
+    raise HTTPException(status_code=404, detail="Backup nicht gefunden")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Install & Rollback Endpoints
+# ═══════════════════════════════════════════════════════════════
+
+@router.post("/updates/install")
+async def install_update(
+    asset_filename: str = Query(..., description="Downloaded zip filename"),
+    target_version: str = Query(..., description="Version to install"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Full install pipeline:
+    1. Create app backup
+    2. Extract & validate the downloaded asset
+    3. Write update manifest
+    4. Launch external updater process
+    """
+    # Step 1: Create backup
+    backup_result = updater_service.create_app_backup()
+    if not backup_result.get("success"):
+        raise HTTPException(status_code=500, detail=f"Backup fehlgeschlagen: {backup_result.get('error')}")
+
+    # Step 2: Find the downloaded asset
+    downloads = update_service.list_downloaded_assets()
+    asset = next((a for a in downloads if a["filename"] == asset_filename), None)
+    if not asset:
+        raise HTTPException(status_code=404, detail=f"Download nicht gefunden: {asset_filename}")
+
+    # Step 3: Extract & validate
+    validation = updater_service.extract_and_validate(asset["path"], target_version)
+    if not validation.get("valid"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Paket ungueltig: {', '.join(validation.get('errors', []))}",
+        )
+
+    # Step 4: Write manifest
+    manifest_result = updater_service.write_manifest(
+        staging_dir=validation["staging_dir"],
+        backup_path=backup_result["path"],
+        target_version=target_version,
+    )
+
+    # Step 5: Record event
+    await update_service.record_update_event(db, {
+        "action": "install_started",
+        "target_version": target_version,
+        "backup_filename": backup_result["filename"],
+        "asset_filename": asset_filename,
+    })
+    await log_audit(db, admin, "install_update", "system", "update", {"target_version": target_version})
+
+    # Step 6: Launch updater
+    launch_result = updater_service.launch_updater()
+
+    return {
+        "status": "update_started",
+        "message": f"Update auf v{target_version} gestartet",
+        "backup": backup_result["filename"],
+        "updater_launched": launch_result.get("launched", False),
+        "manifest": manifest_result["manifest"],
+        "note": "Das System wird jetzt aktualisiert. Die Seite laedt automatisch neu, wenn das Update abgeschlossen ist.",
+    }
+
+
+@router.post("/updates/rollback")
+async def rollback_update(
+    backup_filename: str = Query(..., description="Backup filename to restore from"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Rollback to a previous version using an app backup.
+    Writes a rollback manifest and launches the external updater.
+    """
+    # Find the backup
+    backups = updater_service.list_app_backups()
+    backup = next((b for b in backups if b["filename"] == backup_filename), None)
+    if not backup:
+        raise HTTPException(status_code=404, detail=f"Backup nicht gefunden: {backup_filename}")
+
+    from backend.services.updater_service import APP_BACKUPS_DIR
+    backup_path = str(APP_BACKUPS_DIR / backup_filename)
+
+    # Write rollback manifest
+    updater_service.write_rollback_manifest(backup_path=backup_path)
+
+    await update_service.record_update_event(db, {
+        "action": "rollback_started",
+        "backup_filename": backup_filename,
+    })
+    await log_audit(db, admin, "rollback", "system", "update", {"backup": backup_filename})
+
+    # Launch updater
+    launch_result = updater_service.launch_updater()
+
+    return {
+        "status": "rollback_started",
+        "message": f"Rollback gestartet mit Backup: {backup_filename}",
+        "updater_launched": launch_result.get("launched", False),
+    }
+
+
+@router.get("/updates/result")
+async def get_update_result(admin: User = Depends(require_admin)):
+    """
+    Get the result of the last update/rollback operation.
+    Written by the external updater.py after completion.
+    """
+    result = updater_service.get_update_result()
+    if not result:
+        return {"has_result": False}
+    return {"has_result": True, "result": result}
+
+
+@router.post("/updates/result/clear")
+async def clear_update_result(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Clear the update result (acknowledge it was seen)."""
+    result = updater_service.get_update_result()
+    if result:
+        await update_service.record_update_event(db, {
+            "action": "update_result_acknowledged",
+            "success": result.get("success"),
+            "target_version": result.get("target_version"),
+            "rolled_back": result.get("rolled_back"),
+        })
+    updater_service.clear_update_result()
+    updater_service.cleanup_staging()
+    return {"message": "Update-Ergebnis bestaetigt"}
