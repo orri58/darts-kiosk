@@ -145,6 +145,14 @@ autostart.bat:
   - matchshot/Winner Animation correctly mapped to FINISHED (true match end)
   - All required logs: event_capture, EVENT_SIGNAL, DOM_SIGNAL, merge, finalization chain
   - All tests passing: 14/14 (iteration_32)
+- v1.8.1: iOS PWA Touch Fix (2026-03-09)
+  - Root cause: Sonner toast container (<section> with pointer-events) blocked header touch on mobile
+  - Fix 1: Toast position moved from top-center to bottom-center (no header overlap)
+  - Fix 2: CSS pointer-events:none on [data-sonner-toaster], pointer-events:auto on [data-sonner-toast]
+  - Fix 3: Safe-area inset support (env(safe-area-inset-top)) on mobile header, sidebar, main content
+  - iOS standalone/PWA mode: header buttons now tappable below notch/status bar
+  - Desktop layout unaffected (safe-area evaluates to 0px)
+  - ZIP rebuilt: darts-kiosk-v1.7.3-windows.zip (1.6 MB)
 
 ## Remaining Backlog
 ### P1

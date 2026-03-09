@@ -74,7 +74,7 @@ function App() {
         </BrowserRouter>
         </I18nProvider>
         <Toaster 
-          position="top-center" 
+          position="bottom-center" 
           theme="dark"
           toastOptions={{
             style: {

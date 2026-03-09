@@ -4,6 +4,43 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── iOS PWA Safe Area ─────────────────────────────────── */
+/* viewport-fit=cover + black-translucent extends content   */
+/* behind the notch/status bar. These CSS vars ensure       */
+/* interactive elements sit below the untouchable zone.     */
+@supports (padding-top: env(safe-area-inset-top)) {
+  :root {
+    --sat: env(safe-area-inset-top, 0px);
+    --sal: env(safe-area-inset-left, 0px);
+    --sar: env(safe-area-inset-right, 0px);
+    --sab: env(safe-area-inset-bottom, 0px);
+  }
+}
+:root {
+  --sat: env(safe-area-inset-top, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+}
+
+/* Admin main content: mobile gets header+safe-area offset, desktop gets none */
+.pwa-main-content {
+  padding-top: calc(4rem + var(--sat, 0px));
+}
+@media (min-width: 1024px) {
+  .pwa-main-content {
+    padding-top: 0;
+  }
+}
+
+/* Prevent sonner toast container from blocking header touch events */
+[data-sonner-toaster] {
+  pointer-events: none !important;
+}
+[data-sonner-toast] {
+  pointer-events: auto !important;
+}
+
 /* Industrial Dark Theme Variables */
 :root {
   --color-bg: #09090b;

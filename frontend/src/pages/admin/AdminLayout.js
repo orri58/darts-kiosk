@@ -67,8 +67,15 @@ export default function AdminLayout() {
 
   return (
     <div className="min-h-screen bg-zinc-950" data-testid="admin-layout">
-      {/* Mobile Header */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 h-16 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between px-4 z-50">
+      {/* Mobile Header — pushed below iOS notch/status bar */}
+      <div
+        className="lg:hidden fixed top-0 left-0 right-0 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between px-4 z-50"
+        style={{
+          paddingTop: 'var(--sat, 0px)',
+          height: 'calc(4rem + var(--sat, 0px))',
+        }}
+        data-testid="mobile-header"
+      >
         <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
           className="p-2 text-zinc-400 hover:text-white"
@@ -89,6 +96,7 @@ export default function AdminLayout() {
           lg:translate-x-0
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
+        style={{ paddingTop: 'var(--sat, 0px)' }}
       >
         {/* Logo - fixed top */}
         <div className="h-16 flex items-center px-6 border-b border-zinc-800 flex-shrink-0">
@@ -156,8 +164,8 @@ export default function AdminLayout() {
         />
       )}
 
-      {/* Main Content */}
-      <main className="lg:ml-64 pt-16 lg:pt-0 min-h-screen">
+      {/* Main Content — on mobile: offset by header + safe-area; on desktop: no offset */}
+      <main className="lg:ml-64 min-h-screen pwa-main-content">
         <div className="p-6">
           <Outlet />
         </div>
