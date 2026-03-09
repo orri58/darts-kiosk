@@ -148,59 +148,50 @@ class UpdaterService:
         """
         Extract a downloaded release asset to a staging directory.
         Validate that it contains the expected structure.
-
-        Expected zip structure:
-          darts-kiosk-v{version}-windows/
-            backend/
-            frontend/
-            VERSION
-            ...
-
-        Returns: { valid: bool, staging_dir: str, errors: [...] }
         """
         zip_file = Path(zip_path)
+        logger.info(f"[Updater] extract_and_validate: zip_path={zip_file}, target={target_version}")
+
         if not zip_file.exists():
-            return {"valid": False, "errors": [f"Zip-Datei nicht gefunden: {zip_path}"]}
+            err = f"Zip-Datei nicht gefunden: {zip_path}"
+            logger.error(f"[Updater] {err}")
+            return {"valid": False, "errors": [err]}
 
         # Clean staging directory
         if STAGING_DIR.exists():
             shutil.rmtree(STAGING_DIR)
         STAGING_DIR.mkdir(parents=True)
 
-        logger.info(f"[Updater] Extracting {zip_file.name} to staging...")
+        logger.info(f"[Updater] Extracting {zip_file.name} to {STAGING_DIR}...")
 
         try:
             with zipfile.ZipFile(zip_file, 'r') as zf:
                 zf.extractall(STAGING_DIR)
-        except zipfile.BadZipFile:
-            return {"valid": False, "errors": ["Ungueltige ZIP-Datei"]}
+        except zipfile.BadZipFile as e:
+            err = f"Ungueltige ZIP-Datei: {e}"
+            logger.error(f"[Updater] {err}")
+            return {"valid": False, "errors": [err]}
+
+        logger.info(f"[Updater] Extraction complete")
 
         # Find the root directory inside the zip
-        # Could be darts-kiosk-v1.7.0-windows/ or just the files directly
         staging_contents = list(STAGING_DIR.iterdir())
         staging_root = STAGING_DIR
 
         if len(staging_contents) == 1 and staging_contents[0].is_dir():
-            # Zip has a single root folder (standard convention)
             staging_root = staging_contents[0]
+
+        logger.info(f"[Updater] Staging root: {staging_root}")
 
         # Validate structure
         errors = []
-        required = ['backend']
-        for req in required:
-            if not (staging_root / req).is_dir():
-                errors.append(f"Fehlender Ordner: {req}/")
-
-        # Check for VERSION file
+        if not (staging_root / 'backend').is_dir():
+            errors.append("Fehlender Ordner: backend/")
         has_version = (staging_root / 'VERSION').exists()
         if not has_version:
             errors.append("Fehlende VERSION-Datei")
-
-        # Verify no data/ directory in the package (safety)
         if (staging_root / 'data').exists():
             errors.append("WARNUNG: Paket enthaelt data/ — wird nicht ueberschrieben")
-
-        # Check version matches
         if has_version:
             pkg_version = (staging_root / 'VERSION').read_text().strip()
             if pkg_version != target_version:
@@ -219,36 +210,34 @@ class UpdaterService:
             },
         }
 
-        logger.info(f"[Updater] Validation result: valid={result['valid']}, errors={errors}")
+        logger.info(f"[Updater] Validation: valid={result['valid']}, errors={errors}")
         return result
 
     def write_manifest(self, staging_dir: str, backup_path: str,
                        target_version: str) -> Dict:
-        """
-        Write the update manifest that the external updater.py will consume.
-        """
+        """Write the update manifest for the external updater.py."""
         manifest = {
             "action": "install_update",
             "target_version": target_version,
             "current_version": self._read_current_version(),
-            "staging_dir": staging_dir,
-            "backup_path": backup_path,
-            "project_root": str(PROJECT_ROOT),
+            "staging_dir": str(Path(staging_dir).resolve()),
+            "backup_path": str(Path(backup_path).resolve()),
+            "project_root": str(PROJECT_ROOT.resolve()),
             "health_check_url": "http://localhost:8001/api/health",
             "version_check_url": "http://localhost:8001/api/system/version",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "protected_paths": [
-                "data",
-                "logs",
-                "chrome_profile",
+                "data", "logs", "chrome_profile",
                 "data/kiosk_chrome_profile",
-                "backend/.env",
-                "frontend/.env",
+                "backend/.env", "frontend/.env",
             ],
         }
 
         MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
         logger.info(f"[Updater] Manifest written: {MANIFEST_PATH}")
+        logger.info(f"[Updater]   staging_dir: {manifest['staging_dir']}")
+        logger.info(f"[Updater]   backup_path: {manifest['backup_path']}")
+        logger.info(f"[Updater]   project_root: {manifest['project_root']}")
         return {"manifest_path": str(MANIFEST_PATH), "manifest": manifest}
 
     def write_rollback_manifest(self, backup_path: str) -> Dict:
@@ -256,18 +245,15 @@ class UpdaterService:
         manifest = {
             "action": "rollback",
             "current_version": self._read_current_version(),
-            "backup_path": backup_path,
-            "project_root": str(PROJECT_ROOT),
+            "backup_path": str(Path(backup_path).resolve()),
+            "project_root": str(PROJECT_ROOT.resolve()),
             "health_check_url": "http://localhost:8001/api/health",
             "version_check_url": "http://localhost:8001/api/system/version",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "protected_paths": [
-                "data",
-                "logs",
-                "chrome_profile",
+                "data", "logs", "chrome_profile",
                 "data/kiosk_chrome_profile",
-                "backend/.env",
-                "frontend/.env",
+                "backend/.env", "frontend/.env",
             ],
         }
         MANIFEST_PATH.write_text(json.dumps(manifest, indent=2))
@@ -277,49 +263,84 @@ class UpdaterService:
     def launch_updater(self) -> Dict:
         """
         Launch the external updater.py as a detached process.
-        On Windows, this spawns a new console window that runs updater.py.
-        The updater reads the manifest, stops services, replaces files, restarts.
+
+        Windows:
+          Uses 'cmd /c start' to spawn a new visible console window.
+          CREATE_NEW_CONSOLE alone (without DETACHED_PROCESS or close_fds)
+          is the only reliable way on Windows.
+
+        Linux:
+          Spawns as a background process with start_new_session.
         """
         updater_script = PROJECT_ROOT / 'updater.py'
+        manifest_path = MANIFEST_PATH
+
+        logger.info(f"[Updater] === LAUNCH UPDATER ===")
+        logger.info(f"[Updater]   updater_script: {updater_script}")
+        logger.info(f"[Updater]   updater_exists: {updater_script.exists()}")
+        logger.info(f"[Updater]   manifest_path: {manifest_path}")
+        logger.info(f"[Updater]   manifest_exists: {manifest_path.exists()}")
+        logger.info(f"[Updater]   python_exe: {sys.executable}")
+        logger.info(f"[Updater]   project_root: {PROJECT_ROOT}")
+        logger.info(f"[Updater]   platform: {sys.platform}")
+
         if not updater_script.exists():
-            return {"launched": False, "error": "updater.py nicht gefunden"}
+            err = f"updater.py nicht gefunden: {updater_script}"
+            logger.error(f"[Updater] {err}")
+            return {"launched": False, "error": err}
 
-        if not MANIFEST_PATH.exists():
-            return {"launched": False, "error": "Kein Update-Manifest vorhanden"}
-
-        logger.info(f"[Updater] Launching external updater: {updater_script}")
+        if not manifest_path.exists():
+            err = f"Kein Update-Manifest: {manifest_path}"
+            logger.error(f"[Updater] {err}")
+            return {"launched": False, "error": err}
 
         try:
+            cmd = [sys.executable, str(updater_script.resolve()), str(manifest_path.resolve())]
+            cwd = str(PROJECT_ROOT.resolve())
+
+            logger.info(f"[Updater]   command: {cmd}")
+            logger.info(f"[Updater]   cwd: {cwd}")
+
             if sys.platform == 'win32':
-                # On Windows: launch in a new console window, detached
-                subprocess.Popen(
-                    [sys.executable, str(updater_script), str(MANIFEST_PATH)],
-                    creationflags=subprocess.CREATE_NEW_CONSOLE | subprocess.DETACHED_PROCESS,
-                    close_fds=True,
+                # On Windows: launch in a new console window.
+                # DO NOT use close_fds=True (incompatible with creationflags on Windows).
+                # DO NOT combine CREATE_NEW_CONSOLE with DETACHED_PROCESS (contradictory).
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=cwd,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,
                 )
+                logger.info(f"[Updater]   process_started: pid={proc.pid}")
             else:
                 # On Linux: launch as background process
-                subprocess.Popen(
-                    [sys.executable, str(updater_script), str(MANIFEST_PATH)],
+                proc = subprocess.Popen(
+                    cmd,
+                    cwd=cwd,
                     start_new_session=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
+                    stdout=open(DATA_DIR / 'updater_stdout.log', 'w'),
+                    stderr=open(DATA_DIR / 'updater_stderr.log', 'w'),
                 )
+                logger.info(f"[Updater]   process_started: pid={proc.pid}")
+                logger.info(f"[Updater]   stdout_log: {DATA_DIR / 'updater_stdout.log'}")
 
-            logger.info("[Updater] External updater launched successfully")
-            return {"launched": True, "message": "Updater gestartet — System wird aktualisiert"}
+            logger.info("[Updater] === UPDATER LAUNCHED SUCCESSFULLY ===")
+            return {
+                "launched": True,
+                "pid": proc.pid,
+                "message": "Updater gestartet — System wird aktualisiert",
+            }
 
         except Exception as e:
-            logger.error(f"[Updater] Failed to launch updater: {e}", exc_info=True)
-            return {"launched": False, "error": str(e)}
+            err = f"Updater konnte nicht gestartet werden: {type(e).__name__}: {e}"
+            logger.error(f"[Updater] === LAUNCH FAILED === {err}", exc_info=True)
+            return {"launched": False, "error": err}
 
     def get_update_result(self) -> Optional[Dict]:
         """Read the result file written by the external updater after completion."""
         if not RESULT_PATH.exists():
             return None
         try:
-            result = json.loads(RESULT_PATH.read_text())
-            return result
+            return json.loads(RESULT_PATH.read_text())
         except Exception:
             return None
 
