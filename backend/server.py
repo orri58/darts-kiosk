@@ -10,7 +10,7 @@ _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from contextlib import asynccontextmanager
@@ -239,6 +239,38 @@ api_router.include_router(players.router)
 app.include_router(api_router)
 
 
+# ===== Static Frontend Serving (Production Mode) =====
+# In production, the backend serves the pre-built React frontend.
+# This eliminates the need for Node.js / dev server on the board PC.
+# API routes (/api/*) take precedence over static files.
+
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+FRONTEND_BUILD_DIR = Path(__file__).resolve().parent.parent / 'frontend' / 'build'
+
+if FRONTEND_BUILD_DIR.exists() and (FRONTEND_BUILD_DIR / 'index.html').exists():
+    # Serve static assets (JS, CSS, images) under /static
+    static_dir = FRONTEND_BUILD_DIR / 'static'
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static_assets")
+
+    # Serve other build root files (manifest.json, favicon, etc.)
+    @app.get("/manifest.json")
+    @app.get("/favicon.ico")
+    @app.get("/robots.txt")
+    async def serve_root_file(request: Request):
+        filename = request.url.path.lstrip("/")
+        filepath = FRONTEND_BUILD_DIR / filename
+        if filepath.exists():
+            return FileResponse(str(filepath))
+        return FileResponse(str(FRONTEND_BUILD_DIR / "index.html"))
+
+    logger.info(f"Production frontend serving enabled: {FRONTEND_BUILD_DIR}")
+else:
+    logger.info(f"No frontend build found at {FRONTEND_BUILD_DIR} — frontend dev server mode")
+
+
 # ===== Utility endpoint: LAN base URL =====
 
 @app.get("/api/system/base-url")
@@ -284,3 +316,17 @@ async def ws_boards(ws: WebSocket):
         pass
     finally:
         await board_ws.disconnect(ws)
+
+
+# ===== SPA Catch-All (MUST be last) =====
+# Any non-API, non-static route returns index.html for client-side routing.
+if FRONTEND_BUILD_DIR.exists() and (FRONTEND_BUILD_DIR / 'index.html').exists():
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        # Don't intercept API routes or actual static files
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API endpoint not found")
+        file_path = FRONTEND_BUILD_DIR / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(str(file_path))
+        return FileResponse(str(FRONTEND_BUILD_DIR / "index.html"))

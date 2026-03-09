@@ -133,18 +133,30 @@ async def _on_game_ended(board_id: str, reason: str):
 
                 # ─── Decide: should we lock? ────────────────────
                 should_lock = False
+                lock_reason = "none"
 
                 if session.pricing_mode == PricingMode.PER_GAME.value:
                     should_lock = session.credits_remaining <= 0
+                    if should_lock:
+                        lock_reason = f"credits_exhausted (remaining={session.credits_remaining})"
+                    else:
+                        lock_reason = f"credits_available (remaining={session.credits_remaining})"
 
                 if session.pricing_mode == PricingMode.PER_TIME.value:
                     if session.expires_at and datetime.now(timezone.utc) >= session.expires_at:
                         should_lock = True
+                        lock_reason = f"time_expired (expires_at={session.expires_at})"
+                    elif not should_lock:
+                        lock_reason = f"time_remaining (expires_at={session.expires_at})"
 
-                logger.info(f"[Observer->Kiosk]   session_end_decision: should_lock={should_lock}")
-                logger.info(f"[Observer->Kiosk]     pricing_mode={session.pricing_mode}")
-                logger.info(f"[Observer->Kiosk]     credits_remaining={session.credits_remaining}")
-                logger.info(f"[Observer->Kiosk]     reason={reason}")
+                logger.info(
+                    f"[Observer->Kiosk]   === FINALIZATION DECISION ===\n"
+                    f"[Observer->Kiosk]     reason={reason}\n"
+                    f"[Observer->Kiosk]     pricing_mode={session.pricing_mode}\n"
+                    f"[Observer->Kiosk]     credits_remaining={session.credits_remaining}\n"
+                    f"[Observer->Kiosk]     should_lock={should_lock}\n"
+                    f"[Observer->Kiosk]     lock_reason={lock_reason}"
+                )
 
                 # ─── Create match result (finished games only) ──
                 token = None

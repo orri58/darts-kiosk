@@ -15,11 +15,16 @@ export function useBoardWS(onEvent) {
   onEventRef.current = onEvent;
 
   const connect = useCallback(() => {
-    // Build WS URL from REACT_APP_BACKEND_URL
+    // Build WS URL — support both full URL and relative (same-origin) modes
     const base = process.env.REACT_APP_BACKEND_URL || '';
-    const wsUrl = base
-      .replace(/^https:/, 'wss:')
-      .replace(/^http:/, 'ws:') + '/api/ws/boards';
+    let wsUrl;
+    if (base) {
+      wsUrl = base.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:') + '/api/ws/boards';
+    } else {
+      // Same-origin: derive ws:// from current page location
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${proto}//${window.location.host}/api/ws/boards`;
+    }
 
     try {
       const ws = new WebSocket(wsUrl);

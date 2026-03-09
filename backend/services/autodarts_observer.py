@@ -40,6 +40,14 @@ Session-end logic:
   ROUND_TRANSITION is NOT an exit signal — it indicates a normal turn/round
   change and resets the exit debounce counter.
   On confirmed exit: check credits. If exhausted → lock board, close browser, restore kiosk.
+
+State detection priority:
+  1. Strong match-end markers (Rematch/Share/NewGame button TEXT) → FINISHED
+     ALWAYS wins, even if in_game markers are still present in DOM.
+     (Autodarts keeps scoreboard elements visible on the results screen.)
+  2. in_game markers WITHOUT strong end markers → IN_GAME
+  3. Generic result CSS classes only → ROUND_TRANSITION
+  4. Nothing → IDLE
 """
 import asyncio
 import os
@@ -623,26 +631,38 @@ class AutodartsObserver:
             )
 
             # === State mapping ===
+            # PRIORITY ORDER:
+            #   1. Strong match-end markers → FINISHED (ALWAYS, even with in_game present)
+            #   2. in_game WITHOUT strong markers → IN_GAME
+            #   3. Generic result only → ROUND_TRANSITION
+            #   4. Nothing → IDLE
+            #
+            # WHY strong markers override in_game:
+            # On the Autodarts match-end screen, scoreboard/match-view elements
+            # remain in the DOM alongside Rematch/Share buttons. If we let in_game
+            # markers take priority, FINISHED is never detected and the last-credit
+            # lock never fires.
 
-            # Tier 1: in_game is DOMINANT
-            if in_game:
-                reason = "active match markers present"
-                if has_generic_result:
-                    reason += " + round result overlay (normal turn change)"
-                if strong_match_end:
-                    reason += " + strong markers also present (unusual, still IN_GAME)"
-                logger.info(f"[Observer:{self.board_id}] mapped_state: IN_GAME | reason: {reason}")
-                return ObserverState.IN_GAME
-
-            # Tier 2: Strong end-of-match markers WITHOUT in_game
+            # Tier 1: Strong end-of-match markers ALWAYS win
             if strong_match_end:
                 logger.info(
                     f"[Observer:{self.board_id}] mapped_state: FINISHED | "
-                    f"reason: match_finished — strong end markers (rematch={detail.get('hasRematchBtn')}, "
-                    f"share={detail.get('hasShareBtn')}, newgame={detail.get('hasNewGameBtn')}, "
-                    f"postmatch_ui={detail.get('hasPostMatchUI')}), in_game=false"
+                    f"reason: match_finished — strong end markers detected "
+                    f"(rematch={detail.get('hasRematchBtn')}, "
+                    f"share={detail.get('hasShareBtn')}, "
+                    f"newgame={detail.get('hasNewGameBtn')}, "
+                    f"postmatch_ui={detail.get('hasPostMatchUI')}), "
+                    f"in_game_markers_also_present={in_game}"
                 )
                 return ObserverState.FINISHED
+
+            # Tier 2: in_game markers WITHOUT strong end markers → active match
+            if in_game:
+                reason = "active match markers present, no strong end markers"
+                if has_generic_result:
+                    reason += " + round result overlay (normal turn change)"
+                logger.info(f"[Observer:{self.board_id}] mapped_state: IN_GAME | reason: {reason}")
+                return ObserverState.IN_GAME
 
             # Tier 3: Generic result markers WITHOUT strong markers → round transition
             if has_generic_result:

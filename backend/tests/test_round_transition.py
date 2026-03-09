@@ -380,6 +380,43 @@ async def test_finished_to_idle_post_finish_check():
 
 
 # ===================================================================
+# TEST 11: Last credit + match end → triggers lock (key bug fix)
+# ===================================================================
+
+@pytest.mark.asyncio
+async def test_last_credit_match_end_triggers_lock():
+    """
+    Scenario: Player uses last credit. Match truly ends with FINISHED
+    detection (strong markers like Rematch/Share).
+    Expected: Session ends with reason="finished" so the kiosk locks.
+
+    This is the KEY bug fix: strong markers override in_game markers
+    in _detect_state, so FINISHED is detectable even when scoreboard
+    elements remain in the DOM alongside Rematch/Share buttons.
+    """
+    obs = _make_observer()
+    obs._credit_consumed = True  # Last credit was consumed at game start
+
+    # Normal play, then match finishes
+    sequence = [
+        ObserverState.IN_GAME,           # Normal play
+        ObserverState.IN_GAME,
+        ObserverState.ROUND_TRANSITION,  # Turn change (does NOT lock)
+        ObserverState.IN_GAME,           # Next turn
+    ]
+    # Match ends — strong markers detected → FINISHED
+    sequence += [ObserverState.FINISHED] * (DEBOUNCE_EXIT_POLLS + 1)
+    obs.set_sequence(sequence)
+
+    await _run_loop_iterations(obs, len(sequence))
+
+    obs._on_game_ended.assert_called_once_with(obs.board_id, "finished")
+    assert obs._stable_state == ObserverState.FINISHED
+    assert obs._credit_consumed is False  # Reset after game end
+    print("PASS: Last credit + match end triggers lock")
+
+
+# ===================================================================
 # Run all tests directly
 # ===================================================================
 
@@ -395,6 +432,7 @@ if __name__ == "__main__":
         test_round_transition_outside_in_game_is_idle,
         test_game_start_still_immediate,
         test_finished_to_idle_post_finish_check,
+        test_last_credit_match_end_triggers_lock,
     ]
     for test in tests:
         asyncio.run(test())

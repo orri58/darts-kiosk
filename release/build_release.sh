@@ -39,8 +39,9 @@ mkdir -p "$BUILD_DIR"
 step "Frontend bauen..."
 cd "${APP_DIR}/frontend"
 
-# Set production backend URL (will be overridden by .env in each package)
-export REACT_APP_BACKEND_URL=http://localhost:8001
+# Set empty backend URL for production — frontend uses relative /api/ paths
+# when served by the same backend (FastAPI static files mount)
+export REACT_APP_BACKEND_URL=
 yarn build 2>&1 | tail -5
 FRONTEND_BUILD="${APP_DIR}/frontend/build"
 log "Frontend gebaut: $(du -sh "$FRONTEND_BUILD" | cut -f1)"
