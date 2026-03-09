@@ -1,7 +1,6 @@
 @echo off
-:: Helper script — called by start.bat to launch the backend
-:: Activates venv and runs uvicorn from project root
-cd /d %~dp0
+REM Helper: activates venv and launches backend from project root
+cd /d "%~dp0"
 if exist ".venv\Scripts\activate.bat" (
     call .venv\Scripts\activate.bat
 )
