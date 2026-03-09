@@ -32,13 +32,19 @@ States: closed, idle, in_game, finished, unknown, error
 Credit logic:
   Credits are decremented on game START (idle -> in_game), not on finish.
   State guard prevents double-decrement.
+
+Session-end logic:
+  Triggered by ANY exit from in_game:
+    - in_game -> finished  (normal finish)
+    - in_game -> idle      (game aborted / returned to lobby)
+  On each: check credits. If exhausted → lock board, close browser, restore kiosk.
 """
 import asyncio
 import os
 import sys
 import logging
 from typing import Optional, Dict, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -102,10 +108,15 @@ class AutodartsObserver:
         self._page = None
         self._playwright = None
         self._observe_task: Optional[asyncio.Task] = None
-        self._on_game_started: Optional[Callable] = None
-        self._on_game_finished: Optional[Callable] = None
         self._stopping = False
         self._prev_state: ObserverState = ObserverState.CLOSED
+
+        # Callbacks
+        self._on_game_started: Optional[Callable] = None
+        self._on_game_ended: Optional[Callable] = None
+
+        # Per-game tracking
+        self._credit_consumed = False
 
     @property
     def is_open(self) -> bool:
@@ -115,7 +126,7 @@ class AutodartsObserver:
         self,
         autodarts_url: str,
         on_game_started: Optional[Callable] = None,
-        on_game_finished: Optional[Callable] = None,
+        on_game_ended: Optional[Callable] = None,
         headless: bool = False,
     ):
         """Open Chrome with persistent profile and start the observer loop."""
@@ -124,9 +135,10 @@ class AutodartsObserver:
             return
 
         self._on_game_started = on_game_started
-        self._on_game_finished = on_game_finished
+        self._on_game_ended = on_game_ended
         self._stopping = False
         self._prev_state = ObserverState.CLOSED
+        self._credit_consumed = False
 
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
@@ -286,25 +298,49 @@ class AutodartsObserver:
                 if new_state == self._prev_state:
                     continue
 
-                logger.info(f"[Observer:{self.board_id}] State: {self._prev_state.value} -> {new_state.value}")
+                logger.info(f"[Observer:{self.board_id}] === TRANSITION: {self._prev_state.value} -> {new_state.value} ===")
                 self._set_state(new_state)
 
-                # idle -> in_game: game STARTED -> decrement credits
+                # ─── GAME STARTED: * → in_game ─────────────────────
                 if new_state == ObserverState.IN_GAME and self._prev_state != ObserverState.IN_GAME:
+                    self._credit_consumed = True
                     self.status.games_observed += 1
+                    logger.info(f"[Observer:{self.board_id}] GAME STARTED — credit_consumed=True, games_observed={self.status.games_observed}")
                     if self._on_game_started:
                         try:
                             await self._on_game_started(self.board_id)
                         except Exception as e:
-                            logger.error(f"[Observer:{self.board_id}] on_game_started error: {e}")
+                            logger.error(f"[Observer:{self.board_id}] on_game_started callback ERROR: {e}", exc_info=True)
 
-                # in_game -> finished: game ENDED
+                # ─── GAME FINISHED: in_game → finished ──────────────
                 elif new_state == ObserverState.FINISHED and self._prev_state == ObserverState.IN_GAME:
-                    if self._on_game_finished:
+                    logger.info(f"[Observer:{self.board_id}] GAME FINISHED — calling on_game_ended(reason='finished')")
+                    if self._on_game_ended:
                         try:
-                            await self._on_game_finished(self.board_id)
+                            await self._on_game_ended(self.board_id, "finished")
                         except Exception as e:
-                            logger.error(f"[Observer:{self.board_id}] on_game_finished error: {e}")
+                            logger.error(f"[Observer:{self.board_id}] on_game_ended(finished) callback ERROR: {e}", exc_info=True)
+                    self._credit_consumed = False
+
+                # ─── GAME ABORTED: in_game → idle ──────────────────
+                elif self._prev_state == ObserverState.IN_GAME and new_state in (ObserverState.IDLE, ObserverState.UNKNOWN):
+                    logger.info(f"[Observer:{self.board_id}] GAME ABORTED — credit already consumed, calling on_game_ended(reason='aborted')")
+                    if self._on_game_ended:
+                        try:
+                            await self._on_game_ended(self.board_id, "aborted")
+                        except Exception as e:
+                            logger.error(f"[Observer:{self.board_id}] on_game_ended(aborted) callback ERROR: {e}", exc_info=True)
+                    self._credit_consumed = False
+
+                # ─── POST-GAME: finished → idle (result dismissed) ──
+                elif self._prev_state == ObserverState.FINISHED and new_state == ObserverState.IDLE:
+                    logger.info(f"[Observer:{self.board_id}] POST-GAME: finished → idle (result screen dismissed)")
+                    # Safety net: if session should have ended but didn't, check now
+                    if self._on_game_ended:
+                        try:
+                            await self._on_game_ended(self.board_id, "post_finish_check")
+                        except Exception as e:
+                            logger.error(f"[Observer:{self.board_id}] on_game_ended(post_finish_check) ERROR: {e}", exc_info=True)
 
                 self._prev_state = new_state
 
@@ -382,7 +418,7 @@ class ObserverManager:
         board_id: str,
         autodarts_url: str,
         on_game_started=None,
-        on_game_finished=None,
+        on_game_ended=None,
         headless: bool = False,
     ):
         existing = self._observers.get(board_id)
@@ -395,7 +431,7 @@ class ObserverManager:
         await obs.open_session(
             autodarts_url=autodarts_url,
             on_game_started=on_game_started,
-            on_game_finished=on_game_finished,
+            on_game_ended=on_game_ended,
             headless=headless,
         )
         return obs

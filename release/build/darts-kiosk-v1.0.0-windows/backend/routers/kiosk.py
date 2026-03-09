@@ -3,6 +3,13 @@ Kiosk Action Routes — Observer MVP
 
 Credit logic: credits decrement on game START (idle->in_game), not on finish.
 Match sharing: conditional based on admin setting match_sharing.enabled.
+
+Session-end chain (triggered by observer detecting game end or abort):
+  1. Check credits/time → decide should_lock
+  2. If should_lock: finalize session in DB, set board to LOCKED
+  3. Schedule observer close (closes browser, restores kiosk window)
+  4. Broadcast status updates
+  All steps logged explicitly for debugging.
 """
 import asyncio
 import os
@@ -40,7 +47,7 @@ async def _on_game_started(board_id: str):
     Observer detected idle -> in_game.
     Decrement credits NOW (not on finish).
     """
-    logger.info(f"[Observer->Kiosk] Game STARTED on board {board_id}")
+    logger.info(f"[Observer->Kiosk] === GAME STARTED === board={board_id}")
 
     try:
         async with AsyncSessionLocal() as db:
@@ -58,25 +65,24 @@ async def _on_game_started(board_id: str):
 
                 board.status = BoardStatus.IN_GAME.value
                 is_last_game = False
+                credits_before = session.credits_remaining
 
                 if session.pricing_mode == PricingMode.PER_GAME.value:
                     session.credits_remaining = max(0, session.credits_remaining - 1)
-                    logger.info(f"[Observer->Kiosk] Credits decremented: {session.credits_remaining} remaining")
                     if session.credits_remaining <= 0:
                         is_last_game = True
-                        logger.info("[Observer->Kiosk] Last game! Credits exhausted after this game.")
 
                 if session.pricing_mode == PricingMode.PER_TIME.value:
                     if session.expires_at and datetime.now(timezone.utc) >= session.expires_at:
                         is_last_game = True
 
+                logger.info(f"[Observer->Kiosk]   credit_consumed: {credits_before} -> {session.credits_remaining}")
+                logger.info(f"[Observer->Kiosk]   is_last_game: {is_last_game}")
+
                 await db.flush()
 
-                # Update observer status with credit info
-                obs = observer_manager.get(board_id)
-                if obs:
-                    obs.status.credits_remaining = session.credits_remaining
-                    obs.status.is_last_game = is_last_game
+                # Store for broadcast outside transaction
+                credits_remaining = session.credits_remaining
 
         # Broadcast updates
         await board_ws.broadcast("board_status", {
@@ -86,7 +92,7 @@ async def _on_game_started(board_id: str):
         })
         await board_ws.broadcast("credit_update", {
             "board_id": board_id,
-            "credits_remaining": session.credits_remaining,
+            "credits_remaining": credits_remaining,
             "is_last_game": is_last_game,
         })
         await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "start"})
@@ -95,12 +101,16 @@ async def _on_game_started(board_id: str):
         logger.error(f"[Observer->Kiosk] Error on game start for {board_id}: {e}", exc_info=True)
 
 
-async def _on_game_finished(board_id: str):
+async def _on_game_ended(board_id: str, reason: str):
     """
-    Observer detected in_game -> finished.
-    Credits already decremented at start. Now check if we should lock.
+    Observer detected game end. Called for ALL end scenarios:
+      - reason="finished"          : in_game -> finished (normal completion)
+      - reason="aborted"           : in_game -> idle (game aborted mid-play)
+      - reason="post_finish_check" : finished -> idle (safety net after result screen)
+
+    Credits were already decremented at start. Check if we should lock.
     """
-    logger.info(f"[Observer->Kiosk] Game FINISHED on board {board_id}")
+    logger.info(f"[Observer->Kiosk] === GAME ENDED === board={board_id}, reason={reason}")
 
     try:
         async with AsyncSessionLocal() as db:
@@ -108,90 +118,123 @@ async def _on_game_finished(board_id: str):
                 result = await db.execute(select(Board).where(Board.board_id == board_id))
                 board = result.scalar_one_or_none()
                 if not board:
+                    logger.error(f"[Observer->Kiosk]   board_not_found: {board_id}")
+                    return
+
+                # If board is already locked (e.g., by a previous callback), skip
+                if board.status == BoardStatus.LOCKED.value:
+                    logger.info(f"[Observer->Kiosk]   board_already_locked: skipping (reason={reason})")
                     return
 
                 session = await get_active_session_for_board(db, board.id)
                 if not session:
+                    logger.info(f"[Observer->Kiosk]   no_active_session: skipping (reason={reason})")
                     return
 
+                # ─── Decide: should we lock? ────────────────────
                 should_lock = False
 
                 if session.pricing_mode == PricingMode.PER_GAME.value:
-                    if session.credits_remaining <= 0:
-                        should_lock = True
+                    should_lock = session.credits_remaining <= 0
 
                 if session.pricing_mode == PricingMode.PER_TIME.value:
                     if session.expires_at and datetime.now(timezone.utc) >= session.expires_at:
                         should_lock = True
 
-                # Conditional match result creation
-                match_sharing = await get_or_create_setting(db, "match_sharing", DEFAULT_MATCH_SHARING)
+                logger.info(f"[Observer->Kiosk]   session_end_decision: should_lock={should_lock}")
+                logger.info(f"[Observer->Kiosk]     pricing_mode={session.pricing_mode}")
+                logger.info(f"[Observer->Kiosk]     credits_remaining={session.credits_remaining}")
+                logger.info(f"[Observer->Kiosk]     reason={reason}")
+
+                # ─── Create match result (finished games only) ──
                 token = None
-                if match_sharing.get("enabled", False):
-                    token = secrets.token_hex(16)
-                    duration = None
-                    if session.started_at:
-                        started = session.started_at
-                        if started.tzinfo is None:
-                            started = started.replace(tzinfo=timezone.utc)
-                        duration = int((datetime.now(timezone.utc) - started).total_seconds())
-                    match = MatchResult(
-                        public_token=token,
-                        board_id=board.board_id,
-                        board_name=board.name,
-                        game_type=session.game_type or "Dart",
-                        players=session.players or [],
-                        winner=session.players[0] if session.players else None,
-                        duration_seconds=duration,
-                        expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-                    )
-                    db.add(match)
-
-                # Update player stats
-                for name in (session.players or []):
-                    result_p = await db.execute(
-                        select(Player).where(Player.nickname_lower == name.strip().lower())
-                    )
-                    player = result_p.scalar_one_or_none()
-                    if not player:
-                        player = Player(
-                            nickname=name.strip(),
-                            nickname_lower=name.strip().lower(),
-                            is_registered=False,
+                if reason == "finished":
+                    match_sharing = await get_or_create_setting(db, "match_sharing", DEFAULT_MATCH_SHARING)
+                    if match_sharing.get("enabled", False):
+                        token = secrets.token_hex(16)
+                        duration = None
+                        if session.started_at:
+                            started = session.started_at
+                            if started.tzinfo is None:
+                                started = started.replace(tzinfo=timezone.utc)
+                            duration = int((datetime.now(timezone.utc) - started).total_seconds())
+                        match = MatchResult(
+                            public_token=token,
+                            board_id=board.board_id,
+                            board_name=board.name,
+                            game_type=session.game_type or "Dart",
+                            players=session.players or [],
+                            winner=session.players[0] if session.players else None,
+                            duration_seconds=duration,
+                            expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
                         )
-                        db.add(player)
-                    player.games_played = (player.games_played or 0) + 1
-                    player.last_played_at = datetime.now(timezone.utc)
+                        db.add(match)
 
+                    # Update player stats (finished games only)
+                    for name in (session.players or []):
+                        result_p = await db.execute(
+                            select(Player).where(Player.nickname_lower == name.strip().lower())
+                        )
+                        player = result_p.scalar_one_or_none()
+                        if not player:
+                            player = Player(
+                                nickname=name.strip(),
+                                nickname_lower=name.strip().lower(),
+                                is_registered=False,
+                            )
+                            db.add(player)
+                        player.games_played = (player.games_played or 0) + 1
+                        player.last_played_at = datetime.now(timezone.utc)
+
+                # ─── Apply lock or return to unlocked ───────────
                 if should_lock:
                     session.status = SessionStatus.FINISHED.value
                     session.ended_at = datetime.now(timezone.utc)
-                    session.ended_reason = (
-                        "credits_exhausted" if session.pricing_mode == PricingMode.PER_GAME.value
-                        else "time_expired"
-                    )
+                    if reason == "aborted":
+                        session.ended_reason = "last_game_aborted"
+                    elif session.pricing_mode == PricingMode.PER_TIME.value:
+                        session.ended_reason = "time_expired"
+                    else:
+                        session.ended_reason = "credits_exhausted"
                     board.status = BoardStatus.LOCKED.value
+                    logger.info(f"[Observer->Kiosk]   board_lock_triggered: reason={session.ended_reason}")
                 else:
                     board.status = BoardStatus.UNLOCKED.value
+                    logger.info(f"[Observer->Kiosk]   board_stays_unlocked: credits={session.credits_remaining}")
 
                 await db.flush()
 
-        # Broadcast
-        await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "checkout"})
+                # Store for broadcast
+                credits_remaining = session.credits_remaining
+
+        # ─── Broadcast ──────────────────────────────────────
+        if reason in ("finished", "aborted"):
+            await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "checkout"})
+
         if should_lock:
             await board_ws.broadcast("board_status", {"board_id": board_id, "status": "locked"})
-            logger.info(f"[Observer->Kiosk] Auto-locking board {board_id}")
-            asyncio.create_task(observer_manager.close(board_id))
+            logger.info(f"[Observer->Kiosk]   browser_close_triggered: board={board_id}")
+            asyncio.create_task(_safe_close_observer(board_id))
         else:
             await board_ws.broadcast("board_status", {"board_id": board_id, "status": "unlocked"})
             await board_ws.broadcast("credit_update", {
                 "board_id": board_id,
-                "credits_remaining": session.credits_remaining,
+                "credits_remaining": credits_remaining,
                 "is_last_game": False,
             })
 
     except Exception as e:
-        logger.error(f"[Observer->Kiosk] Error on game finish for {board_id}: {e}", exc_info=True)
+        logger.error(f"[Observer->Kiosk] Error on game end for {board_id}: {e}", exc_info=True)
+
+
+async def _safe_close_observer(board_id: str):
+    """Close observer with explicit error handling and logging."""
+    try:
+        logger.info(f"[Session-End] closing_observer: board={board_id}")
+        await observer_manager.close(board_id)
+        logger.info(f"[Session-End] observer_closed_OK: board={board_id}")
+    except Exception as e:
+        logger.error(f"[Session-End] observer_close_FAILED: board={board_id}: {e}", exc_info=True)
 
 
 # =====================================================================
@@ -217,7 +260,7 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
         board_id=board_id,
         autodarts_url=autodarts_url,
         on_game_started=_on_game_started,
-        on_game_finished=_on_game_finished,
+        on_game_ended=_on_game_ended,
         headless=headless,
     )
 
@@ -325,7 +368,7 @@ async def kiosk_end_game(board_id: str, data: Optional[EndGameRequest] = None, d
     await board_ws.broadcast("board_status", {"board_id": board_id, "status": board.status})
 
     if should_lock:
-        asyncio.create_task(observer_manager.close(board_id))
+        asyncio.create_task(_safe_close_observer(board_id))
 
     return {
         "message": "Game ended",
@@ -422,9 +465,8 @@ async def get_overlay_data(board_id: str, db: AsyncSession = Depends(get_db)):
         delta = session.expires_at - datetime.now(timezone.utc)
         time_remaining = max(0, int(delta.total_seconds()))
 
-    obs_status = observer_manager.get_status(board_id)
-    is_last = obs_status.get("is_last_game", False)
-    if not is_last and session.pricing_mode == PricingMode.PER_GAME.value:
+    is_last = False
+    if session.pricing_mode == PricingMode.PER_GAME.value:
         is_last = (session.credits_remaining or 0) <= 0
 
     # Include upsell texts for last-game display (credit mode only)
@@ -443,7 +485,7 @@ async def get_overlay_data(board_id: str, db: AsyncSession = Depends(get_db)):
         "pricing_mode": session.pricing_mode,
         "credits_remaining": session.credits_remaining,
         "time_remaining_seconds": time_remaining,
-        "observer_state": obs_status.get("state"),
+        "observer_state": observer_manager.get_status(board_id).get("state"),
         "is_last_game": is_last,
         "session_id": session.id,
         "upsell_message": upsell_message,
@@ -471,13 +513,20 @@ async def trigger_sound(board_id: str, data: SoundTrigger):
 
 @router.post("/kiosk/{board_id}/simulate-game-start")
 async def simulate_game_start(board_id: str, admin: User = Depends(require_admin)):
-    """Simulate observer detecting idle→in_game (for testing only)."""
+    """Simulate observer detecting idle->in_game (for testing only)."""
     await _on_game_started(board_id)
     return {"message": f"Simulated game start on {board_id}"}
 
 
 @router.post("/kiosk/{board_id}/simulate-game-end")
 async def simulate_game_end(board_id: str, admin: User = Depends(require_admin)):
-    """Simulate observer detecting in_game→finished (for testing only)."""
-    await _on_game_finished(board_id)
+    """Simulate observer detecting in_game->finished (for testing only)."""
+    await _on_game_ended(board_id, "finished")
     return {"message": f"Simulated game end on {board_id}"}
+
+
+@router.post("/kiosk/{board_id}/simulate-game-abort")
+async def simulate_game_abort(board_id: str, admin: User = Depends(require_admin)):
+    """Simulate observer detecting in_game->idle (game aborted, for testing only)."""
+    await _on_game_ended(board_id, "aborted")
+    return {"message": f"Simulated game abort on {board_id}"}
