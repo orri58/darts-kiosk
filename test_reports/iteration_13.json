@@ -1,0 +1,75 @@
+{
+  "summary": "P0 improvements testing completed. All 14 backend tests pass (100%). Frontend verified: Kiosk locked screen shows custom texts (GESPERRT, pricing_hint), Settings page has Kiosk-Texte tab with all 9 fields and PWA/App tab with 4 fields, responsive sidebar with all 11 nav items scrollable on small viewport.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Branding tab",
+        "issues": ["Logo shows 'Logo' alt text (broken image) - logo_url points to different domain with 404 response. Recommend clearing or updating logo_url."]
+      }
+    ]
+  },
+
+  "passed_tests": [
+    "P0-1: No Emergent references in HTML source (no 'emergent', 'made with', 'posthog')",
+    "P0-1: Page title is 'Darts Kiosk' (clean)",
+    "P0-2: manifest.json exists with display=standalone, 2 icons",
+    "P0-2: icon-192.png loads successfully (HTTP 200, image/png)",
+    "P0-2: icon-512.png loads successfully (HTTP 200, image/png)",
+    "P0-2: apple-touch-icon meta tag in HTML",
+    "P0-2: theme-color meta tag in HTML",
+    "P0-2: PWA/App tab shows app_name, short_name, theme_color, background_color fields",
+    "P0-3: GET /api/settings/kiosk-texts returns all 9 configurable fields",
+    "P0-3: PUT /api/settings/kiosk-texts with auth updates and persists texts",
+    "P0-3: PUT /api/settings/kiosk-texts without auth returns 401",
+    "P0-3: GET /api/settings/pwa returns all 4 fields",
+    "P0-3: PUT /api/settings/pwa with auth updates and persists config",
+    "P0-3: PUT /api/settings/pwa without auth returns 401",
+    "P0-3: Kiosk locked screen shows 'GESPERRT' (locked_title from kiosk_texts)",
+    "P0-3: Kiosk locked screen shows 'Happy Hour: 50% Rabatt!' (pricing_hint from kiosk_texts)",
+    "P0-3: Settings Kiosk-Texte tab has all 9 editable fields with save button",
+    "P0-4: Admin sidebar scrollable on 768x600 viewport",
+    "P0-4: Mobile drawer opens/closes properly",
+    "P0-4: All 11 nav items accessible (Dashboard, Boards, Einstellungen, Benutzer, Logs, Umsatz, Health, System, Discovery, Leaderboard, Berichte)",
+    "P0-4: User/logout section visible without overlap after scrolling nav"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_p0_pwa_kiosk.py",
+    "/app/test_reports/pytest/pytest_p0_pwa.xml"
+  ],
+
+  "action_items": [
+    "MINOR: Clear broken logo_url in branding settings or upload a valid logo image (current URL returns 404 from different domain)"
+  ],
+
+  "critical_code_review_comments": [],
+
+  "updated_files": [
+    "/app/backend/tests/test_p0_pwa_kiosk.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (14/14 tests passed)",
+    "frontend": "100% (all P0 features verified)"
+  },
+
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin12345"},
+    "default_hint": "admin / admin123 | PIN: 1234"
+  },
+
+  "seed_data_creation": "None",
+
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+
+  "context_for_next_testing_agent": "P0 improvements tested: 1) No Emergent branding in index.html (clean). 2) PWA manifest.json with icons at /icon-192.png, /icon-512.png working. 3) Kiosk-texts API at GET/PUT /api/settings/kiosk-texts with 9 fields. PWA config at GET/PUT /api/settings/pwa with 4 fields. 4) Admin sidebar uses flexbox with overflow-y-auto, all 11 nav items scrollable. Note: logo_url points to old domain (404) - minor data cleanup needed."
+}

@@ -26,19 +26,46 @@ export function SettingsProvider({ children }) {
   });
   
   const [palettes, setPalettes] = useState([]);
+  const [kioskTexts, setKioskTexts] = useState({
+    locked_title: 'GESPERRT',
+    locked_subtitle: 'Bitte an der Theke freischalten lassen',
+    pricing_hint: '',
+    game_running: 'SPIEL LÄUFT',
+    game_finished: 'SPIEL BEENDET',
+    call_staff: 'Personal rufen',
+    credits_label: 'Spiele übrig',
+    time_label: 'Zeit übrig',
+    staff_hint: '',
+  });
+  const [pwaConfig, setPwaConfig] = useState({
+    app_name: 'Darts Kiosk',
+    short_name: 'Darts',
+    theme_color: '#09090b',
+    background_color: '#09090b',
+  });
   const [loading, setLoading] = useState(true);
 
   const fetchSettings = useCallback(async () => {
     try {
-      const [brandingRes, pricingRes, palettesRes] = await Promise.all([
+      const [brandingRes, pricingRes, palettesRes, textsRes, pwaRes] = await Promise.all([
         axios.get(`${API}/settings/branding`),
         axios.get(`${API}/settings/pricing`),
-        axios.get(`${API}/settings/palettes`)
+        axios.get(`${API}/settings/palettes`),
+        axios.get(`${API}/settings/kiosk-texts`).catch(() => ({ data: null })),
+        axios.get(`${API}/settings/pwa`).catch(() => ({ data: null })),
       ]);
       
       setBranding(brandingRes.data);
       setPricing(pricingRes.data);
       setPalettes(palettesRes.data);
+      if (textsRes.data) setKioskTexts(prev => ({ ...prev, ...textsRes.data }));
+      if (pwaRes.data) setPwaConfig(prev => ({ ...prev, ...pwaRes.data }));
+
+      // Set document title from branding
+      document.title = brandingRes.data.cafe_name || 'Darts Kiosk';
+      // Update manifest theme color
+      const metaTheme = document.querySelector('meta[name="theme-color"]');
+      if (metaTheme && pwaRes.data?.theme_color) metaTheme.content = pwaRes.data.theme_color;
     } catch (error) {
       console.error('Failed to fetch settings:', error);
     } finally {
@@ -93,6 +120,8 @@ export function SettingsProvider({ children }) {
       branding,
       pricing,
       palettes,
+      kioskTexts,
+      pwaConfig,
       loading,
       updateBranding,
       updatePricing,

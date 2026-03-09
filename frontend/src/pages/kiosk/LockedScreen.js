@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Lock, QrCode, Euro, Shield, Trophy, Crown, ShieldCheck, Target } from 'lucide-react';
 import { useI18n } from '../../context/I18nContext';
+import { useSettings } from '../../context/SettingsContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -236,6 +237,7 @@ function PairingCode({ boardId }) {
 
 export default function LockedScreen({ branding, pricing, boardId }) {
   const { t } = useI18n();
+  const { kioskTexts } = useSettings();
   const formatPrice = (amount, currency = 'EUR') => {
     return `${amount.toFixed(2)} ${currency}`;
   };
@@ -275,11 +277,14 @@ export default function LockedScreen({ branding, pricing, boardId }) {
         {/* Lock Message */}
         <div className="text-center mb-16">
           <h2 className="text-4xl font-heading font-bold uppercase tracking-wider text-zinc-300 mb-4" data-testid="locked-message">
-            {t('locked')}
+            {kioskTexts.locked_title || t('locked')}
           </h2>
           <p className="text-2xl text-zinc-500">
-            {t('locked_message')}
+            {kioskTexts.locked_subtitle || t('locked_message')}
           </p>
+          {kioskTexts.pricing_hint && (
+            <p className="text-lg text-zinc-600 mt-3">{kioskTexts.pricing_hint}</p>
+          )}
         </div>
 
         {/* Pricing Info */}

@@ -65,11 +65,13 @@ const COLOR_FIELDS = [
 const EMPTY_PALETTE = { bg: '#09090b', surface: '#18181b', primary: '#f59e0b', secondary: '#ffffff', accent: '#ef4444', text: '#e4e4e7' };
 
 export default function AdminSettings() {
-  const { branding, pricing, palettes, updateBranding, updatePricing, updatePalettes } = useSettings();
+  const { branding, pricing, palettes, kioskTexts, pwaConfig, updateBranding, updatePricing, updatePalettes, refreshSettings } = useSettings();
   const { token } = useAuth();
   
   const [localBranding, setLocalBranding] = useState(branding);
   const [localPricing, setLocalPricing] = useState(pricing);
+  const [localKioskTexts, setLocalKioskTexts] = useState(kioskTexts);
+  const [localPwa, setLocalPwa] = useState(pwaConfig);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -245,6 +247,36 @@ export default function AdminSettings() {
     fetchMatchSharing();
   }, [token]);
 
+  // Sync local kiosk texts & PWA config when context updates
+  useEffect(() => {
+    setLocalKioskTexts(kioskTexts);
+  }, [kioskTexts]);
+  useEffect(() => {
+    setLocalPwa(pwaConfig);
+  }, [pwaConfig]);
+
+  const handleSaveKioskTexts = async () => {
+    setSaving(true);
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      await axios.put(`${API}/settings/kiosk-texts`, { value: localKioskTexts }, { headers });
+      refreshSettings();
+      toast.success('Kiosk-Texte gespeichert');
+    } catch { toast.error('Fehler beim Speichern'); }
+    finally { setSaving(false); }
+  };
+
+  const handleSavePwa = async () => {
+    setSaving(true);
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      await axios.put(`${API}/settings/pwa`, { value: localPwa }, { headers });
+      refreshSettings();
+      toast.success('PWA-Konfiguration gespeichert');
+    } catch { toast.error('Fehler beim Speichern'); }
+    finally { setSaving(false); }
+  };
+
   const handleSaveStammkundeDisplay = async () => {
     setSaving(true);
     try {
@@ -368,7 +400,7 @@ export default function AdminSettings() {
       </div>
 
       <Tabs defaultValue="branding" className="space-y-6">
-        <TabsList className="bg-zinc-900 border border-zinc-800 p-1">
+        <TabsList className="bg-zinc-900 border border-zinc-800 p-1 flex flex-wrap h-auto gap-1">
           <TabsTrigger value="branding" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Palette className="w-4 h-4 mr-2" />
             {t('branding')}
@@ -396,6 +428,14 @@ export default function AdminSettings() {
           <TabsTrigger value="match-sharing" data-testid="tab-match-sharing" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <QrCode className="w-4 h-4 mr-2" />
             QR Sharing
+          </TabsTrigger>
+          <TabsTrigger value="kiosk-texts" data-testid="tab-kiosk-texts" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
+            <Type className="w-4 h-4 mr-2" />
+            {t('kiosk_texts') || 'Kiosk-Texte'}
+          </TabsTrigger>
+          <TabsTrigger value="pwa" data-testid="tab-pwa" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
+            <Download className="w-4 h-4 mr-2" />
+            PWA / App
           </TabsTrigger>
         </TabsList>
 
@@ -1182,6 +1222,129 @@ export default function AdminSettings() {
                   </Button>
                 </>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Kiosk Texts Tab */}
+        <TabsContent value="kiosk-texts" className="space-y-6">
+          <Card className="bg-zinc-900 border-zinc-800">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <Type className="w-5 h-5 text-amber-500" />
+                {t('kiosk_texts') || 'Kiosk-Texte konfigurieren'}
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <p className="text-sm text-zinc-400">Texte, die auf den Kiosk-Bildschirmen angezeigt werden.</p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-zinc-300">Gesperrt-Titel</Label>
+                  <Input data-testid="kiosk-text-locked-title" value={localKioskTexts.locked_title || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, locked_title: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="GESPERRT" />
+                </div>
+                <div>
+                  <Label className="text-zinc-300">Gesperrt-Untertitel</Label>
+                  <Input data-testid="kiosk-text-locked-subtitle" value={localKioskTexts.locked_subtitle || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, locked_subtitle: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Bitte an der Theke freischalten lassen" />
+                </div>
+                <div>
+                  <Label className="text-zinc-300">Preishinweis (optional)</Label>
+                  <Input data-testid="kiosk-text-pricing-hint" value={localKioskTexts.pricing_hint || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, pricing_hint: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="z.B. Happy Hour: 50% Rabatt!" />
+                </div>
+                <div>
+                  <Label className="text-zinc-300">Personal-Hinweis (optional)</Label>
+                  <Input data-testid="kiosk-text-staff-hint" value={localKioskTexts.staff_hint || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, staff_hint: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="z.B. Fragen? Personal hilft gerne!" />
+                </div>
+              </div>
+
+              <div className="border-t border-zinc-800 pt-4">
+                <h4 className="text-sm font-medium text-zinc-300 mb-3">Spielbildschirm-Texte</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <Label className="text-zinc-300">Spiel läuft</Label>
+                    <Input data-testid="kiosk-text-game-running" value={localKioskTexts.game_running || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, game_running: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="SPIEL LÄUFT" />
+                  </div>
+                  <div>
+                    <Label className="text-zinc-300">Spiel beendet</Label>
+                    <Input data-testid="kiosk-text-game-finished" value={localKioskTexts.game_finished || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, game_finished: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="SPIEL BEENDET" />
+                  </div>
+                  <div>
+                    <Label className="text-zinc-300">Personal rufen</Label>
+                    <Input data-testid="kiosk-text-call-staff" value={localKioskTexts.call_staff || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, call_staff: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Personal rufen" />
+                  </div>
+                  <div>
+                    <Label className="text-zinc-300">Credits-Label</Label>
+                    <Input data-testid="kiosk-text-credits-label" value={localKioskTexts.credits_label || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, credits_label: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Spiele übrig" />
+                  </div>
+                  <div>
+                    <Label className="text-zinc-300">Zeit-Label</Label>
+                    <Input data-testid="kiosk-text-time-label" value={localKioskTexts.time_label || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, time_label: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Zeit übrig" />
+                  </div>
+                </div>
+              </div>
+
+              <Button data-testid="save-kiosk-texts-btn" onClick={handleSaveKioskTexts} disabled={saving} className="bg-amber-500 hover:bg-amber-600 text-black">
+                <Save className="w-4 h-4 mr-2" />
+                {saving ? 'Speichern...' : 'Speichern'}
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* PWA / App Tab */}
+        <TabsContent value="pwa" className="space-y-6">
+          <Card className="bg-zinc-900 border-zinc-800">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <Download className="w-5 h-5 text-amber-500" />
+                PWA / Installierbare App
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <p className="text-sm text-zinc-400">
+                Konfiguriere den App-Namen und das Erscheinungsbild, wenn die App auf einem Gerät installiert wird.
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label className="text-zinc-300">App-Name (lang)</Label>
+                  <Input data-testid="pwa-app-name" value={localPwa.app_name || ''} onChange={(e) => setLocalPwa(p => ({ ...p, app_name: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Darts Kiosk System" />
+                  <p className="text-xs text-zinc-500 mt-1">Wird im App-Launcher angezeigt</p>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">Kurzname</Label>
+                  <Input data-testid="pwa-short-name" value={localPwa.short_name || ''} onChange={(e) => setLocalPwa(p => ({ ...p, short_name: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Darts" />
+                  <p className="text-xs text-zinc-500 mt-1">Unter dem App-Icon auf dem Homescreen</p>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">Theme-Farbe</Label>
+                  <div className="flex gap-2">
+                    <Input data-testid="pwa-theme-color" type="color" value={localPwa.theme_color || '#09090b'} onChange={(e) => setLocalPwa(p => ({ ...p, theme_color: e.target.value }))} className="w-12 h-10 p-1 bg-zinc-800 border-zinc-700" />
+                    <Input value={localPwa.theme_color || '#09090b'} onChange={(e) => setLocalPwa(p => ({ ...p, theme_color: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white font-mono" />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-zinc-300">Hintergrundfarbe</Label>
+                  <div className="flex gap-2">
+                    <Input data-testid="pwa-bg-color" type="color" value={localPwa.background_color || '#09090b'} onChange={(e) => setLocalPwa(p => ({ ...p, background_color: e.target.value }))} className="w-12 h-10 p-1 bg-zinc-800 border-zinc-700" />
+                    <Input value={localPwa.background_color || '#09090b'} onChange={(e) => setLocalPwa(p => ({ ...p, background_color: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white font-mono" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-zinc-800/50 border border-zinc-700 rounded-sm p-4">
+                <h4 className="text-sm font-medium text-zinc-300 mb-2">Installationshinweis</h4>
+                <p className="text-xs text-zinc-400">
+                  Auf <strong>Android</strong>: Chrome &rarr; Menü (&vellip;) &rarr; "Zum Startbildschirm hinzufügen"<br />
+                  Auf <strong>iPhone/iPad</strong>: Safari &rarr; Teilen-Button &rarr; "Zum Home-Bildschirm"<br />
+                  Auf <strong>Desktop</strong>: Chrome/Edge &rarr; Adressleiste &rarr; Install-Icon
+                </p>
+              </div>
+
+              <Button data-testid="save-pwa-btn" onClick={handleSavePwa} disabled={saving} className="bg-amber-500 hover:bg-amber-600 text-black">
+                <Save className="w-4 h-4 mr-2" />
+                {saving ? 'Speichern...' : 'Speichern'}
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
