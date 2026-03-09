@@ -112,3 +112,26 @@ async def get_update_history(
     """Get the persisted update history."""
     history = await update_service.get_update_history(db)
     return {"history": history}
+
+
+@router.get("/updates/notification")
+async def get_update_notification(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get the cached background update check result for dashboard banner."""
+    notification = await update_service.get_notification(db)
+    if not notification:
+        return {"update_available": False, "configured": bool(update_service.get_github_repo())}
+    return notification
+
+
+@router.post("/updates/notification/dismiss")
+async def dismiss_update_notification(
+    version: str = Query(...),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Dismiss the update notification for a specific version."""
+    await update_service.dismiss_notification(db, version)
+    return {"message": f"Benachrichtigung fuer v{version} ausgeblendet"}

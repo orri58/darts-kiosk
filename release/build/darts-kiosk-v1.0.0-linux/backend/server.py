@@ -182,6 +182,10 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"mDNS start failed (non-critical): {exc}")
 
+    # Start background update checker
+    from backend.services.update_service import update_service as _update_svc
+    await _update_svc.start_background_checker()
+
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
     logger.info(f"Autodarts mode: {os.environ.get('AUTODARTS_MODE', 'observer')}")
@@ -189,6 +193,8 @@ async def lifespan(app: FastAPI):
     # Shutdown: close all observers first
     from backend.services.autodarts_observer import observer_manager
     await observer_manager.close_all()
+    from backend.services.update_service import update_service as _update_svc
+    await _update_svc.stop_background_checker()
     mdns_service.stop()
     await stop_health_monitor()
     await stop_backup_service()

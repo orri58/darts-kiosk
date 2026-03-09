@@ -2,12 +2,12 @@
 Update Service — GitHub-based
 Checks GitHub Releases for new versions, downloads assets,
 triggers backup before update, persists update history to DB.
+Includes a background scheduler that checks once per interval.
 """
 import os
 import asyncio
 import logging
 import platform
-import shutil
 from datetime import datetime, timezone
 from typing import List, Optional, Dict
 from dataclasses import dataclass, field
@@ -23,6 +23,9 @@ GITHUB_REPO = os.environ.get('GITHUB_REPO', '')
 GITHUB_API = "https://api.github.com"
 DOWNLOADS_DIR = DATA_DIR / 'downloads'
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+UPDATE_CHECK_ENABLED = os.environ.get('UPDATE_CHECK_ENABLED', 'true').lower() in ('true', '1', 'yes')
+UPDATE_CHECK_INTERVAL_HOURS = int(os.environ.get('UPDATE_CHECK_INTERVAL_HOURS', '24'))
 
 
 @dataclass
@@ -49,6 +52,10 @@ class UpdateService:
         self._cached_releases: List[GitHubRelease] = []
         self._last_check: Optional[str] = None
         self._download_progress: Dict[str, Dict] = {}
+        self._bg_task: Optional[asyncio.Task] = None
+        self._bg_running = False
+        # In-memory cache of last background check result
+        self._notification_cache: Optional[Dict] = None
 
     def get_current_version(self) -> str:
         return CURRENT_VERSION
@@ -387,6 +394,129 @@ class UpdateService:
             db_session.add(setting)
 
         await db_session.flush()
+
+    # ------------------------------------------------------------------
+    # Background Update Checker
+    # ------------------------------------------------------------------
+    async def start_background_checker(self):
+        """Start the periodic background update check."""
+        if not UPDATE_CHECK_ENABLED:
+            logger.info("Background update check is disabled (UPDATE_CHECK_ENABLED=false)")
+            return
+        if not GITHUB_REPO:
+            logger.info("Background update check skipped: no GITHUB_REPO configured")
+            return
+        if self._bg_running:
+            return
+
+        self._bg_running = True
+        self._bg_task = asyncio.create_task(self._bg_check_loop())
+        logger.info(
+            f"Background update checker started (interval={UPDATE_CHECK_INTERVAL_HOURS}h, repo={GITHUB_REPO})"
+        )
+
+    async def stop_background_checker(self):
+        """Stop the periodic background update check."""
+        self._bg_running = False
+        if self._bg_task:
+            self._bg_task.cancel()
+            try:
+                await self._bg_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("Background update checker stopped")
+
+    async def _bg_check_loop(self):
+        """Run the check loop. First check after 60s, then every INTERVAL hours."""
+        await asyncio.sleep(60)
+        while self._bg_running:
+            await self._run_background_check()
+            await asyncio.sleep(UPDATE_CHECK_INTERVAL_HOURS * 3600)
+
+    async def _run_background_check(self):
+        """Perform a single background check and persist the result."""
+        try:
+            result = await self.check_for_updates()
+
+            notification = {
+                "update_available": result.get("update_available", False),
+                "current_version": CURRENT_VERSION,
+                "latest_version": result.get("latest_version", CURRENT_VERSION),
+                "latest_name": result.get("latest_name"),
+                "latest_body": result.get("latest_body"),
+                "latest_url": result.get("latest_url"),
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+                "configured": result.get("configured", False),
+                "error": result.get("message"),
+            }
+            self._notification_cache = notification
+
+            # Persist to DB
+            try:
+                from backend.database import AsyncSessionLocal
+                async with AsyncSessionLocal() as db:
+                    await self._persist_notification(db, notification)
+                    await db.commit()
+            except Exception as e:
+                logger.error(f"Failed to persist update notification: {e}")
+
+            if notification["update_available"]:
+                logger.info(f"Background check: update available v{notification['latest_version']}")
+            else:
+                logger.info("Background check: system is up to date")
+
+        except Exception as e:
+            logger.error(f"Background update check failed: {e}")
+
+    async def _persist_notification(self, db_session, notification: Dict):
+        """Save notification cache to DB settings."""
+        from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
+        from backend.models import Settings
+
+        result = await db_session.execute(
+            select(Settings).where(Settings.key == "update_check_cache")
+        )
+        setting = result.scalar_one_or_none()
+        if setting:
+            setting.value = notification
+            flag_modified(setting, "value")
+        else:
+            setting = Settings(key="update_check_cache", value=notification)
+            db_session.add(setting)
+
+    async def get_notification(self, db_session) -> Optional[Dict]:
+        """Get the cached update notification (in-memory first, then DB)."""
+        if self._notification_cache:
+            return self._notification_cache
+
+        from sqlalchemy import select
+        from backend.models import Settings
+        result = await db_session.execute(
+            select(Settings).where(Settings.key == "update_check_cache")
+        )
+        setting = result.scalar_one_or_none()
+        if setting and setting.value:
+            self._notification_cache = setting.value
+            return setting.value
+        return None
+
+    async def dismiss_notification(self, db_session, version: str):
+        """Mark a notification as dismissed for a specific version."""
+        from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
+        from backend.models import Settings
+
+        result = await db_session.execute(
+            select(Settings).where(Settings.key == "update_check_cache")
+        )
+        setting = result.scalar_one_or_none()
+        if setting and setting.value:
+            setting.value["dismissed_version"] = version
+            flag_modified(setting, "value")
+
+        if self._notification_cache:
+            self._notification_cache["dismissed_version"] = version
 
 
 update_service = UpdateService()
