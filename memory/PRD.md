@@ -3,21 +3,35 @@
 ## Original Problem Statement
 Production-ready, local-first Darts Kiosk + Admin Control system for a cafe running on Mini-PCs. Must behave like a real arcade machine on Windows kiosk PCs.
 
-## Observer State Machine (Debounced)
+## Observer State Machine (Three-Tier + Debounced)
 ```
+States: closed, idle, in_game, round_transition, finished, unknown, error
+
+DOM Detection (Three-Tier):
+  Tier 1: Active match markers (scoreboard, dart-input, etc.) → IN_GAME
+  Tier 2: Strong end buttons (Rematch/Share/NewGame text) → FINISHED
+  Tier 3: Generic result CSS classes only → ROUND_TRANSITION
+  Tier 4: No game markers → IDLE
+
+Observer Loop Logic (when stable=IN_GAME):
+  raw IN_GAME          → clear exit counter, continue
+  raw ROUND_TRANSITION → RESET exit counter to 0 (turn change, match active)
+  raw FINISHED         → increment exit counter, saw_finished=True
+  raw IDLE             → increment exit counter (abort scenario)
+  exit_polls >= 3      → CONFIRMED exit → callback
+
 Normal poll: every 4s
-Debounce: 3 consecutive non-in_game polls × 2s = 6s total
+Debounce: 3 consecutive FINISHED/IDLE polls × 2s = 6s total
+ROUND_TRANSITION polls NEVER count toward exit.
 
 Entering in_game: IMMEDIATE (credit consumed promptly)
-Exiting in_game: DEBOUNCED (prevents false exits from turn changes)
+Exiting in_game: DEBOUNCED with ROUND_TRANSITION immunity
 
   idle → in_game (immediate):    _on_game_started → credit -1
-  in_game → non-in_game (poll 1): _exit_polls=1, continue polling at 2s
-  in_game → in_game (recovered):  _exit_polls=0, "RECOVERED" logged
-  in_game → non-in_game (poll 3): CONFIRMED → _on_game_ended(reason)
-    reason = "finished" if any exit poll saw FINISHED
-    reason = "aborted" otherwise
-  finished → idle: _on_game_ended("post_finish_check")
+  in_game → round_transition:    NO ACTION (turn/round change)
+  in_game → finished (×3):       CONFIRMED → _on_game_ended("finished")
+  in_game → idle (×3):           CONFIRMED → _on_game_ended("aborted")
+  finished → idle:               _on_game_ended("post_finish_check")
 
 Lock decision: credits_remaining <= 0 OR time expired → close browser, restore kiosk
 ```
@@ -40,12 +54,18 @@ ignore_default_args = [
 - v1.6.0: Arcade Machine Runtime (overlay, window management)
 - v1.6.1-1.6.3: Chrome profile persistence, extension support, automation banner removal
 - v1.6.4: Observer Debounce Logic
-  - DEBOUNCE_EXIT_POLLS=3, DEBOUNCE_POLL_INTERVAL=2s → 6s total
-  - Turn changes (brief DOM flicker) no longer trigger false lock
-  - Real abort/finish still detected after sustained state change
-  - Unit tests: 5 scenarios (turn change, real abort, real finish, alternating flicker, config)
+- v1.6.5: Three-Tier State Detection & ROUND_TRANSITION
+  - New ROUND_TRANSITION state prevents turn/round changes from locking the board
+  - Strong match-end markers (button text: Rematch/Share/NewGame) required for FINISHED
+  - Generic result CSS classes only → ROUND_TRANSITION (no session end)
+  - ROUND_TRANSITION resets exit debounce counter
+  - Unit tests: 10 scenarios + 5 regression (15 total observer tests)
+  - Full API lifecycle verified (26 tests total)
 
 ## Remaining Backlog
+### P1
+- [ ] Autodarts DOM Selector Tests (validate selectors against live site)
+
 ### P2
-- [ ] Autodarts DOM Selector Tests
-- [ ] PWA Install Prompt
+- [ ] Chromium Extension as alternative to Playwright observer
+- [ ] PWA Install Prompt for public leaderboard page
