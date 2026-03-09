@@ -5,53 +5,44 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
 
 ## Architecture
 - **Arcade Machine Runtime**: On unlock, system Chrome opens Autodarts fullscreen. Kiosk window is HIDDEN via Win32 API. Separate always-on-top credits overlay stays visible. On lock, Chrome closes, kiosk window restored to foreground.
-- **Persistent Chrome Profile**: Uses Playwright `launch_persistent_context` with `channel="chrome"` and `ignore_default_args=["--enable-automation"]` to reuse the installed Chrome. Preserves Google/Autodarts login. No automation banner.
-- **Window Manager**: `window_manager.py` uses Win32 ctypes (EnumWindows, ShowWindow, SetForegroundWindow) to hide/restore the kiosk Chrome window by matching `document.title='DartsKiosk'`.
+- **Persistent Chrome Profile**: Uses Playwright `launch_persistent_context` with `channel="chrome"` and `ignore_default_args=["--enable-automation"]`. Preserves Google/Autodarts login. No automation banner.
+- **Window Manager**: `window_manager.py` uses Win32 ctypes to hide/restore the kiosk Chrome window.
 - **Credits Overlay**: Separate Python/tkinter window, always-on-top, click-through, transparent. Polls backend API every 3s.
 - **Tech Stack**: FastAPI + SQLAlchemy/SQLite (backend), React + Tailwind/Shadcn (frontend)
 
-## Arcade Mode UX Flow
+## Observer State Machine & Session-End Logic
 ```
-LOCKED:   Kiosk fullscreen (Chrome --kiosk), locked screen visible, title='DartsKiosk'
-UNLOCK:   Backend launches Autodarts in system Chrome (persistent profile, fullscreen)
-          → 1.5s delay → window_manager.hide_kiosk_window() → kiosk HIDDEN
-          Credits overlay appears (Python/tkinter, always-on-top, click-through)
-ACTIVE:   Autodarts is main visible app, observer polls game state
-          Credits decrement on game START (idle -> in_game)
-FAILED:   If Chrome launch fails → Fallback screen (retry, staff, end buttons)
-          Kiosk stays visible since Chrome never opened
-LOCK/END: Autodarts Chrome closes → window_manager.restore_kiosk_window()
-          → kiosk restored fullscreen foreground → locked screen
-          Credits overlay hides
+States: closed, idle, in_game, finished, unknown, error
+
+Transitions and callbacks:
+  * → in_game:        _on_game_started   → credit decremented
+  in_game → finished: _on_game_ended("finished")  → check lock, create match result
+  in_game → idle:     _on_game_ended("aborted")   → check lock, no refund
+  finished → idle:    _on_game_ended("post_finish_check") → safety net
+
+Lock decision (in _on_game_ended):
+  per_game:  credits_remaining <= 0 → lock
+  per_time:  now >= expires_at → lock
+
+Session-end chain (when should_lock=True):
+  1. session.status = FINISHED, board.status = LOCKED
+  2. broadcast board_status=locked
+  3. asyncio.create_task(_safe_close_observer(board_id))
+     → observer_manager.close(board_id)
+     → Chrome closed, kiosk window restored
 ```
-
-## Key Technical Details
-### Automation Banner Removal
-- `ignore_default_args=["--enable-automation"]` removes the automation flag
-- `--disable-blink-features=AutomationControlled` prevents automation fingerprinting
-- No `--no-sandbox` or `--disable-extensions-except` flags
-
-### Window Title Stability
-- KioskLayout.js sets `document.title = 'DartsKiosk'` after settings load
-- SettingsContext.js skips title override on `/kiosk/*` routes
-- Window manager uses 'DartsKiosk' pattern for EnumWindows matching
-
-### Profile Persistence
-- Profile path: `data/chrome_profile/{board_id}/`
-- Profile NEVER recreated — `os.makedirs(exist_ok=True)` only creates directory
-- Detects existing profile by checking `Default/` subfolder
-- Logs "REUSING (Google login preserved)" or "NEW (first launch — login required)"
 
 ## All Implemented Features
 - v1.0-1.5: Core Kiosk, Admin, Auth, Boards, Pricing, Sessions, Stammkunde, QR, Leaderboards, Sound, i18n, White-Label, Update System, Observer Mode
-- v1.5.1: Windows Playwright Fix (ProactorEventLoop, run_backend.py)
-- v1.6.0: Arcade Machine Runtime Architecture (overlay, window management)
-- v1.6.1: Runtime UX Fixes
-  - Automation banner removed (ignore_default_args)
-  - Kiosk window properly hidden via Win32 API (not just blur)
-  - Profile reuse detection with clear logging
-  - Stable document.title for window identification
-  - SettingsContext fixed to not override kiosk title
+- v1.5.1: Windows Playwright Fix (ProactorEventLoop)
+- v1.6.0: Arcade Machine Runtime (overlay, window management)
+- v1.6.1: Runtime UX Fixes (automation banner, window hiding, profile reuse)
+- v1.6.2: Session-End Logic Fix
+  - Unified _on_game_ended(board_id, reason) for ALL game-end scenarios
+  - New abort handler: in_game → idle triggers lock check
+  - _safe_close_observer with explicit error logging
+  - New /simulate-game-abort test endpoint
+  - Explicit logging: transition_detected, session_end_decision, board_lock_triggered, browser_close_triggered
 
 ## Remaining Backlog
 ### P2
