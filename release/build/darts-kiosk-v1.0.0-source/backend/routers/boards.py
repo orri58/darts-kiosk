@@ -1,5 +1,6 @@
 """Board CRUD & Session Control Routes"""
 import asyncio
+import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
@@ -267,6 +268,7 @@ async def get_board_session(board_id: str, db: AsyncSession = Depends(get_db)):
 
     return {
         "board_status": board.status,
+        "autodarts_mode": os.environ.get('AUTODARTS_MODE', 'observer'),
         "session": SessionResponse(
             id=session.id, board_id=session.board_id, pricing_mode=session.pricing_mode,
             game_type=session.game_type, credits_total=session.credits_total,

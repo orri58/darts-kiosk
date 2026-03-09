@@ -7,6 +7,7 @@ import { useSoundManager } from '../../hooks/useSoundManager';
 import { useBoardWS } from '../../hooks/useBoardWS';
 import LockedScreen from './LockedScreen';
 import SetupScreen from './SetupScreen';
+import ObserverActiveScreen from './ObserverActiveScreen';
 import InGameScreen from './InGameScreen';
 import MatchResultScreen from './MatchResultScreen';
 import ErrorScreen from './ErrorScreen';
@@ -38,6 +39,7 @@ export default function KioskLayout() {
   const [kioskState, setKioskState] = useState(STATES.LOCKED);
   const [session, setSession] = useState(null);
   const [boardStatus, setBoardStatus] = useState('locked');
+  const [autodartsMode, setAutodartsMode] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState(null);
   const [matchToken, setMatchToken] = useState(null);
@@ -51,6 +53,9 @@ export default function KioskLayout() {
       const response = await axios.get(`${API}/boards/${boardId}/session`);
       setBoardStatus(response.data.board_status);
       setSession(response.data.session);
+      if (response.data.autodarts_mode) {
+        setAutodartsMode(response.data.autodarts_mode);
+      }
       
       // Don't override FINISHED state while QR screen is showing (60s timeout handles transition)
       if (showingQrRef.current) {
@@ -63,7 +68,12 @@ export default function KioskLayout() {
           setKioskState(STATES.LOCKED);
           break;
         case 'unlocked':
-          setKioskState(STATES.SETUP);
+          // Observer mode: skip setup screen entirely
+          if (response.data.autodarts_mode === 'observer') {
+            setKioskState(STATES.SETUP); // reuse SETUP state, component decides what to render
+          } else {
+            setKioskState(STATES.SETUP);
+          }
           break;
         case 'in_game':
           setKioskState(STATES.IN_GAME);
@@ -183,7 +193,17 @@ export default function KioskLayout() {
         />
       )}
       
-      {kioskState === STATES.SETUP && (
+      {kioskState === STATES.SETUP && autodartsMode === 'observer' && (
+        <ObserverActiveScreen
+          branding={branding}
+          session={session}
+          boardId={boardId}
+          onEndGame={handleEndGame}
+          onCallStaff={handleCallStaff}
+        />
+      )}
+
+      {kioskState === STATES.SETUP && autodartsMode !== 'observer' && (
         <SetupScreen 
           branding={branding}
           pricing={pricing}
@@ -192,7 +212,17 @@ export default function KioskLayout() {
         />
       )}
       
-      {kioskState === STATES.IN_GAME && (
+      {kioskState === STATES.IN_GAME && autodartsMode === 'observer' && (
+        <ObserverActiveScreen
+          branding={branding}
+          session={session}
+          boardId={boardId}
+          onEndGame={handleEndGame}
+          onCallStaff={handleCallStaff}
+        />
+      )}
+
+      {kioskState === STATES.IN_GAME && autodartsMode !== 'observer' && (
         <InGameScreen 
           branding={branding}
           session={session}
