@@ -454,32 +454,110 @@ class AutodartsObserver:
         logger.info(f"[Observer:{self.board_id}] Observe loop ended")
 
     async def _detect_state(self) -> ObserverState:
-        """Detect game state from Autodarts DOM using minimal selectors."""
+        """
+        Two-level DOM detection with explicit round/match separation.
+
+        Level 1 — in_game (DOMINANT): Active match markers — scoreboard,
+                  dart input, scoring UI. If present, state is IN_GAME
+                  regardless of other signals. Round result screens during
+                  an active match have these markers alongside result markers.
+
+        Level 2 — match_over (STRICT): Definitive end-of-match markers —
+                  rematch/new-game buttons, share-results UI, post-match
+                  summary. These only appear after the ENTIRE match ends,
+                  not between rounds/turns. Only evaluated when in_game
+                  markers are absent.
+
+        Mapping:
+          in_game=true  → IN_GAME  (even if result markers also present)
+          match_over=true, in_game=false → FINISHED (real match end)
+          both false → IDLE (lobby/setup)
+        """
         try:
-            in_game = await self._page.evaluate("""() => {
-                const m = document.querySelector(
-                    '[class*="match"], [class*="scoreboard"], [data-testid*="match"], #match'
+            signals = await self._page.evaluate("""() => {
+                // === Level 1: Active match indicators ===
+                // Present during gameplay AND round-result screens
+                const inGame = !!(
+                    document.querySelector('[class*="scoreboard"]') ||
+                    document.querySelector('[class*="dart-input"]') ||
+                    document.querySelector('[class*="throw"]') ||
+                    document.querySelector('[class*="scoring"]') ||
+                    document.querySelector('[class*="game-view"]') ||
+                    document.querySelector('[class*="match-view"]') ||
+                    document.querySelector('[class*="player-score"]') ||
+                    document.querySelector('[class*="turn"]') ||
+                    document.querySelector('[class*="match"][class*="running"]') ||
+                    document.querySelector('[data-testid*="match"]') ||
+                    document.querySelector('#match')
                 );
-                const d = document.querySelector(
-                    '[class*="dart-input"], [class*="throw"], [class*="scoring"], [class*="game-view"]'
+
+                // === Level 2: Definitive match-end indicators ===
+                // Only present when the ENTIRE match is over.
+                // NOT present during round/turn result screens.
+                const matchOver = !!(
+                    document.querySelector('[class*="rematch"]') ||
+                    document.querySelector('[class*="new-game"]') ||
+                    document.querySelector('[class*="play-again"]') ||
+                    document.querySelector('[class*="post-match"]') ||
+                    document.querySelector('[class*="match-end"]') ||
+                    document.querySelector('[class*="match-finished"]') ||
+                    document.querySelector('[class*="game-over"]') ||
+                    document.querySelector('[class*="match-result"]') ||
+                    document.querySelector('[class*="share-result"]') ||
+                    document.querySelector('[class*="share-match"]') ||
+                    Array.from(document.querySelectorAll('button')).some(function(b) {
+                        return /rematch|play again|nochmal|new game|neues spiel/i.test(b.textContent || '');
+                    })
                 );
-                return !!(m || d);
+
+                // === Round-level result indicators (informational only) ===
+                const hasRoundResult = !!(
+                    document.querySelector('[class*="result"]') ||
+                    document.querySelector('[class*="winner"]') ||
+                    document.querySelector('[class*="finished"]')
+                );
+
+                return { inGame: inGame, matchOver: matchOver, hasRoundResult: hasRoundResult };
             }""")
 
-            finished = await self._page.evaluate("""() => {
-                const w = document.querySelector(
-                    '[class*="winner"], [class*="result"], [class*="game-over"], [class*="match-end"], [class*="finished"]'
-                );
-                const s = document.querySelector(
-                    '[class*="post-match"], [class*="match-stats"], [class*="game-result"]'
-                );
-                return !!(w || s);
-            }""")
+            in_game = signals.get('inGame', False)
+            match_over = signals.get('matchOver', False)
+            has_round_result = signals.get('hasRoundResult', False)
 
-            if finished:
-                return ObserverState.FINISHED
+            # Log raw signals when anything interesting happens
+            if has_round_result or match_over or not in_game:
+                logger.info(
+                    f"[Observer:{self.board_id}] raw_detect: "
+                    f"in_game={in_game}, match_over={match_over}, round_result={has_round_result}"
+                )
+
+            # === State mapping ===
+
+            # in_game is DOMINANT — round results during a match stay IN_GAME
             if in_game:
+                if has_round_result:
+                    logger.info(
+                        f"[Observer:{self.board_id}] mapped: IN_GAME "
+                        f"(reason: round_transition — result markers present but match still active)"
+                    )
                 return ObserverState.IN_GAME
+
+            # Match truly over: strict end-of-match markers, no in_game markers
+            if match_over:
+                logger.info(
+                    f"[Observer:{self.board_id}] mapped: FINISHED "
+                    f"(reason: match_finished — end-of-match markers detected, in_game=false)"
+                )
+                return ObserverState.FINISHED
+
+            # Round result markers without in_game → ambiguous, treat as IDLE
+            # (the debounce will wait for confirmation before acting)
+            if has_round_result:
+                logger.info(
+                    f"[Observer:{self.board_id}] mapped: IDLE "
+                    f"(reason: round_result without in_game — transient state, waiting for clarity)"
+                )
+
             return ObserverState.IDLE
 
         except Exception as e:
