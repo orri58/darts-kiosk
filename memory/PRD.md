@@ -68,6 +68,15 @@ Version source: /VERSION file (single source of truth)
   - RELEASE_GUIDE.md documentation
   - update.bat for manual Windows update
   - All 18 tests passed (13 backend API + 5 frontend UI)
+- v1.7.1: GitHub Deployment Setup
+  - GitHub Actions workflow (.github/workflows/build-release.yml)
+    - Triggers: push tag v* OR manual workflow_dispatch
+    - Builds: Windows .zip, Linux .tar.gz, Source .zip
+    - Auto-creates GitHub Release with all 3 assets
+    - Uses: actions/checkout@v4, actions/setup-node@v4, softprops/action-gh-release@v2
+  - .env.example templates for backend and frontend
+  - GITHUB_SETUP.md — complete manual checklist (repo setup, Actions, tokens, go-live)
+  - Validated: version comparison, platform detection, asset naming, protected paths
 
 ## Remaining Backlog
 ### P1
