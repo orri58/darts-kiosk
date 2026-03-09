@@ -48,6 +48,8 @@ if not exist "backend\.env" (
         echo MODE=STANDALONE
         echo BOARD_ID=BOARD-1
         echo AUTODARTS_URL=https://play.autodarts.io
+        echo AUTODARTS_MODE=observer
+        echo AUTODARTS_HEADLESS=false
         echo AUTODARTS_MOCK=false
     ) > backend\.env
     echo   [OK] backend\.env erstellt

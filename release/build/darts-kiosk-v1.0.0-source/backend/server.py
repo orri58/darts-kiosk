@@ -184,7 +184,11 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
+    logger.info(f"Autodarts mode: {os.environ.get('AUTODARTS_MODE', 'observer')}")
     yield
+    # Shutdown: close all observers first
+    from backend.services.autodarts_observer import observer_manager
+    await observer_manager.close_all()
     mdns_service.stop()
     await stop_health_monitor()
     await stop_backup_service()

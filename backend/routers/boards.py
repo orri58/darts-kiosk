@@ -1,4 +1,5 @@
 """Board CRUD & Session Control Routes"""
+import asyncio
 import uuid
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +18,7 @@ from backend.dependencies import (
     get_active_session_for_board
 )
 from backend.services.ws_manager import board_ws
+from backend.routers.kiosk import start_observer_for_board, stop_observer_for_board
 
 router = APIRouter()
 
@@ -170,6 +172,10 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
 
     await board_ws.broadcast("board_status", {"board_id": board_id, "status": "unlocked"})
 
+    # Start Autodarts observer if board has a configured URL
+    if board.autodarts_target_url:
+        asyncio.create_task(start_observer_for_board(board_id, board.autodarts_target_url))
+
     return SessionResponse(
         id=session.id, board_id=session.board_id, pricing_mode=session.pricing_mode,
         game_type=session.game_type, credits_total=session.credits_total,
@@ -242,6 +248,9 @@ async def lock_board(board_id: str, user: User = Depends(get_current_user), db: 
     await log_audit(db, user, "lock_board", "board", board.id, {"board_id": board_id})
 
     await board_ws.broadcast("board_status", {"board_id": board_id, "status": "locked"})
+
+    # Close Autodarts observer
+    asyncio.create_task(stop_observer_for_board(board_id))
 
     return {"message": "Board locked", "board_id": board_id}
 
