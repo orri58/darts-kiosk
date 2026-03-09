@@ -447,7 +447,7 @@ async def remove_branding_logo(admin: User = Depends(require_admin), db: AsyncSe
     if not setting:
         return {"message": "No branding settings found"}
 
-    branding = setting.value or {}
+    branding = dict(setting.value or {})  # copy the dict to break the reference
     logo_url = branding.get("logo_url", "")
 
     if logo_url:
@@ -456,8 +456,10 @@ async def remove_branding_logo(admin: User = Depends(require_admin), db: AsyncSe
         if filepath.exists():
             filepath.unlink()
 
-    branding["logo_url"] = ""
+    branding["logo_url"] = None
     setting.value = branding
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(setting, "value")
     await db.flush()
     await log_audit(db, admin, "remove_logo", "settings", "branding")
     return {"message": "Logo removed", "branding": branding}

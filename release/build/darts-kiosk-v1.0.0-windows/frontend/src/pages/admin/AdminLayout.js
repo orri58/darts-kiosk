@@ -85,22 +85,21 @@ export default function AdminLayout() {
       {/* Sidebar */}
       <aside
         className={`
-          fixed top-0 left-0 h-full w-64 bg-zinc-900 border-r border-zinc-800 z-40 transform transition-transform duration-200
+          fixed top-0 left-0 h-full w-64 bg-zinc-900 border-r border-zinc-800 z-40 transform transition-transform duration-200 flex flex-col
           lg:translate-x-0
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
       >
-        {/* Logo */}
-        <div className="h-16 flex items-center px-6 border-b border-zinc-800">
-          <h1 className="font-heading text-xl uppercase tracking-wider text-white">
+        {/* Logo - fixed top */}
+        <div className="h-16 flex items-center px-6 border-b border-zinc-800 flex-shrink-0">
+          <h1 className="font-heading text-xl uppercase tracking-wider text-white truncate">
             {branding.cafe_name}
           </h1>
         </div>
 
-        {/* Navigation */}
-        <nav className="p-4 space-y-1">
+        {/* Navigation - scrollable */}
+        <nav className="flex-1 overflow-y-auto p-4 space-y-1" data-testid="admin-nav">
           {NAV_ITEMS.map((item) => {
-            // Skip admin-only items for non-admins
             if (item.adminOnly && !isAdmin) return null;
             
             return (
@@ -118,32 +117,32 @@ export default function AdminLayout() {
                   }
                 `}
               >
-                <item.icon className="w-5 h-5" />
-                <span className="font-medium">{t(item.labelKey)}</span>
+                <item.icon className="w-5 h-5 flex-shrink-0" />
+                <span className="font-medium truncate">{t(item.labelKey)}</span>
               </NavLink>
             );
           })}
         </nav>
 
-        {/* User Info & Logout */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-zinc-800">
-          <div className="flex items-center gap-3 mb-4 px-2">
-            <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center">
-              <span className="text-amber-500 font-heading text-lg">
+        {/* User Info & Logout - fixed bottom */}
+        <div className="flex-shrink-0 p-4 border-t border-zinc-800">
+          <div className="flex items-center gap-3 mb-3 px-2">
+            <div className="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center flex-shrink-0">
+              <span className="text-amber-500 font-heading text-sm">
                 {user?.username?.[0]?.toUpperCase() || 'U'}
               </span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-white font-medium truncate">{user?.display_name || user?.username}</p>
+              <p className="text-white text-sm font-medium truncate">{user?.display_name || user?.username}</p>
               <p className="text-xs text-zinc-500 uppercase">{user?.role}</p>
             </div>
           </div>
           <button
             onClick={handleLogout}
             data-testid="logout-btn"
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 text-zinc-400 rounded-sm transition-all"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 text-zinc-400 rounded-sm transition-all text-sm"
           >
-            <LogOut className="w-5 h-5" />
+            <LogOut className="w-4 h-4" />
             <span>{t('logout')}</span>
           </button>
         </div>

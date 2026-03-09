@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from backend.database import get_db
 from backend.models import User, Settings
-from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE
+from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG
 from backend.schemas import SettingsUpdate
 from backend.dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
 from backend.services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
@@ -219,3 +219,45 @@ async def get_sound_file(pack: str, event: str):
             "Content-Disposition": f"inline; filename={event}.wav",
         },
     )
+
+
+# ===== Kiosk Text Settings =====
+
+@router.get("/settings/kiosk-texts")
+async def get_kiosk_texts(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "kiosk_texts", DEFAULT_KIOSK_TEXTS)
+
+
+@router.put("/settings/kiosk-texts")
+async def update_kiosk_texts(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "kiosk_texts"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="kiosk_texts", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_kiosk_texts", "settings", "kiosk_texts")
+    return setting.value
+
+
+# ===== PWA Config =====
+
+@router.get("/settings/pwa")
+async def get_pwa_config(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "pwa_config", DEFAULT_PWA_CONFIG)
+
+
+@router.put("/settings/pwa")
+async def update_pwa_config(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "pwa_config"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="pwa_config", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_pwa_config", "settings", "pwa_config")
+    return setting.value

@@ -341,3 +341,22 @@ DEFAULT_BRANDING = {
     "font_preset": "industrial",
     "background_style": "solid"
 }
+
+DEFAULT_KIOSK_TEXTS = {
+    "locked_title": "GESPERRT",
+    "locked_subtitle": "Bitte an der Theke freischalten lassen",
+    "pricing_hint": "",
+    "game_running": "SPIEL LÄUFT",
+    "game_finished": "SPIEL BEENDET",
+    "call_staff": "Personal rufen",
+    "credits_label": "Spiele übrig",
+    "time_label": "Zeit übrig",
+    "staff_hint": "",
+}
+
+DEFAULT_PWA_CONFIG = {
+    "app_name": "Darts Kiosk",
+    "short_name": "Darts",
+    "theme_color": "#09090b",
+    "background_color": "#09090b",
+}

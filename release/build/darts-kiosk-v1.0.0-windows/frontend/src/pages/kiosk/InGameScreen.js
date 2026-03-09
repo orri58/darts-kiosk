@@ -1,10 +1,12 @@
 import { useState, useEffect } from 'react';
 import { Target, Clock, Coins, Phone, StopCircle, Users } from 'lucide-react';
 import { Button } from '../../components/ui/button';
+import { useSettings } from '../../context/SettingsContext';
 
 export default function InGameScreen({ branding, session, onEndGame, onCallStaff }) {
   const [timeLeft, setTimeLeft] = useState(null);
   const [showConfirmEnd, setShowConfirmEnd] = useState(false);
+  const { kioskTexts } = useSettings();
 
   // Calculate time remaining for per_time mode
   useEffect(() => {
@@ -52,7 +54,7 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
           {/* Status Indicator */}
           <div className="flex items-center gap-2 bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 rounded-sm px-4 py-2">
             <div className="w-3 h-3 rounded-full bg-emerald-500 animate-pulse"></div>
-            <span className="font-heading uppercase tracking-wider">SPIEL LÄUFT</span>
+            <span className="font-heading uppercase tracking-wider">{kioskTexts.game_running || 'SPIEL LÄUFT'}</span>
           </div>
         </div>
       </div>
@@ -91,7 +93,7 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
             <div className="bg-zinc-900 border-2 border-amber-500/30 rounded-sm p-6 text-center">
               <div className="flex items-center justify-center gap-2 mb-3">
                 <Coins className="w-6 h-6 text-amber-500" />
-                <span className="text-sm text-zinc-500 uppercase tracking-wider">Spiele übrig</span>
+                <span className="text-sm text-zinc-500 uppercase tracking-wider">{kioskTexts.credits_label || 'Spiele übrig'}</span>
               </div>
               <p className="text-5xl font-mono font-bold text-amber-500" data-testid="credits-remaining">
                 {session?.credits_remaining || 0}
@@ -101,7 +103,7 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
             <div className={`bg-zinc-900 border-2 rounded-sm p-6 text-center ${timeLeft?.minutes < 5 ? 'border-red-500/50' : 'border-amber-500/30'}`}>
               <div className="flex items-center justify-center gap-2 mb-3">
                 <Clock className={`w-6 h-6 ${timeLeft?.minutes < 5 ? 'text-red-500' : 'text-amber-500'}`} />
-                <span className="text-sm text-zinc-500 uppercase tracking-wider">Zeit übrig</span>
+                <span className="text-sm text-zinc-500 uppercase tracking-wider">{kioskTexts.time_label || 'Zeit übrig'}</span>
               </div>
               <p className={`text-5xl font-mono font-bold ${timeLeft?.minutes < 5 ? 'text-red-500 animate-pulse' : 'text-amber-500'}`} data-testid="time-remaining">
                 {formatTime(timeLeft)}
@@ -138,7 +140,7 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
             className="flex-1 h-20 text-xl bg-transparent border-2 border-zinc-700 text-zinc-300 hover:border-amber-500 hover:text-amber-500 uppercase font-heading tracking-wider"
           >
             <Phone className="w-6 h-6 mr-3" />
-            Personal rufen
+            {kioskTexts.call_staff || 'Personal rufen'}
           </Button>
 
           {/* End Game (Manual) */}
