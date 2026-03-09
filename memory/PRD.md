@@ -80,7 +80,9 @@ autostart.bat:
   - Simplified start.bat (backend + overlay only, no frontend process)
   - Observer fix: strong match-end markers override in_game (Rematch/Share buttons)
   - Detailed finalization logging (should_lock, lock_reason, credits)
-  - 31/31 tests passed (16 unit + 15 API/UI)
+  - Private repo download fix: uses GitHub API URL with Accept: application/octet-stream
+  - 401 handling for invalid/expired tokens, clear error messages
+  - 30/30 tests passed (16 unit + 15 API/UI)
 
 ## Remaining Backlog
 ### P1
