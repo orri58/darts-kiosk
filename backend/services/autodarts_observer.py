@@ -27,17 +27,19 @@ WINDOW MANAGEMENT:
   Win32 API (SW_HIDE). On close, the kiosk window is restored to
   fullscreen via SW_SHOW + SW_SHOWMAXIMIZED + SetForegroundWindow.
 
-States: closed, idle, in_game, finished, unknown, error
+States: closed, idle, in_game, round_transition, finished, unknown, error
 
 Credit logic:
   Credits are decremented on game START (idle -> in_game), not on finish.
   State guard prevents double-decrement.
 
 Session-end logic:
-  Triggered by ANY exit from in_game:
-    - in_game -> finished  (normal finish)
+  Triggered ONLY by confirmed exit from in_game:
+    - in_game -> finished  (strong match-end markers: Rematch/Share buttons)
     - in_game -> idle      (game aborted / returned to lobby)
-  On each: check credits. If exhausted → lock board, close browser, restore kiosk.
+  ROUND_TRANSITION is NOT an exit signal — it indicates a normal turn/round
+  change and resets the exit debounce counter.
+  On confirmed exit: check credits. If exhausted → lock board, close browser, restore kiosk.
 """
 import asyncio
 import os
@@ -68,6 +70,7 @@ class ObserverState(str, Enum):
     CLOSED = "closed"
     IDLE = "idle"
     IN_GAME = "in_game"
+    ROUND_TRANSITION = "round_transition"
     FINISHED = "finished"
     UNKNOWN = "unknown"
     ERROR = "error"
@@ -323,17 +326,23 @@ class AutodartsObserver:
         """
         Poll the Autodarts page for game state changes.
 
-        DEBOUNCE LOGIC:
-        When the stable state is IN_GAME, exiting requires confirmation.
-        Autodarts briefly changes its DOM during turn changes (3-dart completion,
-        player switch). A single non-in_game poll must NOT end the session.
+        STATE MAPPING HIERARCHY (from _detect_state):
+          IN_GAME          — active match markers (scoreboard, dart-input, etc.)
+          FINISHED         — strong end-of-match markers (Rematch/Share/NewGame buttons)
+          ROUND_TRANSITION — generic result/winner CSS classes only (turn/round change)
+          IDLE             — no game markers (lobby/setup)
 
-        Rule: exiting IN_GAME requires DEBOUNCE_EXIT_POLLS consecutive
-        non-in_game polls. During the confirmation phase, we poll faster
-        (DEBOUNCE_POLL_INTERVAL instead of OBSERVER_POLL_INTERVAL).
+        DEBOUNCE LOGIC for exiting IN_GAME:
+          ROUND_TRANSITION → does NOT count as exit. Normal turn change.
+          FINISHED         → counts as exit poll (saw_finished=True).
+          IDLE             → counts as exit poll (abort scenario).
+          IN_GAME          → resets exit counter (still playing).
 
-        Entering IN_GAME is immediate (no debounce) since the credit should
-        be consumed promptly when a match starts.
+          Only DEBOUNCE_EXIT_POLLS consecutive FINISHED/IDLE polls confirm an exit.
+          ROUND_TRANSITION polls reset the counter because they indicate the
+          match is still active (just between turns).
+
+        Credit logic: credits consumed on first IN_GAME detection (immediate).
         """
         logger.info(f"[Observer:{self.board_id}] Observe loop started")
         logger.info(f"[Observer:{self.board_id}]   normal_poll: {OBSERVER_POLL_INTERVAL}s")
@@ -361,18 +370,40 @@ class AutodartsObserver:
                     if raw == ObserverState.IN_GAME:
                         # Still in game — clear any pending exit
                         if self._exit_polls > 0:
-                            logger.info(f"[Observer:{self.board_id}] debounce: RECOVERED to in_game after {self._exit_polls} exit polls (turn change / UI flicker)")
+                            logger.info(
+                                f"[Observer:{self.board_id}] debounce: RECOVERED to IN_GAME "
+                                f"after {self._exit_polls} exit polls (turn change / UI flicker)"
+                            )
                             self._exit_polls = 0
                             self._exit_saw_finished = False
                         continue
 
-                    # Non-in_game detected while match should be active
+                    if raw == ObserverState.ROUND_TRANSITION:
+                        # Normal turn/round change — NOT an exit signal.
+                        # Reset exit counter: the match is clearly still active.
+                        if self._exit_polls > 0:
+                            logger.info(
+                                f"[Observer:{self.board_id}] debounce: RESET by ROUND_TRANSITION "
+                                f"(was at {self._exit_polls}/{DEBOUNCE_EXIT_POLLS} exit polls) — "
+                                f"turn change detected, match still active"
+                            )
+                            self._exit_polls = 0
+                            self._exit_saw_finished = False
+                        else:
+                            logger.info(
+                                f"[Observer:{self.board_id}] ROUND_TRANSITION detected — "
+                                f"normal turn/round change, session continues"
+                            )
+                        continue
+
+                    # ─── IDLE or FINISHED: real exit candidate ─────
                     self._exit_polls += 1
                     if raw == ObserverState.FINISHED:
                         self._exit_saw_finished = True
 
                     logger.info(
-                        f"[Observer:{self.board_id}] debounce: exit poll {self._exit_polls}/{DEBOUNCE_EXIT_POLLS} "
+                        f"[Observer:{self.board_id}] debounce: exit poll "
+                        f"{self._exit_polls}/{DEBOUNCE_EXIT_POLLS} "
                         f"(raw={raw.value}, saw_finished={self._exit_saw_finished})"
                     )
 
@@ -384,8 +415,14 @@ class AutodartsObserver:
                     reason = "finished" if self._exit_saw_finished else "aborted"
                     confirmed_state = ObserverState.FINISHED if self._exit_saw_finished else raw
 
-                    logger.info(f"[Observer:{self.board_id}] === DEBOUNCE CONFIRMED: in_game -> {confirmed_state.value} (reason={reason}) ===")
-                    logger.info(f"[Observer:{self.board_id}]   exit polls needed: {DEBOUNCE_EXIT_POLLS}, saw_finished: {self._exit_saw_finished}")
+                    logger.info(
+                        f"[Observer:{self.board_id}] === DEBOUNCE CONFIRMED: "
+                        f"in_game -> {confirmed_state.value} (reason={reason}) ==="
+                    )
+                    logger.info(
+                        f"[Observer:{self.board_id}]   exit polls needed: {DEBOUNCE_EXIT_POLLS}, "
+                        f"saw_finished: {self._exit_saw_finished}"
+                    )
 
                     self._stable_state = confirmed_state
                     self._set_state(confirmed_state)
@@ -397,7 +434,10 @@ class AutodartsObserver:
                         try:
                             await self._on_game_ended(self.board_id, reason)
                         except Exception as e:
-                            logger.error(f"[Observer:{self.board_id}] on_game_ended({reason}) ERROR: {e}", exc_info=True)
+                            logger.error(
+                                f"[Observer:{self.board_id}] on_game_ended({reason}) ERROR: {e}",
+                                exc_info=True,
+                            )
                     self._credit_consumed = False
 
                 # ═══════════════════════════════════════════════
@@ -407,9 +447,25 @@ class AutodartsObserver:
                     if raw == stable:
                         continue  # No change
 
+                    # Normalize ROUND_TRANSITION to IDLE for non-in_game stable states
+                    # (round_transition only matters when we're actively in a game)
+                    effective_raw = raw
+                    if raw == ObserverState.ROUND_TRANSITION:
+                        effective_raw = ObserverState.IDLE
+                        logger.info(
+                            f"[Observer:{self.board_id}] ROUND_TRANSITION outside IN_GAME "
+                            f"→ treating as IDLE (stable={stable.value})"
+                        )
+
+                    if effective_raw == stable:
+                        continue
+
                     # ─── Entering IN_GAME: immediate (credit consumed) ──
-                    if raw == ObserverState.IN_GAME:
-                        logger.info(f"[Observer:{self.board_id}] === TRANSITION: {stable.value} -> in_game (immediate) ===")
+                    if effective_raw == ObserverState.IN_GAME:
+                        logger.info(
+                            f"[Observer:{self.board_id}] === TRANSITION: "
+                            f"{stable.value} -> in_game (immediate) ==="
+                        )
                         self._stable_state = ObserverState.IN_GAME
                         self._set_state(ObserverState.IN_GAME)
                         self._credit_consumed = True
@@ -417,16 +473,25 @@ class AutodartsObserver:
                         self._exit_saw_finished = False
                         self.status.games_observed += 1
 
-                        logger.info(f"[Observer:{self.board_id}] GAME STARTED — credit_consumed=True, games_observed={self.status.games_observed}")
+                        logger.info(
+                            f"[Observer:{self.board_id}] GAME STARTED — "
+                            f"credit_consumed=True, games_observed={self.status.games_observed}"
+                        )
                         if self._on_game_started:
                             try:
                                 await self._on_game_started(self.board_id)
                             except Exception as e:
-                                logger.error(f"[Observer:{self.board_id}] on_game_started ERROR: {e}", exc_info=True)
+                                logger.error(
+                                    f"[Observer:{self.board_id}] on_game_started ERROR: {e}",
+                                    exc_info=True,
+                                )
 
                     # ─── Post-game: finished → idle (result dismissed) ──
-                    elif stable == ObserverState.FINISHED and raw == ObserverState.IDLE:
-                        logger.info(f"[Observer:{self.board_id}] === TRANSITION: finished -> idle (result dismissed) ===")
+                    elif stable == ObserverState.FINISHED and effective_raw == ObserverState.IDLE:
+                        logger.info(
+                            f"[Observer:{self.board_id}] === TRANSITION: "
+                            f"finished -> idle (result dismissed) ==="
+                        )
                         self._stable_state = ObserverState.IDLE
                         self._set_state(ObserverState.IDLE)
 
@@ -434,13 +499,20 @@ class AutodartsObserver:
                             try:
                                 await self._on_game_ended(self.board_id, "post_finish_check")
                             except Exception as e:
-                                logger.error(f"[Observer:{self.board_id}] on_game_ended(post_finish_check) ERROR: {e}", exc_info=True)
+                                logger.error(
+                                    f"[Observer:{self.board_id}] "
+                                    f"on_game_ended(post_finish_check) ERROR: {e}",
+                                    exc_info=True,
+                                )
 
                     # ─── Other transitions (idle ↔ unknown, etc.) ──
                     else:
-                        logger.info(f"[Observer:{self.board_id}] === TRANSITION: {stable.value} -> {raw.value} ===")
-                        self._stable_state = raw
-                        self._set_state(raw)
+                        logger.info(
+                            f"[Observer:{self.board_id}] === TRANSITION: "
+                            f"{stable.value} -> {effective_raw.value} ==="
+                        )
+                        self._stable_state = effective_raw
+                        self._set_state(effective_raw)
 
             except asyncio.CancelledError:
                 break
@@ -455,28 +527,25 @@ class AutodartsObserver:
 
     async def _detect_state(self) -> ObserverState:
         """
-        Two-level DOM detection with explicit round/match separation.
+        Three-tier DOM detection: in_game > match_finished > round_transition > idle.
 
-        Level 1 — in_game (DOMINANT): Active match markers — scoreboard,
-                  dart input, scoring UI. If present, state is IN_GAME
-                  regardless of other signals. Round result screens during
-                  an active match have these markers alongside result markers.
+        Tier 1 — IN_GAME: Active match markers (scoreboard, dart input, etc.).
+                 If present, state is always IN_GAME regardless of other signals.
 
-        Level 2 — match_over (STRICT): Definitive end-of-match markers —
-                  rematch/new-game buttons, share-results UI, post-match
-                  summary. These only appear after the ENTIRE match ends,
-                  not between rounds/turns. Only evaluated when in_game
-                  markers are absent.
+        Tier 2 — FINISHED (match_finished): Definitive end-of-match markers.
+                 ONLY button text matching (Rematch, Play again, Share, New Game)
+                 qualifies. CSS class-based markers alone are NOT sufficient
+                 because Autodarts reuses generic classes during round transitions.
 
-        Mapping:
-          in_game=true  → IN_GAME  (even if result markers also present)
-          match_over=true, in_game=false → FINISHED (real match end)
-          both false → IDLE (lobby/setup)
+        Tier 3 — ROUND_TRANSITION: Generic result/winner/finished CSS classes
+                 WITHOUT the strong button-text markers. This is the normal
+                 state between turns/rounds/legs. Must NOT trigger session end.
+
+        Tier 4 — IDLE: No game-related markers at all (lobby/setup screen).
         """
         try:
             signals = await self._page.evaluate("""() => {
-                // === Level 1: Active match indicators ===
-                // Present during gameplay AND round-result screens
+                // === Tier 1: Active match indicators ===
                 const inGame = !!(
                     document.querySelector('[class*="scoreboard"]') ||
                     document.querySelector('[class*="dart-input"]') ||
@@ -491,73 +560,101 @@ class AutodartsObserver:
                     document.querySelector('#match')
                 );
 
-                // === Level 2: Definitive match-end indicators ===
-                // Only present when the ENTIRE match is over.
-                // NOT present during round/turn result screens.
-                const matchOver = !!(
-                    document.querySelector('[class*="rematch"]') ||
-                    document.querySelector('[class*="new-game"]') ||
-                    document.querySelector('[class*="play-again"]') ||
+                // === Tier 2: Strong end-of-match markers (button text ONLY) ===
+                // These buttons ONLY appear after the ENTIRE match is over.
+                const allButtons = Array.from(document.querySelectorAll('button, a[role="button"], [class*="btn"]'));
+                const buttonTexts = allButtons.map(function(b) { return (b.textContent || '').trim().toLowerCase(); });
+
+                const hasRematchBtn = buttonTexts.some(function(t) {
+                    return /rematch|nochmal spielen|play again|erneut spielen/i.test(t);
+                });
+                const hasShareBtn = buttonTexts.some(function(t) {
+                    return /share|teilen|share result|ergebnis teilen/i.test(t);
+                });
+                const hasNewGameBtn = buttonTexts.some(function(t) {
+                    return /new game|neues spiel|new match|neues match/i.test(t);
+                });
+
+                // Also check for post-match summary containers
+                const hasPostMatchUI = !!(
                     document.querySelector('[class*="post-match"]') ||
+                    document.querySelector('[class*="match-summary"]') ||
                     document.querySelector('[class*="match-end"]') ||
-                    document.querySelector('[class*="match-finished"]') ||
-                    document.querySelector('[class*="game-over"]') ||
-                    document.querySelector('[class*="match-result"]') ||
-                    document.querySelector('[class*="share-result"]') ||
-                    document.querySelector('[class*="share-match"]') ||
-                    Array.from(document.querySelectorAll('button')).some(function(b) {
-                        return /rematch|play again|nochmal|new game|neues spiel/i.test(b.textContent || '');
-                    })
+                    document.querySelector('[class*="game-over"]')
                 );
 
-                // === Round-level result indicators (informational only) ===
-                const hasRoundResult = !!(
+                const strongMatchEnd = hasRematchBtn || hasShareBtn || hasNewGameBtn || hasPostMatchUI;
+
+                // === Tier 3: Generic result markers (round/turn transitions) ===
+                const hasGenericResult = !!(
                     document.querySelector('[class*="result"]') ||
                     document.querySelector('[class*="winner"]') ||
-                    document.querySelector('[class*="finished"]')
+                    document.querySelector('[class*="finished"]') ||
+                    document.querySelector('[class*="match-result"]') ||
+                    document.querySelector('[class*="leg-result"]')
                 );
 
-                return { inGame: inGame, matchOver: matchOver, hasRoundResult: hasRoundResult };
+                return {
+                    inGame: inGame,
+                    strongMatchEnd: strongMatchEnd,
+                    hasGenericResult: hasGenericResult,
+                    // Debug detail
+                    _detail: {
+                        hasRematchBtn: hasRematchBtn,
+                        hasShareBtn: hasShareBtn,
+                        hasNewGameBtn: hasNewGameBtn,
+                        hasPostMatchUI: hasPostMatchUI,
+                        buttonSample: buttonTexts.slice(0, 5)
+                    }
+                };
             }""")
 
             in_game = signals.get('inGame', False)
-            match_over = signals.get('matchOver', False)
-            has_round_result = signals.get('hasRoundResult', False)
+            strong_match_end = signals.get('strongMatchEnd', False)
+            has_generic_result = signals.get('hasGenericResult', False)
+            detail = signals.get('_detail', {})
 
-            # Log raw signals when anything interesting happens
-            if has_round_result or match_over or not in_game:
-                logger.info(
-                    f"[Observer:{self.board_id}] raw_detect: "
-                    f"in_game={in_game}, match_over={match_over}, round_result={has_round_result}"
-                )
+            # Always log raw detection for traceability
+            logger.info(
+                f"[Observer:{self.board_id}] raw_detected_state: "
+                f"in_game={in_game}, strong_match_end={strong_match_end}, "
+                f"generic_result={has_generic_result}, "
+                f"detail={detail}"
+            )
 
             # === State mapping ===
 
-            # in_game is DOMINANT — round results during a match stay IN_GAME
+            # Tier 1: in_game is DOMINANT
             if in_game:
-                if has_round_result:
-                    logger.info(
-                        f"[Observer:{self.board_id}] mapped: IN_GAME "
-                        f"(reason: round_transition — result markers present but match still active)"
-                    )
+                reason = "active match markers present"
+                if has_generic_result:
+                    reason += " + round result overlay (normal turn change)"
+                if strong_match_end:
+                    reason += " + strong markers also present (unusual, still IN_GAME)"
+                logger.info(f"[Observer:{self.board_id}] mapped_state: IN_GAME | reason: {reason}")
                 return ObserverState.IN_GAME
 
-            # Match truly over: strict end-of-match markers, no in_game markers
-            if match_over:
+            # Tier 2: Strong end-of-match markers WITHOUT in_game
+            if strong_match_end:
                 logger.info(
-                    f"[Observer:{self.board_id}] mapped: FINISHED "
-                    f"(reason: match_finished — end-of-match markers detected, in_game=false)"
+                    f"[Observer:{self.board_id}] mapped_state: FINISHED | "
+                    f"reason: match_finished — strong end markers (rematch={detail.get('hasRematchBtn')}, "
+                    f"share={detail.get('hasShareBtn')}, newgame={detail.get('hasNewGameBtn')}, "
+                    f"postmatch_ui={detail.get('hasPostMatchUI')}), in_game=false"
                 )
                 return ObserverState.FINISHED
 
-            # Round result markers without in_game → ambiguous, treat as IDLE
-            # (the debounce will wait for confirmation before acting)
-            if has_round_result:
+            # Tier 3: Generic result markers WITHOUT strong markers → round transition
+            if has_generic_result:
                 logger.info(
-                    f"[Observer:{self.board_id}] mapped: IDLE "
-                    f"(reason: round_result without in_game — transient state, waiting for clarity)"
+                    f"[Observer:{self.board_id}] mapped_state: ROUND_TRANSITION | "
+                    f"reason: generic result/winner/finished CSS classes detected "
+                    f"but NO strong match-end buttons — interpreting as turn/round change"
                 )
+                return ObserverState.ROUND_TRANSITION
 
+            # Tier 4: Nothing game-related → lobby/setup
+            logger.info(f"[Observer:{self.board_id}] mapped_state: IDLE | reason: no game markers detected")
             return ObserverState.IDLE
 
         except Exception as e:

@@ -1,0 +1,99 @@
+{
+  "summary": "Iteration 26 - ROUND_TRANSITION Three-Tier State Detection Testing COMPLETE. All 26 backend tests PASSED (10 round_transition + 5 debounce + 11 API tests). The fix prevents observer from incorrectly interpreting normal turn/round changes as end-of-match.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "UNIT: test_round_transition_does_not_end_session - ROUND_TRANSITION during IN_GAME does NOT end session",
+    "UNIT: test_round_transition_resets_exit_debounce - ROUND_TRANSITION resets exit poll counter",
+    "UNIT: test_real_match_finish_triggers_end - FINISHED state with strong markers triggers session end",
+    "UNIT: test_abort_sustained_idle_triggers_end - Sustained IDLE triggers session end with 'aborted'",
+    "UNIT: test_multiple_round_transitions_no_exit - Multiple turn changes do not exit",
+    "UNIT: test_round_transition_then_real_match_end - Turn change followed by real end works",
+    "UNIT: test_round_transition_interleaved_with_idle - Alternating IDLE/ROUND_TRANSITION prevents false exit",
+    "UNIT: test_round_transition_outside_in_game_is_idle - ROUND_TRANSITION outside IN_GAME treated as IDLE",
+    "UNIT: test_game_start_still_immediate - Entering IN_GAME is immediate (no debounce)",
+    "UNIT: test_finished_to_idle_post_finish_check - FINISHED → IDLE triggers post_finish_check callback",
+    "REGRESSION: test_debounce_config - Debounce constants valid (3 polls × 2s = 6s)",
+    "REGRESSION: test_turn_change_does_not_exit_in_game - Brief flicker recovered",
+    "REGRESSION: test_real_abort_triggers_after_debounce - Sustained IDLE triggers abort",
+    "REGRESSION: test_real_finish_triggers_after_debounce - Sustained FINISHED triggers finish",
+    "REGRESSION: test_mixed_flicker_does_not_exit - Alternating pattern does not exit",
+    "API: ROUND_TRANSITION enum value is 'round_transition'",
+    "API: All 7 ObserverState enum values exist (closed, idle, in_game, round_transition, finished, unknown, error)",
+    "API: GET /api/kiosk/BOARD-1/observer-status returns 200",
+    "API: observer-status has 'state' field with valid value",
+    "API: observer-status has all required fields",
+    "API: simulate-game-start requires admin auth (returns 401/403 without token)",
+    "API: simulate-game-start works with admin token",
+    "API: simulate-game-end works with admin token",
+    "API: simulate-game-abort works with admin token",
+    "API: Full lifecycle (lock → unlock → start → end) works correctly",
+    "API: Full lifecycle (lock → unlock → start → abort) works correctly"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_round_transition.py",
+    "/app/backend/tests/test_debounce.py",
+    "/app/backend/tests/test_iteration26_round_transition.py",
+    "/app/test_reports/pytest/pytest_iteration26_round_transition.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration26_round_transition.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (26/26 tests passed)"
+  },
+
+  "test_credentials": {
+    "admin_login": {"username": "admin", "password": "admin123"}
+  },
+
+  "seed_data_creation": "",
+
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+
+  "context_for_next_testing_agent": "Iteration 26 verified the ROUND_TRANSITION three-tier state detection fix. KEY: Observer now has 7 states including ROUND_TRANSITION. The _detect_state method uses three tiers: Tier 1 (in_game markers) → IN_GAME, Tier 2 (strong button text like Rematch/Share) → FINISHED, Tier 3 (generic result CSS classes only) → ROUND_TRANSITION, Tier 4 (nothing) → IDLE. The _observe_loop treats ROUND_TRANSITION as 'still in game' and resets exit_polls counter. This prevents normal turn/round changes from triggering premature session end. Only strong match-end markers (Rematch, Share, New Game buttons) trigger FINISHED and session end.",
+
+  "key_implementation_verified": {
+    "three_tier_detection": {
+      "location": "/app/backend/services/autodarts_observer.py _detect_state()",
+      "tier_1": "IN_GAME - Active match markers (scoreboard, dart-input, throw, scoring)",
+      "tier_2": "FINISHED - Strong end markers (Rematch/Share/NewGame button TEXT)",
+      "tier_3": "ROUND_TRANSITION - Generic result/winner/finished CSS classes (turn/round change)",
+      "tier_4": "IDLE - No game markers (lobby/setup)"
+    },
+    "round_transition_handling": {
+      "location": "/app/backend/services/autodarts_observer.py _observe_loop()",
+      "behavior": "ROUND_TRANSITION detected while stable=IN_GAME resets exit_polls to 0",
+      "rationale": "Turn/round changes show generic result classes but match is still active"
+    },
+    "observer_states": {
+      "count": 7,
+      "values": ["closed", "idle", "in_game", "round_transition", "finished", "unknown", "error"]
+    }
+  },
+
+  "bug_fix_summary": {
+    "problem": "Observer incorrectly interpreted normal turn/round changes as end-of-match because generic result CSS classes were mapped directly to FINISHED state",
+    "root_cause": "Autodarts reuses CSS classes like [class*='result'], [class*='winner'], [class*='finished'] during both turn transitions AND actual match end",
+    "fix": "Three-tier detection: generic CSS classes now map to ROUND_TRANSITION (not FINISHED). Only strong button text markers (Rematch, Share, New Game) map to FINISHED. ROUND_TRANSITION resets exit debounce counter instead of counting toward session end.",
+    "verification": "All 10 unit tests pass proving ROUND_TRANSITION does NOT end session, only FINISHED does"
+  }
+}
