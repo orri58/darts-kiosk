@@ -122,13 +122,15 @@ autostart.bat:
   - Overlay termination: window_manager.kill_overlay_process() via taskkill/pkill
   - Observer close_session: step-by-step logging for debugging
   - All tests passing: 9/9 backend tests (iteration_30)
-- v1.7.3: start.bat Fix + PWA Admin Manifest (2026-03-09)
-  - start.bat: Added `setlocal enabledelayedexpansion` — Health-Check-Schleife funktioniert jetzt
-  - start.bat: `endlocal` hinzugefügt, saubere Struktur
-  - PWA: Neues `manifest-admin.json` mit `start_url: /admin` erstellt
-  - AdminLayout: Dynamischer Manifest-Swap — "Zum Home-Bildschirm" auf `/admin/*` installiert Admin statt Kiosk
-  - Apple-Meta-Tag: `apple-mobile-web-app-title` wird dynamisch auf "Darts Admin" gesetzt
-  - Neues Windows-ZIP: `darts-kiosk-v1.7.3-windows.zip` (1.6 MB) mit allen Fixes
+- v1.7.3: Regression Fixes (2026-03-09)
+  - start.bat: Complete rewrite — `setlocal enabledelayedexpansion`, WMIC removed, robust quoting, file existence checks
+  - stop.bat: WMIC removed, simplified to taskkill only
+  - PWA: Default manifest.json now has `start_url: /admin` — iPhone "Add to Home Screen" opens Admin Panel
+  - Removed manifest-admin.json (redundant) and dynamic manifest swap in AdminLayout.js
+  - index.html: Updated apple-mobile-web-app-title and title to "Darts Admin"
+  - Port consistency: Removed _run_frontend.bat (dev artifact, port 3000), README updated to 8001 only
+  - GH Actions: Fixed REACT_APP_BACKEND_URL to empty string (same-origin, enables LAN access)
+  - All tests passing: 11/11 (iteration_31)
 
 ## Remaining Backlog
 ### P1
