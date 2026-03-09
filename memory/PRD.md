@@ -1,42 +1,35 @@
 # Darts Kiosk + Admin Control System - PRD
 
 ## Original Problem Statement
-Production-ready, local-first Darts Kiosk + Admin Control system for a cafe running on Mini-PCs. Master/Agent architecture for multi-board control over LAN.
+Production-ready, local-first Darts Kiosk + Admin Control system for a cafe running on Mini-PCs. Master/Agent architecture for multi-board control over LAN. Must behave like a real arcade machine on Windows kiosk PCs.
 
 ## Architecture
-- **Autodarts Observer MVP**: On unlock, Playwright opens Autodarts fullscreen. Kiosk hands off screen. Only credits overlay stays visible on top.
-- **MVP Observer Scope**: Observer only tracks browser sessions launched by THIS system. Manually opened external browser windows are NOT detected/supported.
+- **Arcade Machine Runtime**: On unlock, system Chrome opens Autodarts fullscreen. Kiosk window hides. Separate always-on-top credits overlay stays visible. On lock, Chrome closes, kiosk returns to foreground.
+- **Persistent Chrome Profile**: Uses Playwright `launch_persistent_context` with `channel="chrome"` to reuse the installed Chrome and preserve Google/Autodarts login between sessions.
+- **Credits Overlay**: Separate Python/tkinter window, always-on-top, click-through, transparent. Polls backend API every 3s.
+- **MVP Observer Scope**: Observer only tracks browser sessions launched by THIS system.
 - **Master/Agent**: MASTER controls all boards, AGENTs are autonomous offline
 - **Tech Stack**: FastAPI + SQLAlchemy/SQLite (backend), React + Tailwind/Shadcn (frontend)
 
-## Observer Mode UX Flow
+## Arcade Mode UX Flow
 ```
-LOCKED:   Kiosk fullscreen, locked screen visible
-UNLOCK:   Playwright opens Autodarts fullscreen (covers kiosk)
-          Kiosk shows minimal dark handoff screen (hidden behind Autodarts)
-          Credits overlay stays on top as separate window
-ACTIVE:   Autodarts is main visible app, observer tracks game state
-          Credits decrement on game start (idle → in_game)
-FAILED:   If browser launch fails → Fallback screen (retry, staff, end buttons)
-LOCK/END: Autodarts browser closes → kiosk returns to locked screen
+LOCKED:   Kiosk fullscreen (Chrome --kiosk), locked screen visible
+UNLOCK:   Backend launches Autodarts in system Chrome (persistent profile, fullscreen)
+          Kiosk window goes to background (window.blur)
+          Credits overlay appears (Python/tkinter, always-on-top, click-through)
+ACTIVE:   Autodarts is main visible app, observer polls game state
+          Credits decrement on game START (idle -> in_game)
+FAILED:   If Chrome launch fails → Fallback screen (retry, staff, end buttons)
+LOCK/END: Autodarts Chrome closes → kiosk returns to foreground (window.focus)
+          Credits overlay hides
 ```
 
-## Windows Playwright Fix (v1.5.1 - 2026-03-09)
-### Root Cause
-`NotImplementedError` from `asyncio.create_subprocess_exec` because uvicorn on Windows uses `SelectorEventLoop`. Playwright requires `ProactorEventLoop` for subprocess execution.
-
-### Fix
-- **`run_backend.py`**: Dedicated Windows launcher that sets `WindowsProactorEventLoopPolicy` BEFORE uvicorn creates its event loop
-- **`_run_backend.bat`**: Updated to `python run_backend.py` (not `python -m uvicorn`)
-- **`reload=False`**: Disabled uvicorn reloader (reloader spawns subprocess that resets event loop)
-- **`setup_windows.bat`**: Added Playwright browser validation step after install
-- **Observer logging**: 6-step detailed launch trace (import → runtime → chromium → context → page → navigate)
-- **Error handling**: Concise error messages (first line, max 200 chars) for frontend display
-- **Session endpoint**: Returns `observer_browser_open`, `observer_state`, `observer_error`
-
-### Kiosk Screens
-- `observer-handoff-screen`: Minimal dark backdrop when Autodarts is fullscreen on top
-- `observer-fallback-screen`: Shown when browser launch failed - error + retry + staff + end
+## Windows Deployment Stack
+- `start.bat`: Detects LAN IP, starts backend/frontend, launches Chrome kiosk + overlay
+- `stop.bat`: Kills all processes (backend, frontend, overlay, Chrome instances)
+- `run_backend.py`: Windows launcher with ProactorEventLoop for Playwright
+- `credits_overlay.py`: Tkinter overlay with Win32 click-through
+- `setup_windows.bat`: Full setup with Chrome detection, Playwright validation
 
 ## All Implemented Features
 - v1.0.0: Core (Kiosk, Admin, Auth, Boards, Pricing, Sessions, Stammkunde, QR, Leaderboards, Sound, i18n)
@@ -46,9 +39,19 @@ LOCK/END: Autodarts browser closes → kiosk returns to locked screen
 - v1.4.0: Enhanced Updates, Legacy Cleanup, mDNS Improvements
 - v1.4.1: Background Update Checker + Snooze (48h) / Dismiss per-version
 - v1.5.0: Observer Mode Handoff/Fallback UX
-- v1.5.1: Windows Playwright Fix (ProactorEventLoop, run_backend.py, detailed logging)
+- v1.5.1: Windows Playwright Fix (ProactorEventLoop, run_backend.py)
+- v1.6.0: Arcade Machine Runtime Architecture
+  - Persistent Chrome profile (Google login preserved)
+  - Window management (blur/focus on observer state change)
+  - ObserverActiveScreen simplified to pure black backdrop + fallback
+  - Python/tkinter credits overlay (always-on-top, click-through, transparent)
+  - start.bat with Chrome kiosk mode + overlay launch + Chrome detection
+  - stop.bat with full cleanup (overlay, Chrome instances)
+  - Updated README with arcade mode documentation
+  - Release packages rebuilt with all new files
 
 ## Remaining Backlog
 ### P2
+- [ ] Autodarts DOM Selector Tests (stability against UI changes)
 - [ ] Chromium extension for Autodarts overlay
 - [ ] PWA Install Prompt for public leaderboard

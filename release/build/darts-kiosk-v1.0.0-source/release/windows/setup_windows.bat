@@ -53,6 +53,7 @@ echo   Erstelle backend\.env ...
     echo AUTODARTS_MODE=observer
     echo AUTODARTS_HEADLESS=false
     echo AUTODARTS_MOCK=false
+    echo BOARD_ID=BOARD-1
 ) > backend\.env
 echo   [OK] backend\.env erstellt
 
@@ -149,6 +150,23 @@ if %ERRORLEVEL% NEQ 0 (
     echo          Autodarts-Integration wird nicht funktionieren
 ) else (
     echo   [OK] Playwright Chromium installiert
+)
+
+REM Check for Google Chrome (used as channel="chrome" for persistent login)
+set CHROME_FOUND=0
+for %%G in (
+    "%ProgramFiles%\Google\Chrome\Application\chrome.exe"
+    "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
+    "%LocalAppData%\Google\Chrome\Application\chrome.exe"
+) do (
+    if exist %%G set CHROME_FOUND=1
+)
+if %CHROME_FOUND%==1 (
+    echo   [OK] Google Chrome gefunden (fuer persistente Autodarts-Anmeldung)
+) else (
+    echo   [WARN] Google Chrome nicht installiert!
+    echo          Autodarts-Observer benoetigt Chrome fuer persistente Anmeldung.
+    echo          Download: https://www.google.com/chrome/
 )
 
 REM Validate Playwright browser can launch

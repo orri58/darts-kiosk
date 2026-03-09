@@ -1,21 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Clock, Coins, AlertTriangle, RefreshCw, StopCircle, Phone } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, RefreshCw, StopCircle, Phone } from 'lucide-react';
 import { Button } from '../../components/ui/button';
-import { useI18n } from '../../context/I18nContext';
 import axios from 'axios';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 /**
- * Observer Active Screen — shown behind the Autodarts browser window.
+ * Observer Active Screen
  *
  * Two modes:
- *   1. HANDOFF (default): Autodarts is fullscreen on top. This screen is a
- *      dark minimal backdrop the user normally never sees. Shows a tiny
- *      status line at the bottom in case the user alt-tabs back.
+ *   HANDOFF: Autodarts Chrome is fullscreen on top. This is a pure black
+ *            backdrop invisible behind it. Only seen if user alt-tabs back.
  *
- *   2. FALLBACK: Autodarts browser failed to open. Shows a clear error
- *      state with retry and end-session actions.
+ *   FALLBACK: Browser launch failed. Error screen with retry + end session.
  */
 export default function ObserverActiveScreen({
   branding,
@@ -27,7 +24,6 @@ export default function ObserverActiveScreen({
   onEndGame,
   onCallStaff,
 }) {
-  const { t } = useI18n();
   const [retrying, setRetrying] = useState(false);
   const [showConfirmEnd, setShowConfirmEnd] = useState(false);
 
@@ -39,47 +35,17 @@ export default function ObserverActiveScreen({
     setTimeout(() => setRetrying(false), 5000);
   };
 
-  // ───────────────────────────────────────────────────────────────
-  // HANDOFF MODE — Autodarts is on top, this is the dark backdrop
-  // ───────────────────────────────────────────────────────────────
+  // ─── HANDOFF: Pure black backdrop (Autodarts Chrome is on top) ───
   if (observerBrowserOpen) {
     return (
       <div
-        className="h-full w-full bg-black flex flex-col justify-end"
+        className="h-full w-full bg-black"
         data-testid="observer-handoff-screen"
-      >
-        {/* Minimal info bar at the very bottom — barely visible behind Autodarts */}
-        <div className="p-4 flex items-center justify-between bg-black/80 border-t border-zinc-900">
-          <div className="flex items-center gap-4">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span className="text-xs text-zinc-600 uppercase tracking-wider font-heading">
-              Autodarts aktiv — {branding?.cafe_name}
-            </span>
-          </div>
-          <div className="flex items-center gap-4">
-            {session?.pricing_mode === 'per_game' && (
-              <span className="text-xs text-zinc-600 font-mono" data-testid="handoff-credits">
-                {session.credits_remaining} {session.credits_remaining === 1 ? 'Spiel' : 'Spiele'}
-              </span>
-            )}
-            <button
-              onClick={onCallStaff}
-              className="text-xs text-zinc-700 hover:text-zinc-400 uppercase tracking-wider"
-              data-testid="handoff-call-staff"
-            >
-              Personal
-            </button>
-          </div>
-        </div>
-      </div>
+      />
     );
   }
 
-  // ───────────────────────────────────────────────────────────────
-  // FALLBACK MODE — Autodarts browser not open, show error/retry
-  // ───────────────────────────────────────────────────────────────
-  const isError = observerState === 'error' || observerState === 'closed';
-
+  // ─── FALLBACK: Browser launch failed ───
   return (
     <div
       className="h-full w-full bg-zinc-950 flex flex-col items-center justify-center p-8"
@@ -93,39 +59,19 @@ export default function ObserverActiveScreen({
         </h2>
 
         <p className="text-zinc-400 mb-2">
-          {isError
+          {observerState === 'error' || observerState === 'closed'
             ? 'Der Autodarts-Browser konnte nicht gestartet werden.'
             : 'Verbindung zu Autodarts wird hergestellt...'}
         </p>
 
-        {isError && (
-          <p className="text-sm text-red-400/70 mb-6 max-w-md">
-            {observerError
-              ? observerError.split('\n')[0].substring(0, 120)
-              : 'Pruefen Sie die Autodarts-URL und starten Sie erneut.'}
+        {observerError && (
+          <p className="text-sm text-red-400/70 mb-6 max-w-md" data-testid="observer-error-message">
+            {observerError.split('\n')[0].substring(0, 120)}
           </p>
         )}
 
-        {/* Session Info */}
-        <div className="flex justify-center gap-6 mb-8 mt-6">
-          {session?.pricing_mode === 'per_game' ? (
-            <div className="text-center">
-              <Coins className="w-6 h-6 text-amber-500 mx-auto mb-1" />
-              <p className="text-3xl font-mono font-bold text-amber-500" data-testid="fallback-credits">
-                {session.credits_remaining}
-              </p>
-              <p className="text-xs text-zinc-500 uppercase">Spiele</p>
-            </div>
-          ) : session?.pricing_mode === 'per_time' ? (
-            <div className="text-center">
-              <Clock className="w-6 h-6 text-amber-500 mx-auto mb-1" />
-              <p className="text-xs text-zinc-500 uppercase">Zeit aktiv</p>
-            </div>
-          ) : null}
-        </div>
-
         {/* Action buttons */}
-        <div className="flex flex-col gap-3 w-full max-w-xs mx-auto">
+        <div className="flex flex-col gap-3 w-full max-w-xs mx-auto mt-8">
           <Button
             onClick={handleRetryObserver}
             disabled={retrying}

@@ -1,12 +1,19 @@
 """
 Autodarts Observer Service — MVP Observer Mode
-Opens the Autodarts browser and passively observes game state.
+Opens the installed Chrome browser with a persistent profile and observes game state.
 Does NOT automate game setup or player entry.
 
 MVP SCOPE:
   Observer only tracks browser sessions launched by THIS system.
   Manually opened external browser windows are NOT detected.
   Each board gets its own isolated observer/browser instance.
+
+CHROME PROFILE:
+  Uses launch_persistent_context with channel="chrome" to reuse
+  the installed Chrome and its user profile. This preserves:
+    - Google login sessions
+    - Cookies and storage
+    - Browser extensions
 
 States: closed, idle, in_game, finished, unknown, error
 
@@ -16,22 +23,22 @@ Credit logic:
 """
 import asyncio
 import os
+import sys
 import logging
-from typing import Optional, Dict, Callable, Awaitable
+from typing import Optional, Dict, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 AUTODARTS_URL = os.environ.get('AUTODARTS_URL', 'https://play.autodarts.io')
 OBSERVER_POLL_INTERVAL = int(os.environ.get('OBSERVER_POLL_INTERVAL', '4'))
 
-
-def import_platform() -> str:
-    import sys
-    import platform
-    return f"{sys.platform}/{platform.machine()}"
+# Persistent Chrome profile directory — preserves Google login across sessions
+_default_profile = str(Path(os.environ.get('DATA_DIR', './data')) / 'chrome_profile')
+CHROME_PROFILE_DIR = os.environ.get('CHROME_PROFILE_DIR', _default_profile)
 
 
 class ObserverState(str, Enum):
@@ -45,44 +52,43 @@ class ObserverState(str, Enum):
 
 @dataclass
 class ObserverStatus:
+    board_id: str
     state: ObserverState = ObserverState.CLOSED
-    board_id: str = ""
-    autodarts_url: str = ""
     browser_open: bool = False
+    autodarts_url: str = ""
     games_observed: int = 0
-    credits_remaining: Optional[int] = None
-    is_last_game: bool = False
     last_state_change: Optional[str] = None
     last_poll: Optional[str] = None
     last_error: Optional[str] = None
+    chrome_profile: str = ""
 
     def to_dict(self) -> dict:
         return {
-            "state": self.state.value,
             "board_id": self.board_id,
-            "autodarts_url": self.autodarts_url,
+            "state": self.state.value if isinstance(self.state, ObserverState) else self.state,
             "browser_open": self.browser_open,
+            "autodarts_url": self.autodarts_url,
             "games_observed": self.games_observed,
-            "credits_remaining": self.credits_remaining,
-            "is_last_game": self.is_last_game,
             "last_state_change": self.last_state_change,
             "last_poll": self.last_poll,
             "last_error": self.last_error,
+            "chrome_profile": self.chrome_profile,
         }
 
 
 class AutodartsObserver:
     """
-    Per-board observer. Opens one Chromium instance to the Autodarts URL,
-    then polls the DOM periodically to detect game start/end.
+    Per-board observer. Opens the installed Chrome to the Autodarts URL
+    using a persistent profile (login survives restarts), then polls
+    the DOM periodically to detect game start/end.
     """
 
     def __init__(self, board_id: str):
         self.board_id = board_id
         self.status = ObserverStatus(board_id=board_id)
-        self._browser = None
         self._context = None
         self._page = None
+        self._playwright = None
         self._observe_task: Optional[asyncio.Task] = None
         self._on_game_started: Optional[Callable] = None
         self._on_game_finished: Optional[Callable] = None
@@ -91,18 +97,18 @@ class AutodartsObserver:
 
     @property
     def is_open(self) -> bool:
-        return self._browser is not None and self.status.browser_open
+        return self._context is not None and self.status.browser_open
 
     async def open_session(
         self,
         autodarts_url: str,
         on_game_started: Optional[Callable] = None,
         on_game_finished: Optional[Callable] = None,
-        headless: bool = True,
+        headless: bool = False,
     ):
-        """Open the Autodarts browser and start the observer loop."""
+        """Open Chrome with persistent profile and start the observer loop."""
         if self.is_open:
-            logger.info(f"[Observer:{self.board_id}] Browser already open, skipping duplicate")
+            logger.info(f"[Observer:{self.board_id}] Browser already open, skipping")
             return
 
         self._on_game_started = on_game_started
@@ -113,54 +119,74 @@ class AutodartsObserver:
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
 
+        # Determine Chrome profile directory per board
+        profile_dir = os.path.join(CHROME_PROFILE_DIR, self.board_id)
+        os.makedirs(profile_dir, exist_ok=True)
+        self.status.chrome_profile = profile_dir
+
         logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH START ===")
         logger.info(f"[Observer:{self.board_id}]   URL: {url}")
         logger.info(f"[Observer:{self.board_id}]   headless: {headless}")
-        logger.info(f"[Observer:{self.board_id}]   platform: {import_platform()}")
-        logger.info(f"[Observer:{self.board_id}]   event loop: {type(asyncio.get_event_loop_policy()).__name__}")
+        logger.info(f"[Observer:{self.board_id}]   platform: {sys.platform}")
+        logger.info(f"[Observer:{self.board_id}]   event_loop: {type(asyncio.get_event_loop_policy()).__name__}")
+        logger.info(f"[Observer:{self.board_id}]   chrome_profile: {profile_dir}")
 
         try:
-            logger.info(f"[Observer:{self.board_id}]   Step 1/6: Importing playwright...")
+            logger.info(f"[Observer:{self.board_id}]   Step 1/4: Importing playwright...")
             from playwright.async_api import async_playwright
 
-            logger.info(f"[Observer:{self.board_id}]   Step 2/6: Starting playwright runtime...")
+            logger.info(f"[Observer:{self.board_id}]   Step 2/4: Starting playwright runtime...")
             self._playwright = await async_playwright().start()
 
-            launch_args = [
+            # Build Chrome launch args
+            chrome_args = [
                 '--no-sandbox',
                 '--disable-dev-shm-usage',
-                '--disable-gpu',
+                '--disable-infobars',
+                '--disable-extensions-except=',
+                '--disable-default-apps',
+                '--disable-translate',
+                '--disable-sync',
+                '--no-first-run',
+                '--no-default-browser-check',
+                '--autoplay-policy=no-user-gesture-required',
             ]
             if not headless:
-                launch_args.extend([
+                chrome_args.extend([
                     '--start-fullscreen',
                     '--kiosk',
                 ])
 
-            logger.info(f"[Observer:{self.board_id}]   Step 3/6: Launching chromium (args={launch_args})...")
-            self._browser = await self._playwright.chromium.launch(
-                headless=headless,
-                args=launch_args,
-            )
-            logger.info(f"[Observer:{self.board_id}]   Step 3/6: Browser process created OK")
+            logger.info(f"[Observer:{self.board_id}]   Step 3/4: Launching Chrome (persistent context, channel=chrome)...")
+            logger.info(f"[Observer:{self.board_id}]     args: {chrome_args}")
 
-            logger.info(f"[Observer:{self.board_id}]   Step 4/6: Creating browser context...")
-            self._context = await self._browser.new_context(
+            self._context = await self._playwright.chromium.launch_persistent_context(
+                user_data_dir=profile_dir,
+                channel="chrome",
+                headless=headless,
+                args=chrome_args,
                 viewport=None if not headless else {"width": 1280, "height": 800},
                 no_viewport=not headless,
                 ignore_https_errors=True,
+                accept_downloads=False,
             )
+            logger.info(f"[Observer:{self.board_id}]   Step 3/4: Chrome launched OK (persistent context)")
 
-            logger.info(f"[Observer:{self.board_id}]   Step 5/6: Opening new page...")
-            self._page = await self._context.new_page()
+            # Use existing page or create new one
+            if self._context.pages:
+                self._page = self._context.pages[0]
+            else:
+                self._page = await self._context.new_page()
 
-            logger.info(f"[Observer:{self.board_id}]   Step 6/6: Navigating to {url}...")
+            logger.info(f"[Observer:{self.board_id}]   Step 4/4: Navigating to {url}...")
             await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
             self.status.browser_open = True
             self._set_state(ObserverState.IDLE)
             self._prev_state = ObserverState.IDLE
             logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH SUCCESS ===")
+            logger.info(f"[Observer:{self.board_id}]   Chrome is now fullscreen with Autodarts")
+            logger.info(f"[Observer:{self.board_id}]   Google login preserved via profile: {profile_dir}")
 
             self._observe_task = asyncio.create_task(self._observe_loop())
 
@@ -168,15 +194,14 @@ class AutodartsObserver:
             logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH FAILED ===")
             logger.error(f"[Observer:{self.board_id}]   Error type: {type(e).__name__}")
             logger.error(f"[Observer:{self.board_id}]   Error: {e}", exc_info=True)
-            # Store concise error for frontend display (first line only)
             error_msg = str(e).split('\n')[0][:200]
             self.status.last_error = f"{type(e).__name__}: {error_msg}"
             self._set_state(ObserverState.ERROR)
-            await self._cleanup_browser()
+            await self._cleanup()
 
     async def close_session(self):
-        """Close the browser and stop observing."""
-        logger.info(f"[Observer:{self.board_id}] Closing session...")
+        """Close Chrome and stop observing."""
+        logger.info(f"[Observer:{self.board_id}] Closing session (closing Chrome)...")
         self._stopping = True
 
         if self._observe_task and not self._observe_task.done():
@@ -186,25 +211,24 @@ class AutodartsObserver:
             except asyncio.CancelledError:
                 pass
 
-        await self._cleanup_browser()
+        await self._cleanup()
         self._set_state(ObserverState.CLOSED)
-        logger.info(f"[Observer:{self.board_id}] Session closed")
+        logger.info(f"[Observer:{self.board_id}] Session closed — Chrome closed, kiosk can return to foreground")
 
-    async def _cleanup_browser(self):
-        for resource in [self._page, self._context, self._browser]:
-            try:
-                if resource:
-                    await resource.close()
-            except Exception:
-                pass
+    async def _cleanup(self):
+        """Close context and playwright. Profile data is preserved on disk."""
         try:
-            if hasattr(self, '_playwright') and self._playwright:
+            if self._context:
+                await self._context.close()
+        except Exception:
+            pass
+        try:
+            if self._playwright:
                 await self._playwright.stop()
         except Exception:
             pass
         self._page = None
         self._context = None
-        self._browser = None
         self._playwright = None
         self.status.browser_open = False
 
@@ -251,7 +275,7 @@ class AutodartsObserver:
                 break
             except Exception as e:
                 logger.error(f"[Observer:{self.board_id}] Observe loop error: {e}")
-                self.status.last_error = str(e)
+                self.status.last_error = str(e)[:200]
                 self._set_state(ObserverState.ERROR)
                 self._prev_state = ObserverState.ERROR
                 await asyncio.sleep(OBSERVER_POLL_INTERVAL * 2)
@@ -259,9 +283,7 @@ class AutodartsObserver:
         logger.info(f"[Observer:{self.board_id}] Observe loop ended")
 
     async def _detect_state(self) -> ObserverState:
-        """
-        Detect game state from Autodarts DOM using minimal selectors.
-        """
+        """Detect game state from Autodarts DOM using minimal selectors."""
         try:
             in_game = await self._page.evaluate("""() => {
                 const m = document.querySelector(
@@ -291,7 +313,7 @@ class AutodartsObserver:
 
         except Exception as e:
             logger.warning(f"[Observer:{self.board_id}] DOM detection error: {e}")
-            self.status.last_error = str(e)
+            self.status.last_error = str(e)[:200]
             return ObserverState.UNKNOWN
 
     def _set_state(self, state: ObserverState):
@@ -324,7 +346,7 @@ class ObserverManager:
         autodarts_url: str,
         on_game_started=None,
         on_game_finished=None,
-        headless: bool = True,
+        headless: bool = False,
     ):
         existing = self._observers.get(board_id)
         if existing and existing.is_open:

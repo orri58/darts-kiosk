@@ -4,9 +4,12 @@ title Darts Kiosk - Gestartet
 cd /d "%~dp0"
 echo.
 echo ================================================================
-echo   DARTS KIOSK - Starten
+echo   DARTS KIOSK - Starten (Arcade-Modus)
 echo ================================================================
 echo.
+
+REM === Configuration ===
+set BOARD_ID=BOARD-1
 
 REM === Pre-flight ===
 if not exist "backend\.env" (
@@ -37,15 +40,19 @@ if %ERRORLEVEL% NEQ 0 (
 
 if not exist "logs" mkdir logs
 if not exist "data\db" mkdir data\db
+if not exist "data\kiosk_chrome_profile" mkdir data\kiosk_chrome_profile
 
-REM === Kill old ===
-echo [1/4] Alte Prozesse beenden...
+REM === Kill old processes ===
+echo [1/6] Alte Prozesse beenden...
 taskkill /F /FI "WINDOWTITLE eq Darts Backend" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Darts Frontend" >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq Darts Overlay" >nul 2>&1
+REM Kill kiosk Chrome (by user-data-dir unique marker)
+taskkill /F /FI "WINDOWTITLE eq Darts Kiosk*" >nul 2>&1
 timeout /t 2 /nobreak >nul
 
 REM === Detect LAN IP ===
-echo [2/4] Netzwerk-IP erkennen...
+echo [2/6] Netzwerk-IP erkennen...
 set LAN_IP=
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
     if not defined LAN_IP (
@@ -62,8 +69,26 @@ if not defined LAN_IP (
 REM Write frontend .env with LAN IP (no trailing spaces!)
 >frontend\.env echo REACT_APP_BACKEND_URL=http://%LAN_IP%:8001
 
+REM === Detect Google Chrome ===
+echo [3/6] Google Chrome suchen...
+set CHROME_PATH=
+for %%G in (
+    "%ProgramFiles%\Google\Chrome\Application\chrome.exe"
+    "%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"
+    "%LocalAppData%\Google\Chrome\Application\chrome.exe"
+) do (
+    if exist %%G (
+        if not defined CHROME_PATH set "CHROME_PATH=%%~G"
+    )
+)
+if defined CHROME_PATH (
+    echo   [OK]   Chrome gefunden: %CHROME_PATH%
+) else (
+    echo   [WARN] Chrome nicht gefunden - Kiosk oeffnet im Standard-Browser
+)
+
 REM === Start Backend ===
-echo [3/4] Backend starten (Port 8001, 0.0.0.0)...
+echo [4/6] Backend starten (Port 8001, 0.0.0.0)...
 start "Darts Backend" /MIN cmd /c ""%~dp0_run_backend.bat""
 echo   [OK] Backend gestartet (Log: logs\backend.log)
 
@@ -85,28 +110,47 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 REM === Start Frontend ===
-echo [4/4] Frontend starten (Port 3000, 0.0.0.0)...
+echo [5/6] Frontend starten (Port 3000, 0.0.0.0)...
 start "Darts Frontend" /MIN cmd /c ""%~dp0_run_frontend.bat""
 echo   [OK] Frontend gestartet (Log: logs\frontend.log)
 
 echo        Warte auf Frontend-Kompilierung...
 timeout /t 15 /nobreak >nul
 
+REM === Launch Kiosk + Overlay ===
+echo [6/6] Kiosk-Modus starten...
+
+REM Start Credits Overlay (hidden until session active)
+start "Darts Overlay" /MIN pythonw "%~dp0credits_overlay.py" --board-id %BOARD_ID% --api http://localhost:8001
+echo   [OK] Credits-Overlay gestartet (auto-show bei aktiver Session)
+
+REM Launch Kiosk in Chrome kiosk mode (fullscreen, no chrome)
+if defined CHROME_PATH (
+    echo   [OK] Starte Kiosk im Chrome-Vollbild-Modus...
+    start "" "%CHROME_PATH%" --kiosk --user-data-dir="%~dp0data\kiosk_chrome_profile" --no-first-run --no-default-browser-check --disable-translate --disable-infobars --autoplay-policy=no-user-gesture-required "http://localhost:3000/kiosk/%BOARD_ID%"
+) else (
+    echo   [INFO] Starte Kiosk im Standard-Browser...
+    start "" "http://localhost:3000/kiosk/%BOARD_ID%"
+)
+
 echo.
 echo ================================================================
 echo.
-echo   Darts Kiosk laeuft!
+echo   Darts Kiosk laeuft im Arcade-Modus!
+echo   Board: %BOARD_ID%
 echo.
 echo   === Zugriff von DIESEM PC ===
 echo   Admin-Panel:  http://localhost:3000/admin
-echo   Kiosk:        http://localhost:3000/kiosk/BOARD-1
+echo   Kiosk:        http://localhost:3000/kiosk/%BOARD_ID%
 echo   Setup-Wizard: http://localhost:3000/setup
 echo   Backend-API:  http://localhost:8001/api/health
 echo.
 echo   === Zugriff von ANDEREN Geraeten (Handy, Tablet, etc.) ===
 echo   Admin-Panel:  http://%LAN_IP%:3000/admin
-echo   Kiosk:        http://%LAN_IP%:3000/kiosk/BOARD-1
+echo   Kiosk:        http://%LAN_IP%:3000/kiosk/%BOARD_ID%
 echo   Backend-API:  http://%LAN_IP%:8001/api/health
+echo.
+echo   Credits-Overlay: Zeigt sich automatisch bei aktiver Session
 echo.
 echo   Logs: logs\backend.log  /  logs\frontend.log
 echo   Zum Beenden: stop.bat oder Taste druecken
@@ -114,12 +158,21 @@ echo.
 echo ================================================================
 echo.
 
-timeout /t 3 /nobreak >nul
-start "" http://localhost:3000/setup
-
 echo Druecken Sie eine Taste zum Beenden aller Dienste...
 pause >nul
 
+REM === Cleanup ===
+echo.
+echo Alle Dienste werden beendet...
 taskkill /F /FI "WINDOWTITLE eq Darts Backend" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Darts Frontend" >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq Darts Overlay" >nul 2>&1
+
+REM Close kiosk Chrome (by user-data-dir path pattern)
+for /f "tokens=2" %%a in ('wmic process where "CommandLine like '%%kiosk_chrome_profile%%'" get ProcessId 2^>nul ^| findstr /r "[0-9]"') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+REM Fallback: kill by window title
+taskkill /F /FI "WINDOWTITLE eq Darts Kiosk*" >nul 2>&1
+
 echo Alle Dienste beendet.

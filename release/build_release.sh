@@ -105,6 +105,7 @@ echo "playwright==1.58.0" >> "${WIN_DIR}/backend/requirements.txt"
 # Copy Windows scripts
 cp "${SCRIPT_DIR}/windows/"*.bat "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/run_backend.py" "${WIN_DIR}/"
+cp "${SCRIPT_DIR}/windows/credits_overlay.py" "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/README.md" "${WIN_DIR}/"
 
 # Create Windows .env files
@@ -224,6 +225,8 @@ cp "${SCRIPT_DIR}/source/RELEASE_NOTES.md" "${SRC_DIR}/"
 # Add Windows scripts
 mkdir -p "${SRC_DIR}/scripts/windows"
 cp "${SCRIPT_DIR}/windows/"*.bat "${SRC_DIR}/scripts/windows/"
+cp "${SCRIPT_DIR}/windows/run_backend.py" "${SRC_DIR}/scripts/windows/"
+cp "${SCRIPT_DIR}/windows/credits_overlay.py" "${SRC_DIR}/scripts/windows/"
 cp "${SCRIPT_DIR}/windows/README.md" "${SRC_DIR}/scripts/windows/"
 
 # Package

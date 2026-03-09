@@ -87,6 +87,21 @@ export default function KioskLayout() {
     return () => clearInterval(interval);
   }, [fetchBoardStatus]);
 
+  // Window management: hide kiosk window when Autodarts Chrome is active
+  const prevBrowserOpenRef = useRef(false);
+  useEffect(() => {
+    if (observerBrowserOpen && !prevBrowserOpenRef.current) {
+      // Autodarts Chrome just opened — push kiosk to background
+      document.title = 'Darts Kiosk — Autodarts aktiv';
+      try { window.blur(); } catch {}
+    } else if (!observerBrowserOpen && prevBrowserOpenRef.current) {
+      // Autodarts Chrome closed — bring kiosk to foreground
+      document.title = 'Darts Kiosk';
+      try { window.focus(); } catch {}
+    }
+    prevBrowserOpenRef.current = observerBrowserOpen;
+  }, [observerBrowserOpen]);
+
   const handleStartGame = async (gameType, players) => {
     try {
       await axios.post(`${API}/kiosk/${boardId}/start-game`, {
