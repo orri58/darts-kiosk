@@ -13,7 +13,10 @@ import {
   Fingerprint,
   Clock,
   Monitor,
-  Server
+  Server,
+  Activity,
+  Search,
+  AlertTriangle
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -30,13 +33,25 @@ import { useI18n } from '../../context/I18nContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+function AgentStatusBadge({ agent }) {
+  if (agent.is_paired) {
+    return <span className="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400">Gepairt</span>;
+  }
+  if (agent.is_stale) {
+    return <span className="text-xs px-2 py-1 rounded bg-amber-500/20 text-amber-400">Instabil</span>;
+  }
+  return <span className="text-xs px-2 py-1 rounded bg-blue-500/20 text-blue-400">Online</span>;
+}
+
 export default function Discovery() {
   const { token } = useAuth();
   const { t } = useI18n();
   const [agents, setAgents] = useState([]);
   const [peers, setPeers] = useState([]);
   const [discoveryActive, setDiscoveryActive] = useState(false);
+  const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [rescanning, setRescanning] = useState(false);
   const [pairDialog, setPairDialog] = useState(null);
   const [pairCode, setPairCode] = useState('');
   const [pairing, setPairing] = useState(false);
@@ -50,6 +65,7 @@ export default function Discovery() {
       ]);
       setAgents(agentRes.data.agents || []);
       setDiscoveryActive(agentRes.data.discovery_active);
+      setStats(agentRes.data.stats || null);
       setPeers(peerRes.data.peers || []);
     } catch (err) {
       console.error('Discovery fetch error', err);
@@ -64,6 +80,19 @@ export default function Discovery() {
     return () => clearInterval(iv);
   }, [fetchAll]);
 
+  const handleRescan = async () => {
+    setRescanning(true);
+    try {
+      await axios.post(`${API}/discovery/rescan`, {}, { headers });
+      toast.success('Netzwerk-Scan neu gestartet');
+      setTimeout(fetchAll, 2000);
+    } catch {
+      toast.error('Re-Scan fehlgeschlagen');
+    } finally {
+      setRescanning(false);
+    }
+  };
+
   const openPairDialog = (agent) => {
     setPairDialog(agent);
     setPairCode('');
@@ -73,7 +102,7 @@ export default function Discovery() {
     if (!pairDialog || pairCode.length !== 6) return;
     setPairing(true);
     try {
-      const res = await axios.post(`${API}/discovery/pair`, {
+      await axios.post(`${API}/discovery/pair`, {
         board_id: pairDialog.board_id,
         code: pairCode,
       }, { headers });
@@ -121,10 +150,44 @@ export default function Discovery() {
             }
           </p>
         </div>
-        <Button onClick={fetchAll} variant="outline" className="border-zinc-700 text-zinc-400 hover:text-white" data-testid="discovery-refresh-btn">
-          <RefreshCw className="w-4 h-4 mr-2" /> Aktualisieren
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={handleRescan}
+            disabled={rescanning}
+            variant="outline"
+            className="border-zinc-700 text-zinc-400 hover:text-white"
+            data-testid="discovery-rescan-btn"
+          >
+            <Search className={`w-4 h-4 mr-2 ${rescanning ? 'animate-spin' : ''}`} />
+            {rescanning ? 'Scanne...' : 'Neu scannen'}
+          </Button>
+          <Button onClick={fetchAll} variant="outline" className="border-zinc-700 text-zinc-400 hover:text-white" data-testid="discovery-refresh-btn">
+            <RefreshCw className="w-4 h-4 mr-2" /> Aktualisieren
+          </Button>
+        </div>
       </div>
+
+      {/* Discovery Stats */}
+      {stats && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-sm">
+            <p className="text-xs text-zinc-500 uppercase">Aktive Agents</p>
+            <p className="text-xl font-mono font-bold text-white" data-testid="stat-active-agents">{stats.active_agents}</p>
+          </div>
+          <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-sm">
+            <p className="text-xs text-zinc-500 uppercase">Gepairt</p>
+            <p className="text-xl font-mono font-bold text-emerald-400" data-testid="stat-paired-agents">{stats.paired_agents}</p>
+          </div>
+          <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-sm">
+            <p className="text-xs text-zinc-500 uppercase">Gesamt entdeckt</p>
+            <p className="text-xl font-mono font-bold text-zinc-300">{stats.total_discovered}</p>
+          </div>
+          <div className="p-3 bg-zinc-900 border border-zinc-800 rounded-sm">
+            <p className="text-xs text-zinc-500 uppercase">Scans</p>
+            <p className="text-xl font-mono font-bold text-zinc-300">{stats.scan_count}</p>
+          </div>
+        </div>
+      )}
 
       {/* Discovered Agents */}
       <Card className="bg-zinc-900 border-zinc-800 mb-6">
@@ -139,14 +202,22 @@ export default function Discovery() {
               {agents.map((agent) => (
                 <div
                   key={agent.board_id}
-                  className="flex items-center justify-between p-4 bg-zinc-800/50 rounded-sm border border-zinc-700/50"
+                  className={`flex items-center justify-between p-4 rounded-sm border ${
+                    agent.is_stale
+                      ? 'bg-amber-500/5 border-amber-500/20'
+                      : 'bg-zinc-800/50 border-zinc-700/50'
+                  }`}
                   data-testid={`agent-${agent.board_id}`}
                 >
                   <div className="flex items-center gap-4">
-                    <div className={`w-10 h-10 rounded flex items-center justify-center ${agent.is_paired ? 'bg-emerald-500/20' : 'bg-amber-500/20'}`}>
+                    <div className={`w-10 h-10 rounded flex items-center justify-center ${
+                      agent.is_paired ? 'bg-emerald-500/20' : agent.is_stale ? 'bg-amber-500/20' : 'bg-blue-500/20'
+                    }`}>
                       {agent.is_paired
                         ? <ShieldCheck className="w-5 h-5 text-emerald-500" />
-                        : <Shield className="w-5 h-5 text-amber-500" />
+                        : agent.is_stale
+                          ? <AlertTriangle className="w-5 h-5 text-amber-500" />
+                          : <Shield className="w-5 h-5 text-blue-500" />
                       }
                     </div>
                     <div>
@@ -154,16 +225,15 @@ export default function Discovery() {
                       <p className="text-xs text-zinc-500">
                         {agent.ip}:{agent.port} | v{agent.version} | fp: {agent.fingerprint}
                       </p>
+                      <p className="text-xs text-zinc-600 flex items-center gap-2">
+                        <Activity className="w-3 h-3" />
+                        Gesehen: {agent.seen_count}x | Zuletzt: {new Date(agent.last_seen).toLocaleTimeString('de-DE')}
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
-                    <span className="text-xs text-zinc-600">
-                      <Clock className="w-3 h-3 inline mr-1" />
-                      {new Date(agent.last_seen).toLocaleTimeString('de-DE')}
-                    </span>
-                    {agent.is_paired ? (
-                      <span className="text-xs px-2 py-1 rounded bg-emerald-500/20 text-emerald-400">Gepairt</span>
-                    ) : (
+                    <AgentStatusBadge agent={agent} />
+                    {!agent.is_paired && (
                       <Button
                         size="sm"
                         onClick={() => openPairDialog(agent)}
@@ -182,6 +252,14 @@ export default function Discovery() {
               <Wifi className="w-8 h-8 mx-auto mb-2 opacity-30" />
               <p>Keine Agents im Netzwerk gefunden</p>
               <p className="text-xs mt-1">Stellen Sie sicher, dass Agent-PCs im selben LAN laufen</p>
+              <Button
+                onClick={handleRescan}
+                variant="outline"
+                size="sm"
+                className="mt-3 border-zinc-700 text-zinc-400 hover:text-white"
+              >
+                <Search className="w-3 h-3 mr-1" /> Netzwerk erneut scannen
+              </Button>
             </div>
           )}
         </CardContent>
@@ -212,6 +290,7 @@ export default function Discovery() {
                       </p>
                       <p className="text-xs text-zinc-600">
                         Gepairt: {peer.paired_at ? new Date(peer.paired_at).toLocaleString('de-DE') : '-'}
+                        {peer.last_seen && <span className="ml-2">Zuletzt: {new Date(peer.last_seen).toLocaleString('de-DE')}</span>}
                       </p>
                     </div>
                   </div>

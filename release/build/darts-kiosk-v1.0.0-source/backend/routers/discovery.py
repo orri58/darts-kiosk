@@ -49,21 +49,35 @@ class PairVerifyRequest(BaseModel):
 @router.get("/discovery/agents")
 async def list_discovered_agents(admin: User = Depends(require_admin)):
     """List agents discovered via mDNS on the LAN."""
-    mdns_service.remove_stale(max_age_seconds=300)
+    mdns_service.remove_stale()
     agents = mdns_service.get_discovered_agents()
 
     return {
         "agents": agents,
         "count": len(agents),
         "discovery_active": mdns_service.is_running,
+        "stats": mdns_service.get_discovery_stats(),
     }
+
+
+@router.post("/discovery/rescan")
+async def rescan_network(admin: User = Depends(require_admin)):
+    """Force a re-scan of the local network for agents."""
+    mdns_service.restart_discovery()
+    return {"message": "Re-Scan gestartet", "stats": mdns_service.get_discovery_stats()}
+
+
+@router.get("/discovery/stats")
+async def get_discovery_stats(admin: User = Depends(require_admin)):
+    """Get mDNS discovery statistics."""
+    return mdns_service.get_discovery_stats()
 
 
 @router.get("/discovery/peers")
 async def list_paired_peers(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """List all trusted/paired peers."""
     result = await db.execute(
-        select(TrustedPeer).where(TrustedPeer.is_active == True).order_by(TrustedPeer.paired_at.desc())
+        select(TrustedPeer).where(TrustedPeer.is_active.is_(True)).order_by(TrustedPeer.paired_at.desc())
     )
     peers = result.scalars().all()
     return {

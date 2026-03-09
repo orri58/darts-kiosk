@@ -1,21 +1,28 @@
 """
 Update Service — GitHub-based
-Checks GitHub Releases for new versions, provides update instructions,
-and triggers backup before update.
+Checks GitHub Releases for new versions, downloads assets,
+triggers backup before update, persists update history to DB.
 """
 import os
 import asyncio
 import logging
+import platform
+import shutil
 from datetime import datetime, timezone
 from typing import List, Optional, Dict
 from dataclasses import dataclass, field
+from pathlib import Path
 import httpx
 
 logger = logging.getLogger(__name__)
 
+from backend.database import DATA_DIR
+
 CURRENT_VERSION = os.environ.get('APP_VERSION', '1.0.0')
-GITHUB_REPO = os.environ.get('GITHUB_REPO', '')  # e.g. "owner/darts-kiosk"
+GITHUB_REPO = os.environ.get('GITHUB_REPO', '')
 GITHUB_API = "https://api.github.com"
+DOWNLOADS_DIR = DATA_DIR / 'downloads'
+DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -32,22 +39,16 @@ class GitHubRelease:
     is_newer: bool = False
 
 
-@dataclass
-class UpdateResult:
-    success: bool
-    message: str
-    timestamp: str = ""
-
-
 class UpdateService:
     """GitHub-based update system for Darts Kiosk."""
 
     CHECK_TIMEOUT = 15
+    DOWNLOAD_TIMEOUT = 300
 
     def __init__(self):
         self._cached_releases: List[GitHubRelease] = []
         self._last_check: Optional[str] = None
-        self._update_history: List[Dict] = []
+        self._download_progress: Dict[str, Dict] = {}
 
     def get_current_version(self) -> str:
         return CURRENT_VERSION
@@ -57,7 +58,6 @@ class UpdateService:
 
     @staticmethod
     def _parse_version(v: str) -> tuple:
-        """Parse version string like '1.2.3' into comparable tuple."""
         clean = v.lstrip('v').strip()
         parts = []
         for p in clean.split('.'):
@@ -75,6 +75,13 @@ class UpdateService:
         except Exception:
             return False
 
+    def _github_headers(self) -> Dict[str, str]:
+        headers = {"Accept": "application/vnd.github+json"}
+        token = os.environ.get("GITHUB_TOKEN", "")
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        return headers
+
     async def check_for_updates(self) -> Dict:
         """Check GitHub for new releases."""
         if not GITHUB_REPO:
@@ -88,13 +95,8 @@ class UpdateService:
 
         try:
             url = f"{GITHUB_API}/repos/{GITHUB_REPO}/releases"
-            headers = {"Accept": "application/vnd.github+json"}
-            token = os.environ.get("GITHUB_TOKEN", "")
-            if token:
-                headers["Authorization"] = f"Bearer {token}"
-
             async with httpx.AsyncClient(timeout=self.CHECK_TIMEOUT) as client:
-                resp = await client.get(url, headers=headers, params={"per_page": 10})
+                resp = await client.get(url, headers=self._github_headers(), params={"per_page": 15})
 
             if resp.status_code == 404:
                 return {
@@ -109,7 +111,7 @@ class UpdateService:
                 return {
                     "configured": True,
                     "current_version": CURRENT_VERSION,
-                    "message": "GitHub API Rate-Limit erreicht. Versuche es später erneut oder setze GITHUB_TOKEN.",
+                    "message": "GitHub API Rate-Limit erreicht. Versuche es spaeter erneut oder setze GITHUB_TOKEN.",
                     "releases": [],
                     "last_check": datetime.now(timezone.utc).isoformat(),
                 }
@@ -125,12 +127,17 @@ class UpdateService:
                     version=version,
                     tag=tag,
                     name=r.get("name", tag),
-                    body=r.get("body", "")[:500],
+                    body=r.get("body", ""),
                     published_at=r.get("published_at", ""),
                     is_prerelease=r.get("prerelease", False),
                     html_url=r.get("html_url", ""),
                     assets=[
-                        {"name": a["name"], "size": a["size"], "download_url": a["browser_download_url"]}
+                        {
+                            "name": a["name"],
+                            "size": a["size"],
+                            "download_url": a["browser_download_url"],
+                            "content_type": a.get("content_type", ""),
+                        }
                         for a in r.get("assets", [])
                     ],
                     is_current=(version == CURRENT_VERSION or tag == f"v{CURRENT_VERSION}"),
@@ -151,6 +158,7 @@ class UpdateService:
                 "latest_name": newest.name if newest else None,
                 "latest_url": newest.html_url if newest else None,
                 "latest_body": newest.body if newest else None,
+                "latest_assets": newest.assets if newest else [],
                 "releases": [
                     {
                         "version": r.version,
@@ -174,7 +182,7 @@ class UpdateService:
             return {
                 "configured": True,
                 "current_version": CURRENT_VERSION,
-                "message": "GitHub-API Timeout. Prüfe die Internetverbindung.",
+                "message": "GitHub-API Timeout. Pruefe die Internetverbindung.",
                 "releases": [],
                 "last_check": self._last_check,
             }
@@ -188,56 +196,197 @@ class UpdateService:
                 "last_check": self._last_check,
             }
 
-    async def prepare_update(self, target_version: str) -> Dict:
-        """
-        Prepare for an update: create backup, return instructions.
-        """
-        from backend.services.backup_service import backup_service
-        backup_path = None
+    def _detect_platform_asset(self, assets: List[Dict]) -> Optional[Dict]:
+        """Auto-detect the best asset for this platform."""
+        system = platform.system().lower()
+        keywords = []
+        if system == "windows":
+            keywords = ["windows", "win"]
+        elif system == "linux":
+            keywords = ["linux"]
+
+        for asset in assets:
+            name = asset["name"].lower()
+            for kw in keywords:
+                if kw in name:
+                    return asset
+
+        # Fallback: source package
+        for asset in assets:
+            if "source" in asset["name"].lower():
+                return asset
+
+        return assets[0] if assets else None
+
+    async def download_asset(self, asset_url: str, asset_name: str, download_id: str) -> Dict:
+        """Download a release asset with progress tracking."""
+        self._download_progress[download_id] = {
+            "status": "downloading",
+            "asset_name": asset_name,
+            "bytes_downloaded": 0,
+            "total_bytes": 0,
+            "percent": 0,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        download_path = DOWNLOADS_DIR / asset_name
+
         try:
-            backup_path = await backup_service.create_backup()
-            logger.info(f"Pre-update backup created: {backup_path}")
+            async with httpx.AsyncClient(timeout=self.DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
+                async with client.stream("GET", asset_url, headers=self._github_headers()) as resp:
+                    resp.raise_for_status()
+                    total = int(resp.headers.get("content-length", 0))
+                    self._download_progress[download_id]["total_bytes"] = total
+
+                    downloaded = 0
+                    with open(download_path, "wb") as f:
+                        async for chunk in resp.aiter_bytes(chunk_size=65536):
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            percent = int((downloaded / total * 100)) if total > 0 else 0
+                            self._download_progress[download_id].update({
+                                "bytes_downloaded": downloaded,
+                                "percent": percent,
+                            })
+
+            self._download_progress[download_id].update({
+                "status": "completed",
+                "percent": 100,
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "file_path": str(download_path),
+            })
+
+            logger.info(f"Download complete: {asset_name} ({downloaded} bytes)")
+            return self._download_progress[download_id]
+
+        except Exception as e:
+            self._download_progress[download_id].update({
+                "status": "failed",
+                "error": str(e),
+            })
+            logger.error(f"Download failed for {asset_name}: {e}")
+            return self._download_progress[download_id]
+
+    def get_download_progress(self, download_id: str) -> Optional[Dict]:
+        return self._download_progress.get(download_id)
+
+    def list_downloaded_assets(self) -> List[Dict]:
+        """List all downloaded release assets."""
+        assets = []
+        if DOWNLOADS_DIR.exists():
+            for f in sorted(DOWNLOADS_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+                if f.is_file():
+                    stat = f.stat()
+                    assets.append({
+                        "name": f.name,
+                        "size": stat.st_size,
+                        "downloaded_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                    })
+        return assets
+
+    def delete_downloaded_asset(self, filename: str) -> bool:
+        """Delete a downloaded asset."""
+        path = DOWNLOADS_DIR / filename
+        if path.exists() and path.is_file():
+            path.unlink()
+            return True
+        return False
+
+    async def prepare_update(self, target_version: str) -> Dict:
+        """Create backup and prepare update instructions."""
+        from backend.services.backup_service import backup_service
+        backup_info = None
+        try:
+            backup_info = backup_service.create_backup()
+            logger.info(f"Pre-update backup created: {backup_info.filename if backup_info else 'failed'}")
         except Exception as e:
             logger.warning(f"Pre-update backup failed: {e}")
 
-        self._update_history.append({
-            "action": "prepare_update",
-            "target_version": target_version,
-            "backup_path": str(backup_path) if backup_path else None,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-
         release = next((r for r in self._cached_releases if r.version == target_version), None)
 
-        instructions = []
+        # Auto-detect platform asset
+        recommended_asset = None
+        download_links = []
         if release and release.assets:
-            # Find matching asset for the platform
+            recommended_asset = self._detect_platform_asset(release.assets)
             for asset in release.assets:
-                if "windows" in asset["name"].lower():
-                    instructions.append(f"Windows: {asset['download_url']}")
-                elif "linux" in asset["name"].lower():
-                    instructions.append(f"Linux: {asset['download_url']}")
-                elif "source" in asset["name"].lower():
-                    instructions.append(f"Source: {asset['download_url']}")
+                label = asset["name"]
+                if "windows" in label.lower():
+                    label = f"Windows: {asset['name']}"
+                elif "linux" in label.lower():
+                    label = f"Linux: {asset['name']}"
+                elif "source" in label.lower():
+                    label = f"Source: {asset['name']}"
+                download_links.append({
+                    "label": label,
+                    "name": asset["name"],
+                    "url": asset["download_url"],
+                    "size": asset["size"],
+                })
 
         return {
-            "backup_created": backup_path is not None,
-            "backup_path": str(backup_path) if backup_path else None,
+            "backup_created": backup_info is not None,
+            "backup_filename": backup_info.filename if backup_info else None,
             "target_version": target_version,
+            "changelog": release.body if release else "",
             "release_url": release.html_url if release else f"https://github.com/{GITHUB_REPO}/releases",
-            "download_links": instructions,
+            "recommended_asset": {
+                "name": recommended_asset["name"],
+                "url": recommended_asset["download_url"],
+                "size": recommended_asset["size"],
+            } if recommended_asset else None,
+            "download_links": download_links,
             "manual_steps": [
-                "1. Backup wurde automatisch erstellt" if backup_path else "1. Backup manuell erstellen",
-                "2. Neues Release-Paket herunterladen",
-                "3. Services stoppen",
-                "4. Dateien ersetzen (backend/, frontend/)",
+                "1. Backup wurde automatisch erstellt" if backup_info else "1. Backup manuell erstellen",
+                f"2. Release-Paket v{target_version} herunterladen",
+                "3. Services stoppen (stop.bat / systemctl stop darts-kiosk)",
+                "4. Dateien ersetzen (backend/, frontend/build/)",
                 "5. Services neu starten",
-                "6. Funktionalität prüfen",
+                "6. Version im Admin-Panel pruefen",
             ],
+            "rollback_info": {
+                "backup_filename": backup_info.filename if backup_info else None,
+                "instruction": "Bei Problemen: Backup wiederherstellen unter System > Backups",
+            },
         }
 
-    def get_update_history(self, limit: int = 20) -> List[Dict]:
-        return self._update_history[-limit:]
+    async def get_update_history(self, db_session) -> List[Dict]:
+        """Load update history from the DB settings table."""
+        from sqlalchemy import select
+        from backend.models import Settings
+        result = await db_session.execute(
+            select(Settings).where(Settings.key == "update_history")
+        )
+        setting = result.scalar_one_or_none()
+        if setting and setting.value:
+            return setting.value
+        return []
+
+    async def record_update_event(self, db_session, event: Dict):
+        """Persist an update event to the DB."""
+        from sqlalchemy import select
+        from sqlalchemy.orm.attributes import flag_modified
+        from backend.models import Settings
+
+        event["timestamp"] = datetime.now(timezone.utc).isoformat()
+
+        result = await db_session.execute(
+            select(Settings).where(Settings.key == "update_history")
+        )
+        setting = result.scalar_one_or_none()
+        if setting:
+            history = list(setting.value or [])
+            history.append(event)
+            # Keep last 50 entries
+            if len(history) > 50:
+                history = history[-50:]
+            setting.value = history
+            flag_modified(setting, "value")
+        else:
+            setting = Settings(key="update_history", value=[event])
+            db_session.add(setting)
+
+        await db_session.flush()
 
 
 update_service = UpdateService()

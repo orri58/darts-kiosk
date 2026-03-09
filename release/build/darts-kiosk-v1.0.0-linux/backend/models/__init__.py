@@ -352,6 +352,8 @@ DEFAULT_KIOSK_TEXTS = {
     "credits_label": "Spiele übrig",
     "time_label": "Zeit übrig",
     "staff_hint": "",
+    "upsell_message": "Weitere Spiele an der Theke freischalten",
+    "upsell_pricing": "",
 }
 
 DEFAULT_PWA_CONFIG = {

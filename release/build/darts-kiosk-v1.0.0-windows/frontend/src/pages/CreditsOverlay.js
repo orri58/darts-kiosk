@@ -137,14 +137,14 @@ export default function CreditsOverlay() {
         }}
       >
         {isLastGame ? (
-          /* === LETZTES SPIEL WARNING === */
-          <div style={{ textAlign: 'center' }}>
+          /* === LETZTES SPIEL WARNING + UPSELL === */
+          <div data-testid="last-game-warning">
             <div style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: 8,
-              marginBottom: 2,
+              marginBottom: (data.upsell_message || data.upsell_pricing) ? 8 : 2,
             }}>
               <span style={{ fontSize: 18 }}>&#9888;</span>
               <span style={{
@@ -157,6 +157,30 @@ export default function CreditsOverlay() {
                 LETZTES SPIEL
               </span>
             </div>
+            {data.upsell_message && (
+              <div data-testid="upsell-message" style={{
+                fontSize: 11,
+                color: '#fecaca',
+                textAlign: 'center',
+                lineHeight: 1.4,
+                opacity: 0.9,
+              }}>
+                {data.upsell_message}
+              </div>
+            )}
+            {data.upsell_pricing && (
+              <div data-testid="upsell-pricing" style={{
+                fontSize: 10,
+                color: '#fca5a5',
+                textAlign: 'center',
+                marginTop: 4,
+                fontWeight: 600,
+                letterSpacing: 0.5,
+                opacity: 0.8,
+              }}>
+                {data.upsell_pricing}
+              </div>
+            )}
           </div>
         ) : isTimeMode ? (
           /* === TIME MODE === */

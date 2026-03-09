@@ -1306,7 +1306,7 @@ export default function AdminSettings() {
               {/* Credits Overlay Toggle */}
               <div className="border-t border-zinc-800 pt-4">
                 <h4 className="text-sm font-medium text-zinc-300 mb-3">Credits-Overlay</h4>
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-3">
                   <div>
                     <Label className="text-zinc-300">Credits-Overlay während Spielen anzeigen</Label>
                     <p className="text-xs text-zinc-500">Zeigt verbleibende Spiele/Zeit als kleines Overlay an</p>
@@ -1319,6 +1319,20 @@ export default function AdminSettings() {
                     <div className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${localOverlay.enabled ? 'left-6' : 'left-0.5'}`} />
                   </button>
                 </div>
+                {localOverlay.enabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                    <div>
+                      <Label className="text-zinc-300">Upsell-Nachricht (letztes Spiel)</Label>
+                      <Input data-testid="kiosk-text-upsell-message" value={localKioskTexts.upsell_message || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, upsell_message: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Weitere Spiele an der Theke freischalten" />
+                      <p className="text-xs text-zinc-500 mt-1">Wird im Overlay bei letztem Spiel angezeigt</p>
+                    </div>
+                    <div>
+                      <Label className="text-zinc-300">Preishinweis (letztes Spiel)</Label>
+                      <Input data-testid="kiosk-text-upsell-pricing" value={localKioskTexts.upsell_pricing || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, upsell_pricing: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="1 Spiel = 2€ | 3 Spiele = 5€" />
+                      <p className="text-xs text-zinc-500 mt-1">Optionaler Preis unter der Upsell-Nachricht</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Lock Screen QR Toggle */}
