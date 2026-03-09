@@ -4,60 +4,49 @@
 Production-ready, local-first Darts Kiosk + Admin Control system for a cafe running on Mini-PCs. Master/Agent architecture for multi-board control over LAN.
 
 ## Architecture
-- **Autodarts Observer MVP** (`AUTODARTS_MODE=observer`): On unlock, the backend launches Autodarts fullscreen via Playwright. The kiosk UI hands off the screen to Autodarts. Only the small credits overlay remains visible on top.
+- **Autodarts Observer MVP**: On unlock, Playwright opens Autodarts fullscreen. Kiosk hands off screen. Only credits overlay stays visible on top.
+- **MVP Observer Scope**: Observer only tracks browser sessions launched by THIS system. Manually opened external browser windows are NOT detected/supported.
 - **Master/Agent**: MASTER controls all boards, AGENTs are autonomous offline
 - **Tech Stack**: FastAPI + SQLAlchemy/SQLite (backend), React + Tailwind/Shadcn (frontend)
 
-## Observer Mode Kiosk UX Flow
+## Observer Mode UX Flow
 ```
-LOCKED:   Kiosk fullscreen → locked screen visible
+LOCKED:   Kiosk fullscreen, locked screen visible
 UNLOCK:   Playwright opens Autodarts fullscreen (covers kiosk)
-          Kiosk shows minimal dark "handoff" screen behind Autodarts
-          Credits overlay stays on top as small floating window
-ACTIVE:   Autodarts is main app, overlay shows credits/time
-          If Autodarts fails to open → FALLBACK screen with retry
-END:      Autodarts closes → kiosk returns to locked screen
+          Kiosk shows minimal dark handoff screen (hidden behind Autodarts)
+          Credits overlay stays on top as separate window
+ACTIVE:   Autodarts is main visible app, observer tracks game state
+          Credits decrement on game start (idle → in_game)
+FAILED:   If browser launch fails → Fallback screen (retry, staff, end buttons)
+LOCK/END: Autodarts browser closes → kiosk returns to locked screen
 ```
 
-## Implemented Features
+## Windows Playwright Fix (v1.5.1 - 2026-03-09)
+### Root Cause
+`NotImplementedError` from `asyncio.create_subprocess_exec` because uvicorn on Windows uses `SelectorEventLoop`. Playwright requires `ProactorEventLoop` for subprocess execution.
 
-### v1.0.0 - Core
-- [x] Kiosk UI, Admin Panel, JWT+PIN Auth, Boards, Pricing, Sessions
-- [x] Stammkunde Mode, QR Match Links, Leaderboards, Sound Effects, i18n
+### Fix
+- **`run_backend.py`**: Dedicated Windows launcher that sets `WindowsProactorEventLoopPolicy` BEFORE uvicorn creates its event loop
+- **`_run_backend.bat`**: Updated to `python run_backend.py` (not `python -m uvicorn`)
+- **`reload=False`**: Disabled uvicorn reloader (reloader spawns subprocess that resets event loop)
+- **`setup_windows.bat`**: Added Playwright browser validation step after install
+- **Observer logging**: 6-step detailed launch trace (import → runtime → chromium → context → page → navigate)
+- **Error handling**: Concise error messages (first line, max 200 chars) for frontend display
+- **Session endpoint**: Returns `observer_browser_open`, `observer_state`, `observer_error`
 
-### v1.1.0 - White-Label & Polish
-- [x] All branding removed, PWA, Custom Kiosk Texts, Responsive Sidebar
+### Kiosk Screens
+- `observer-handoff-screen`: Minimal dark backdrop when Autodarts is fullscreen on top
+- `observer-fallback-screen`: Shown when browser launch failed - error + retry + staff + end
 
-### v1.2.0 - Update System, Tests, QR
-- [x] GitHub Update System, Autodarts DOM Selector Tests, Public Leaderboard QR
-
-### v1.3.0 - Credits Overlay
-- [x] Real-time overlay, "LETZTES SPIEL" warning, configurable upsell
-
-### v1.4.0 - Update System, Legacy Cleanup, mDNS
-- [x] Enhanced Updates (download, changelog, history, backup-before-update)
-- [x] Legacy Code Removal (health_monitor → observer terminology)
-- [x] mDNS Improvements (periodic cleanup, re-scan, stats)
-
-### v1.4.1 - Background Update Checker + Snooze
-- [x] Background scheduler (24h), dashboard notification banner
-- [x] Snooze (48h) + permanent dismiss per-version
-
-### v1.5.0 - Observer Mode Kiosk Handoff (2026-03-09)
-- [x] **HANDOFF screen**: Minimal dark backdrop when Autodarts browser is open. Autodarts covers the kiosk fullscreen. Only a tiny status line at the bottom if user alt-tabs.
-- [x] **FALLBACK screen**: Shown when Autodarts browser failed to open. Clear error message, retry button, credits display, staff/end buttons.
-- [x] `GET /boards/{id}/session` returns `observer_browser_open` and `observer_state` fields
-- [x] KioskLayout routes: LOCKED → locked screen, OBSERVER_ACTIVE → handoff/fallback, old SetupScreen completely bypassed
-- [x] `AUTODARTS_HEADLESS=false` default for real kiosk deployment (visible Playwright browser)
-- [x] Credits overlay endpoint works alongside observer flow
-- [x] Release packages rebuilt
-
-## Key Data-TestIDs
-- `observer-handoff-screen` — dark backdrop when Autodarts is covering
-- `observer-fallback-screen` — error/retry when Autodarts browser failed
-- `observer-retry-btn` — retry opening Autodarts
-- `handoff-credits`, `fallback-credits` — credit display
-- `handoff-call-staff`, `fallback-call-staff-btn` — staff call
+## All Implemented Features
+- v1.0.0: Core (Kiosk, Admin, Auth, Boards, Pricing, Sessions, Stammkunde, QR, Leaderboards, Sound, i18n)
+- v1.1.0: White-Label (PWA, Custom Texts, Responsive Sidebar)
+- v1.2.0: Update System, DOM Selector Tests, Public Leaderboard QR
+- v1.3.0: Credits Overlay (real-time, "LETZTES SPIEL" warning, upsell)
+- v1.4.0: Enhanced Updates, Legacy Cleanup, mDNS Improvements
+- v1.4.1: Background Update Checker + Snooze (48h) / Dismiss per-version
+- v1.5.0: Observer Mode Handoff/Fallback UX
+- v1.5.1: Windows Playwright Fix (ProactorEventLoop, run_backend.py, detailed logging)
 
 ## Remaining Backlog
 ### P2
