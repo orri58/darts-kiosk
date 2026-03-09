@@ -16,7 +16,8 @@ import {
   ArrowUpCircle,
   X,
   FileText,
-  Settings
+  Settings,
+  BellOff
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
@@ -109,15 +110,27 @@ export default function AdminDashboard() {
           headers: { Authorization: `Bearer ${token}` }
         });
         const data = res.data;
-        if (data.update_available && data.dismissed_version !== data.latest_version) {
-          setUpdateNotification(data);
-        } else {
+        if (!data.update_available) {
           setUpdateNotification(null);
+          return;
         }
+        // Permanently dismissed for this version
+        if (data.dismissed_version === data.latest_version) {
+          setUpdateNotification(null);
+          return;
+        }
+        // Snoozed for this version and not yet expired
+        if (data.snoozed_version === data.latest_version && data.snooze_until) {
+          if (new Date(data.snooze_until) > new Date()) {
+            setUpdateNotification(null);
+            return;
+          }
+        }
+        setUpdateNotification(data);
       } catch { /* silent */ }
     };
     fetchNotification();
-    const iv = setInterval(fetchNotification, 300000); // re-check every 5 min
+    const iv = setInterval(fetchNotification, 300000);
     return () => clearInterval(iv);
   }, [token]);
 
@@ -126,6 +139,18 @@ export default function AdminDashboard() {
     try {
       await axios.post(
         `${API}/updates/notification/dismiss?version=${updateNotification.latest_version}`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    } catch { /* silent */ }
+    setUpdateNotification(null);
+  };
+
+  const snoozeNotification = async () => {
+    if (!updateNotification) return;
+    try {
+      await axios.post(
+        `${API}/updates/notification/snooze?version=${updateNotification.latest_version}&hours=48`,
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -292,11 +317,21 @@ export default function AdminDashboard() {
               <Settings className="w-3 h-3 mr-1" /> Update starten
             </Button>
             <Button
+              variant="outline"
+              size="sm"
+              onClick={snoozeNotification}
+              className="border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
+              data-testid="update-snooze-btn"
+            >
+              <BellOff className="w-3 h-3 mr-1" /> Spaeter erinnern
+            </Button>
+            <Button
               variant="ghost"
               size="icon"
               onClick={dismissNotification}
               className="text-zinc-500 hover:text-zinc-300 h-8 w-8"
               data-testid="update-dismiss-btn"
+              title="Dauerhaft ausblenden"
             >
               <X className="w-4 h-4" />
             </Button>
