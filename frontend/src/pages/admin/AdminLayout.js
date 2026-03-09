@@ -48,20 +48,6 @@ export default function AdminLayout() {
     }
   }, [loading, isAuthenticated, navigate]);
 
-  // Switch PWA manifest to admin version so "Add to Home Screen" opens /admin
-  useEffect(() => {
-    const link = document.querySelector('link[rel="manifest"]');
-    const appleName = document.querySelector('meta[name="apple-mobile-web-app-title"]');
-    if (link) link.setAttribute('href', '/manifest-admin.json');
-    if (appleName) appleName.setAttribute('content', 'Darts Admin');
-    document.title = 'Darts Admin';
-    return () => {
-      if (link) link.setAttribute('href', '/manifest.json');
-      if (appleName) appleName.setAttribute('content', 'Darts Kiosk');
-      document.title = 'Darts Kiosk';
-    };
-  }, []);
-
   const handleLogout = () => {
     logout();
     navigate('/admin/login');

@@ -74,7 +74,7 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         env:
-          REACT_APP_BACKEND_URL: http://localhost:8001
+          REACT_APP_BACKEND_URL: ''
         run: yarn build
 
       # ─── Package: Windows ──────────────────────────────────────

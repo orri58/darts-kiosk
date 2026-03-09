@@ -1,6 +1,6 @@
 {
-  "short_name": "Darts Kiosk",
-  "name": "Darts Kiosk System",
+  "short_name": "Darts Admin",
+  "name": "Darts Kiosk Admin Panel",
   "icons": [
     {
       "src": "icon-192.png",
@@ -15,7 +15,8 @@
       "purpose": "any maskable"
     }
   ],
-  "start_url": "/kiosk",
+  "start_url": "/admin",
+  "scope": "/",
   "display": "standalone",
   "theme_color": "#09090b",
   "background_color": "#09090b",
