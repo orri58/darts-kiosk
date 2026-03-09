@@ -436,6 +436,22 @@ export default function AdminSettings() {
                       {uploading ? 'Wird hochgeladen...' : 'Logo hochladen'}
                     </label>
                     <p className="text-xs text-zinc-600 mt-2">PNG, SVG, JPG, WebP (max. 2MB)</p>
+                    {localBranding.logo_url && (
+                      <button
+                        data-testid="remove-logo-btn"
+                        onClick={async () => {
+                          try {
+                            const headers = { Authorization: `Bearer ${token}` };
+                            await axios.delete(`${API}/settings/branding/logo`, { headers });
+                            setLocalBranding({ ...localBranding, logo_url: '' });
+                            toast.success('Logo entfernt');
+                          } catch { toast.error('Fehler beim Entfernen'); }
+                        }}
+                        className="text-xs text-red-400 hover:text-red-300 mt-1 underline"
+                      >
+                        Logo entfernen
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>

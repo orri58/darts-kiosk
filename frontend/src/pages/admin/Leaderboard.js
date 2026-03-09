@@ -10,13 +10,16 @@ import {
   Crown,
   Flame,
   Award,
-  Zap
+  Zap,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
+import { toast } from 'sonner';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -210,6 +213,71 @@ export default function Leaderboard() {
           </TabsContent>
         ))}
       </Tabs>
+
+      {/* Data Management */}
+      <Card className="bg-zinc-900 border-zinc-800 mt-6">
+        <CardHeader>
+          <CardTitle className="text-zinc-300 text-sm flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400" />
+            Datenverwaltung
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              data-testid="reset-guest-stats-btn"
+              size="sm"
+              variant="outline"
+              className="border-red-800 text-red-400 hover:bg-red-900/30"
+              onClick={async () => {
+                if (!window.confirm('Alle Gast-Spieler loeschen? (Registrierte bleiben erhalten)')) return;
+                try {
+                  const res = await axios.delete(`${API}/admin/players/guests`, { headers: { Authorization: `Bearer ${token}` } });
+                  toast.success(res.data.message);
+                  fetchLeaderboard();
+                } catch { toast.error('Fehler'); }
+              }}
+            >
+              <Trash2 className="w-3 h-3 mr-1" />
+              Gast-Spieler loeschen
+            </Button>
+            <Button
+              data-testid="reset-all-stats-btn"
+              size="sm"
+              variant="outline"
+              className="border-red-800 text-red-400 hover:bg-red-900/30"
+              onClick={async () => {
+                if (!window.confirm('Alle Spieler-Statistiken zuruecksetzen? (Spieler bleiben, nur Zaehler auf 0)')) return;
+                try {
+                  const res = await axios.delete(`${API}/admin/players/all-stats`, { headers: { Authorization: `Bearer ${token}` } });
+                  toast.success(res.data.message);
+                  fetchLeaderboard();
+                } catch { toast.error('Fehler'); }
+              }}
+            >
+              <RefreshCw className="w-3 h-3 mr-1" />
+              Alle Stats zuruecksetzen
+            </Button>
+            <Button
+              data-testid="delete-matches-btn"
+              size="sm"
+              variant="outline"
+              className="border-red-800 text-red-400 hover:bg-red-900/30"
+              onClick={async () => {
+                if (!window.confirm('Alle Match-Ergebnisse loeschen? (Sessions/Umsatz bleiben erhalten)')) return;
+                try {
+                  const res = await axios.delete(`${API}/admin/matches`, { headers: { Authorization: `Bearer ${token}` } });
+                  toast.success(res.data.message);
+                } catch { toast.error('Fehler'); }
+              }}
+            >
+              <Trash2 className="w-3 h-3 mr-1" />
+              Match-Historie loeschen
+            </Button>
+          </div>
+          <p className="text-xs text-zinc-600">Sessions und Umsatzdaten werden davon nicht betroffen.</p>
+        </CardContent>
+      </Card>
     </div>
   );
 }
