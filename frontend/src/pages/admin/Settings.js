@@ -16,11 +16,13 @@ import {
   ClipboardCopy,
   Eye,
   Volume2,
-  Globe
+  Globe,
+  QrCode
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Switch } from '../../components/ui/switch';
 import { useSettings } from '../../context/SettingsContext';
@@ -194,6 +196,10 @@ export default function AdminSettings() {
   const [languageSetting, setLanguageSetting] = useState('de');
   const [langLoading, setLangLoading] = useState(true);
 
+  // Match sharing state
+  const [matchSharing, setMatchSharing] = useState({ enabled: false, qr_timeout: 60 });
+  const [matchSharingLoading, setMatchSharingLoading] = useState(true);
+
   useEffect(() => {
     const fetchStammkunde = async () => {
       try {
@@ -228,6 +234,15 @@ export default function AdminSettings() {
       finally { setLangLoading(false); }
     };
     fetchLang();
+    // Fetch match sharing
+    const fetchMatchSharing = async () => {
+      try {
+        const res = await axios.get(`${API}/settings/match-sharing`);
+        setMatchSharing(res.data);
+      } catch { /* use defaults */ }
+      finally { setMatchSharingLoading(false); }
+    };
+    fetchMatchSharing();
   }, [token]);
 
   const handleSaveStammkundeDisplay = async () => {
@@ -275,6 +290,17 @@ export default function AdminSettings() {
       switchLang(res.data.language);
       toast.success(res.data.language === 'de' ? 'Sprache gespeichert' : 'Language saved');
     } catch { toast.error('Error saving language'); }
+    finally { setSaving(false); }
+  };
+
+  const handleSaveMatchSharing = async () => {
+    setSaving(true);
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await axios.put(`${API}/settings/match-sharing`, { value: matchSharing }, { headers });
+      setMatchSharing(res.data);
+      toast.success(t('save_success') || 'Gespeichert');
+    } catch { toast.error('Fehler beim Speichern'); }
     finally { setSaving(false); }
   };
 
@@ -366,6 +392,10 @@ export default function AdminSettings() {
           <TabsTrigger value="language" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Globe className="w-4 h-4 mr-2" />
             {t('language')}
+          </TabsTrigger>
+          <TabsTrigger value="match-sharing" data-testid="tab-match-sharing" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
+            <QrCode className="w-4 h-4 mr-2" />
+            QR Sharing
           </TabsTrigger>
         </TabsList>
 
@@ -1069,6 +1099,68 @@ export default function AdminSettings() {
                   <Button onClick={handleSaveLanguage} disabled={saving}
                     data-testid="save-language-btn"
                     className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading">
+                    <Save className="w-4 h-4 mr-2" />
+                    {saving ? 'Speichern...' : 'Speichern'}
+                  </Button>
+                </>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Match Sharing Tab */}
+        <TabsContent value="match-sharing" className="space-y-6">
+          <Card className="bg-zinc-900 border-zinc-800">
+            <CardHeader>
+              <CardTitle className="text-zinc-100 flex items-center gap-2">
+                <QrCode className="w-5 h-5 text-amber-500" />
+                QR Match Sharing
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {matchSharingLoading ? (
+                <p className="text-zinc-400">Laden...</p>
+              ) : (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-zinc-200 text-base">QR Match Sharing aktivieren</Label>
+                      <p className="text-zinc-400 text-sm mt-1">
+                        Nach Spielende wird ein QR-Code mit Match-Ergebnis angezeigt,
+                        den Kunden scannen und teilen koennen.
+                      </p>
+                    </div>
+                    <Switch
+                      data-testid="match-sharing-toggle"
+                      checked={matchSharing.enabled}
+                      onCheckedChange={(v) => setMatchSharing({ ...matchSharing, enabled: v })}
+                    />
+                  </div>
+
+                  {matchSharing.enabled && (
+                    <div className="space-y-2 pl-4 border-l-2 border-amber-500/30">
+                      <Label className="text-zinc-200">QR Anzeige Dauer (Sekunden)</Label>
+                      <Input
+                        data-testid="qr-timeout-input"
+                        type="number"
+                        min={5}
+                        max={300}
+                        value={matchSharing.qr_timeout}
+                        onChange={(e) => setMatchSharing({ ...matchSharing, qr_timeout: parseInt(e.target.value) || 60 })}
+                        className="bg-zinc-800 border-zinc-700 text-zinc-100 w-32"
+                      />
+                      <p className="text-zinc-500 text-xs">
+                        QR-Screen verschwindet automatisch nach dieser Zeit.
+                      </p>
+                    </div>
+                  )}
+
+                  <Button
+                    data-testid="save-match-sharing-btn"
+                    onClick={handleSaveMatchSharing}
+                    disabled={saving}
+                    className="bg-amber-500 hover:bg-amber-600 text-black"
+                  >
                     <Save className="w-4 h-4 mr-2" />
                     {saving ? 'Speichern...' : 'Speichern'}
                   </Button>

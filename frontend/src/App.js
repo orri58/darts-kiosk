@@ -19,6 +19,7 @@ import AdminDiscovery from "./pages/admin/Discovery";
 import AdminLeaderboard from "./pages/admin/Leaderboard";
 import MatchPublicPage from "./pages/MatchPublicPage";
 import SetupWizard from "./pages/admin/SetupWizard";
+import CreditsOverlay from "./pages/CreditsOverlay";
 
 // Context
 import { AuthProvider } from "./context/AuthContext";
@@ -41,6 +42,9 @@ function App() {
             
             {/* Public Match Result */}
             <Route path="/match/:token" element={<MatchPublicPage />} />
+            
+            {/* Credits Overlay (opened in separate small window on board PC) */}
+            <Route path="/overlay/:boardId" element={<CreditsOverlay />} />
             
             {/* Admin Routes */}
             <Route path="/admin/login" element={<AdminLogin />} />

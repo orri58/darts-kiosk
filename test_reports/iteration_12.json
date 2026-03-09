@@ -1,0 +1,73 @@
+{
+  "summary": "Completed testing of Observer MVP Update features. All 14 backend tests pass (100%). Frontend QR Sharing tab and Credits Overlay working correctly. Dashboard shows observer status per board.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Admin Settings - QR Sharing tab",
+        "issues": ["Toast message shows raw key 'save_success' instead of translated text (missing i18n key)"]
+      }
+    ]
+  },
+
+  "passed_tests": [
+    "GET /api/settings/match-sharing - returns default values (enabled: false, qr_timeout: 60)",
+    "PUT /api/settings/match-sharing - admin can enable with qr_timeout=30",
+    "PUT /api/settings/match-sharing - admin can disable with qr_timeout=60",
+    "PUT /api/settings/match-sharing - requires authentication (401 without token)",
+    "GET /api/kiosk/BOARD-1/observer-status - returns autodarts_mode, state, credits_remaining, pricing_mode",
+    "GET /api/kiosk/observers/all - returns all observer statuses with autodarts_mode",
+    "GET /api/kiosk/BOARD-1/overlay - returns visible:false when no session (board locked)",
+    "GET /api/kiosk/BOARD-1/overlay - returns visible:true with credits when session active",
+    "GET /api/kiosk/INVALID-BOARD/overlay - returns visible:false for nonexistent board",
+    "POST /api/kiosk/BOARD-1/end-game with QR disabled - returns match_token:null, match_sharing_enabled:false",
+    "POST /api/kiosk/BOARD-1/end-game with QR enabled - returns match_token (hex string), match_sharing_enabled:true",
+    "POST /api/boards/BOARD-1/unlock - creates session with credits, triggers observer start",
+    "POST /api/boards/BOARD-1/lock - closes session, triggers observer close",
+    "Board status changes correctly with unlock/lock operations",
+    "Frontend: Admin Settings has QR Sharing tab with toggle and save button",
+    "Frontend: QR Sharing toggle shows/hides QR timeout input field",
+    "Frontend: Dashboard shows observer status per board (Observer IDLE display)",
+    "Frontend: /overlay/BOARD-1 shows transparent when no session",
+    "Frontend: /overlay/BOARD-1 shows credits (SPIELE 5) when session active"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_observer_mvp_update.py",
+    "/app/test_reports/pytest/pytest_observer_mvp.xml"
+  ],
+
+  "action_items": [
+    "Add 'save_success' translation key to /app/frontend/src/i18n/translations.js (minor i18n fix)"
+  ],
+
+  "critical_code_review_comments": [],
+
+  "updated_files": [
+    "/app/backend/tests/test_observer_mvp_update.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (14/14 tests passed)",
+    "frontend": "100% (all features verified)"
+  },
+
+  "test_credentials": {
+    "admin": {"username": "admin", "password": "admin123"},
+    "board": "BOARD-1"
+  },
+
+  "seed_data_creation": "None - used existing BOARD-1 and BOARD-2",
+
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+
+  "context_for_next_testing_agent": "Observer MVP Update tested. Key features: 1) Match sharing settings at /api/settings/match-sharing (GET/PUT), default disabled. 2) Conditional match_token in end-game response based on match_sharing.enabled. 3) Observer status extended with credits_remaining, pricing_mode at /api/kiosk/{boardId}/observer-status. 4) Credits overlay at /overlay/:boardId polls /api/kiosk/{boardId}/overlay every 3s. 5) Board unlock triggers observer start, lock triggers observer close. Dashboard shows Observer status (IDLE/IN_GAME/etc) per board card."
+}

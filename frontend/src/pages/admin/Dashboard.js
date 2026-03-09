@@ -44,6 +44,7 @@ export default function AdminDashboard() {
   const { t } = useI18n();
   const [boards, setBoards] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [observerStatuses, setObserverStatuses] = useState({});
   const [selectedBoard, setSelectedBoard] = useState(null);
   const [showUnlockDialog, setShowUnlockDialog] = useState(false);
   const [showExtendDialog, setShowExtendDialog] = useState(false);
@@ -61,6 +62,13 @@ export default function AdminDashboard() {
         headers: { Authorization: `Bearer ${token}` }
       });
       setBoards(response.data);
+      // Fetch observer statuses for all boards
+      try {
+        const obsRes = await axios.get(`${API}/kiosk/observers/all`);
+        const map = {};
+        (obsRes.data.observers || []).forEach(o => { map[o.board_id] = o; });
+        setObserverStatuses(map);
+      } catch { /* observer endpoint may not exist yet */ }
     } catch (error) {
       console.error('Failed to fetch boards:', error);
     } finally {
@@ -70,8 +78,7 @@ export default function AdminDashboard() {
 
   // ---- WebSocket for real-time updates ----
   const onWsEvent = useCallback((event, data) => {
-    // On any board status change -> refresh full list once
-    if (event === 'board_status' || event === 'session_extended') {
+    if (event === 'board_status' || event === 'session_extended' || event === 'credit_update') {
       fetchBoards();
     }
   }, [fetchBoards]);
@@ -243,6 +250,40 @@ export default function AdminDashboard() {
                     <span className="text-zinc-600">{t('location')}:</span> {board.location}
                   </p>
                 )}
+
+                {/* Observer Status */}
+                {(() => {
+                  const obs = observerStatuses[board.board_id];
+                  if (!obs || obs.state === 'closed') return null;
+                  const stateColors = {
+                    idle: 'text-amber-400',
+                    in_game: 'text-emerald-400',
+                    finished: 'text-blue-400',
+                    unknown: 'text-zinc-400',
+                    error: 'text-red-400',
+                  };
+                  return (
+                    <div className="bg-zinc-800/50 rounded-sm p-2 text-xs space-y-1" data-testid={`observer-status-${board.board_id}`}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-zinc-500">Observer</span>
+                        <span className={`uppercase font-medium ${stateColors[obs.state] || 'text-zinc-400'}`}>
+                          {obs.state}
+                        </span>
+                      </div>
+                      {obs.games_observed > 0 && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-zinc-500">Spiele beobachtet</span>
+                          <span className="text-zinc-300">{obs.games_observed}</span>
+                        </div>
+                      )}
+                      {obs.last_error && (
+                        <p className="text-red-400 truncate" title={obs.last_error}>
+                          {obs.last_error}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Action Buttons */}
                 <div className="flex gap-2">
