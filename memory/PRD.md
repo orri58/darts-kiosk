@@ -21,43 +21,43 @@ Production-ready, local-first Darts Kiosk + Admin Control system for a cafe runn
 - [x] Custom Kiosk Text Settings, Admin Sidebar Responsive
 
 ### v1.2.0 - Update System, Tests, QR
-- [x] GitHub-based Update System, Autodarts DOM Selector Tests (13 pytest)
+- [x] GitHub-based Update System, Autodarts DOM Selector Tests
 - [x] Optional QR on lock screen -> public leaderboard
 
 ### v1.3.0 - Credits Overlay
-- [x] Real-time credits overlay (WebSocket + polling)
-- [x] 3 modes: credit count, time remaining, "LETZTES SPIEL" warning
-- [x] Admin toggle + configurable upsell message and pricing hint
+- [x] Real-time credits overlay, "LETZTES SPIEL" warning, upsell message
 
-### v1.4.0 - Update System, Legacy Cleanup, mDNS (2026-03-09)
-- [x] Enhanced GitHub-based Update System (asset download, changelog, history, backup-before-update, rollback)
-- [x] Legacy Code Removal (autodarts_integration.py deleted, health_monitor refactored)
+### v1.4.0 - Update System, Legacy Cleanup, mDNS
+- [x] Enhanced GitHub-based Update System (download, changelog, history, backup-before-update)
+- [x] Legacy Code Removal (autodarts_integration.py, health_monitor refactored)
 - [x] mDNS Discovery Improvements (periodic cleanup, re-scan, stats)
 
-### v1.4.1 - Background Update Checker (2026-03-09)
-- [x] Background scheduler checks GitHub once every configurable interval (default 24h)
-- [x] Caches result to DB (Settings table, key `update_check_cache`)
-- [x] Dashboard notification banner: "Neue Version verfuegbar: vX.X.X"
-- [x] Banner buttons: [Release Notes ansehen] (toggles inline changelog), [Update starten] (navigates to System > Updates), [X] (dismiss)
-- [x] Dismiss persisted per-version (won't re-show for same version)
-- [x] Respects GitHub API rate limits, logs errors silently
-- [x] Configurable via .env: UPDATE_CHECK_ENABLED, UPDATE_CHECK_INTERVAL_HOURS
-- [x] NO automatic installation - updates remain manual
+### v1.4.1 - Background Update Checker
+- [x] Background scheduler checks GitHub once per 24h (configurable)
+- [x] Dashboard notification banner with Release Notes, Update starten buttons
+
+### v1.4.2 - Snooze/Dismiss Notification (2026-03-09)
+- [x] **[Spaeter erinnern]** button: snoozes banner for 48h per-version
+- [x] **[X] dismiss**: permanently hides banner for that specific version
+- [x] Both snooze and dismiss reset when a newer version appears
+- [x] `snooze_until` and `dismissed_version` persisted in DB (survives restart)
+- [x] Frontend logic: hides if (snoozed + not expired) OR (dismissed for this version)
 - [x] Release packages rebuilt
 
 ## Configuration (.env)
 ```
 UPDATE_CHECK_ENABLED=true
 UPDATE_CHECK_INTERVAL_HOURS=24
-GITHUB_REPO=owner/darts-kiosk   # Required for update checks
-GITHUB_TOKEN=ghp_...             # Optional, for private repos / higher rate limits
+GITHUB_REPO=owner/darts-kiosk
+GITHUB_TOKEN=ghp_...              # Optional
 ```
 
-## API Endpoints (New in v1.4.1)
-- `GET /api/updates/notification` - Get cached background check result (for dashboard banner)
-- `POST /api/updates/notification/dismiss?version=X.X.X` - Dismiss notification for a version
+## API Endpoints (Notification)
+- `GET /api/updates/notification` - Get cached result (returns snoozed_version, snooze_until, dismissed_version)
+- `POST /api/updates/notification/dismiss?version=X` - Permanent dismiss per-version
+- `POST /api/updates/notification/snooze?version=X&hours=48` - Snooze for N hours
 
 ## Remaining Backlog
 ### P2
-- [ ] Chromium extension for tighter Autodarts overlay integration
-- [ ] PWA Install Prompt for public leaderboard page
+- [ ] Chromium extension for Autodarts overlay
+- [ ] PWA Install Prompt for public leaderboard

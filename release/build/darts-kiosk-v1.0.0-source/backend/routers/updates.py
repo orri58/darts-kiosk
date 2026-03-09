@@ -132,6 +132,18 @@ async def dismiss_update_notification(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """Dismiss the update notification for a specific version."""
+    """Permanently dismiss the update notification for a specific version."""
     await update_service.dismiss_notification(db, version)
     return {"message": f"Benachrichtigung fuer v{version} ausgeblendet"}
+
+
+@router.post("/updates/notification/snooze")
+async def snooze_update_notification(
+    version: str = Query(...),
+    hours: int = Query(default=48),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Snooze the update notification for a number of hours (default 48)."""
+    await update_service.snooze_notification(db, version, hours)
+    return {"message": f"Erinnerung fuer v{version} in {hours}h", "snooze_hours": hours}

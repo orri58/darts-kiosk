@@ -502,7 +502,18 @@ class UpdateService:
         return None
 
     async def dismiss_notification(self, db_session, version: str):
-        """Mark a notification as dismissed for a specific version."""
+        """Mark a notification as permanently dismissed for a specific version."""
+        await self._update_notification_field(db_session, "dismissed_version", version)
+
+    async def snooze_notification(self, db_session, version: str, hours: int = 48):
+        """Snooze the notification for `hours`. Banner reappears after that."""
+        from datetime import timedelta
+        snooze_until = (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat()
+        await self._update_notification_field(db_session, "snoozed_version", version)
+        await self._update_notification_field(db_session, "snooze_until", snooze_until)
+
+    async def _update_notification_field(self, db_session, field: str, value):
+        """Helper: set a single field on the update_check_cache setting."""
         from sqlalchemy import select
         from sqlalchemy.orm.attributes import flag_modified
         from backend.models import Settings
@@ -512,11 +523,11 @@ class UpdateService:
         )
         setting = result.scalar_one_or_none()
         if setting and setting.value:
-            setting.value["dismissed_version"] = version
+            setting.value[field] = value
             flag_modified(setting, "value")
 
         if self._notification_cache:
-            self._notification_cache["dismissed_version"] = version
+            self._notification_cache[field] = value
 
 
 update_service = UpdateService()
