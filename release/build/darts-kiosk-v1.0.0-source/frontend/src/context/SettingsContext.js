@@ -68,8 +68,10 @@ export function SettingsProvider({ children }) {
       if (pwaRes.data) setPwaConfig(prev => ({ ...prev, ...pwaRes.data }));
       if (qrRes.data) setLockscreenQr(prev => ({ ...prev, ...qrRes.data }));
 
-      // Set document title from branding
-      document.title = brandingRes.data.cafe_name || 'Darts Kiosk';
+      // Set document title from branding (except on /kiosk pages which use fixed title for Win32)
+      if (!window.location.pathname.startsWith('/kiosk')) {
+        document.title = brandingRes.data.cafe_name || 'Darts Kiosk';
+      }
       // Update manifest theme color
       const metaTheme = document.querySelector('meta[name="theme-color"]');
       if (metaTheme && pwaRes.data?.theme_color) metaTheme.content = pwaRes.data.theme_color;

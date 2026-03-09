@@ -88,9 +88,12 @@ export default function KioskLayout() {
   }, [fetchBoardStatus]);
 
   // Stable window title for Win32 window manager identification
+  // Must run AFTER settings load to override branding title
   useEffect(() => {
-    document.title = 'DartsKiosk';
-  }, []);
+    if (!settingsLoading) {
+      document.title = 'DartsKiosk';
+    }
+  }, [settingsLoading]);
 
   // Fallback window management (non-kiosk-mode or non-Windows)
   // The real hiding is done by backend window_manager.py via Win32 API
