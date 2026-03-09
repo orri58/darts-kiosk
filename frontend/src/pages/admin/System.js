@@ -735,14 +735,16 @@ export default function AdminSystem() {
                                 >
                                   <Download className="w-3 h-3 mr-1" /> Server
                                 </Button>
-                                <a
-                                  href={dl.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-zinc-700 text-zinc-400 hover:text-amber-500 hover:border-amber-500/50"
-                                >
-                                  <ExternalLink className="w-3 h-3" /> Browser
-                                </a>
+                                {!dl.url.includes('api.github.com') && (
+                                  <a
+                                    href={dl.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-zinc-700 text-zinc-400 hover:text-amber-500 hover:border-amber-500/50"
+                                  >
+                                    <ExternalLink className="w-3 h-3" /> Browser
+                                  </a>
+                                )}
                               </div>
                             </div>
                           ))}

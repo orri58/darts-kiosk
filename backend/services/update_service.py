@@ -110,14 +110,33 @@ class UpdateService:
 
         try:
             url = f"{GITHUB_API}/repos/{GITHUB_REPO}/releases"
+            headers = self._github_headers()
+            has_token = bool(os.environ.get("GITHUB_TOKEN", ""))
+
+            logger.info(f"[UpdateCheck] Checking {GITHUB_REPO} (authenticated={has_token})")
+
             async with httpx.AsyncClient(timeout=self.CHECK_TIMEOUT) as client:
-                resp = await client.get(url, headers=self._github_headers(), params={"per_page": 15})
+                resp = await client.get(url, headers=headers, params={"per_page": 15})
 
             if resp.status_code == 404:
+                msg = f"Repository '{GITHUB_REPO}' nicht gefunden."
+                if not has_token:
+                    msg += " Falls private: GITHUB_TOKEN in .env setzen."
+                logger.warning(f"[UpdateCheck] 404: {msg}")
                 return {
                     "configured": True,
                     "current_version": CURRENT_VERSION,
-                    "message": f"Repository '{GITHUB_REPO}' nicht gefunden.",
+                    "message": msg,
+                    "releases": [],
+                    "last_check": datetime.now(timezone.utc).isoformat(),
+                }
+
+            if resp.status_code == 401:
+                logger.warning("[UpdateCheck] 401: Token ungueltig oder abgelaufen")
+                return {
+                    "configured": True,
+                    "current_version": CURRENT_VERSION,
+                    "message": "GitHub-Token ungueltig oder abgelaufen. Bitte GITHUB_TOKEN in .env pruefen.",
                     "releases": [],
                     "last_check": datetime.now(timezone.utc).isoformat(),
                 }
@@ -138,6 +157,19 @@ class UpdateService:
             for r in data:
                 tag = r.get("tag_name", "")
                 version = tag.lstrip("v")
+
+                # Build asset list with BOTH browser URL and API URL
+                release_assets = []
+                for a in r.get("assets", []):
+                    release_assets.append({
+                        "name": a["name"],
+                        "size": a["size"],
+                        "download_url": a["browser_download_url"],
+                        "api_url": a.get("url", ""),  # API endpoint for authenticated download
+                        "asset_id": a.get("id", 0),
+                        "content_type": a.get("content_type", ""),
+                    })
+
                 rel = GitHubRelease(
                     version=version,
                     tag=tag,
@@ -146,24 +178,27 @@ class UpdateService:
                     published_at=r.get("published_at", ""),
                     is_prerelease=r.get("prerelease", False),
                     html_url=r.get("html_url", ""),
-                    assets=[
-                        {
-                            "name": a["name"],
-                            "size": a["size"],
-                            "download_url": a["browser_download_url"],
-                            "content_type": a.get("content_type", ""),
-                        }
-                        for a in r.get("assets", [])
-                    ],
+                    assets=release_assets,
                     is_current=(version == CURRENT_VERSION or tag == f"v{CURRENT_VERSION}"),
                     is_newer=self._is_newer(version),
                 )
                 releases.append(rel)
 
+                logger.info(
+                    f"[UpdateCheck] Release {tag}: "
+                    f"assets={[a['name'] for a in release_assets]}, "
+                    f"is_newer={rel.is_newer}, is_current={rel.is_current}"
+                )
+
             self._cached_releases = releases
             self._last_check = datetime.now(timezone.utc).isoformat()
 
             newest = next((r for r in releases if r.is_newer and not r.is_prerelease), None)
+
+            if newest:
+                logger.info(f"[UpdateCheck] Update verfuegbar: v{newest.version} (aktuell: v{CURRENT_VERSION})")
+            else:
+                logger.info(f"[UpdateCheck] Kein Update verfuegbar (aktuell: v{CURRENT_VERSION})")
 
             return {
                 "configured": True,
@@ -234,7 +269,15 @@ class UpdateService:
         return assets[0] if assets else None
 
     async def download_asset(self, asset_url: str, asset_name: str, download_id: str) -> Dict:
-        """Download a release asset with progress tracking."""
+        """
+        Download a release asset with progress tracking.
+
+        For PRIVATE repos: Uses the GitHub API URL with Accept: application/octet-stream.
+        The browser_download_url returns 404 for private repos even with a token,
+        because it requires browser cookie authentication, not API token auth.
+
+        For PUBLIC repos: Uses browser_download_url directly (works without token).
+        """
         self._download_progress[download_id] = {
             "status": "downloading",
             "asset_name": asset_name,
@@ -245,10 +288,28 @@ class UpdateService:
         }
 
         download_path = DOWNLOADS_DIR / asset_name
+        has_token = bool(os.environ.get("GITHUB_TOKEN", ""))
+
+        # Determine the correct download URL and headers
+        # For private repos: use the API URL with octet-stream accept header
+        # For public repos: browser_download_url works fine
+        actual_url, download_headers = self._resolve_download_url(asset_url, asset_name, has_token)
+
+        logger.info(f"[Download] Starting: {asset_name}")
+        logger.info(f"[Download]   original_url: {asset_url}")
+        logger.info(f"[Download]   resolved_url: {actual_url}")
+        logger.info(f"[Download]   authenticated: {has_token}")
+        logger.info(f"[Download]   target: {download_path}")
 
         try:
             async with httpx.AsyncClient(timeout=self.DOWNLOAD_TIMEOUT, follow_redirects=True) as client:
-                async with client.stream("GET", asset_url, headers=self._github_headers()) as resp:
+                async with client.stream("GET", actual_url, headers=download_headers) as resp:
+                    if resp.status_code == 404:
+                        raise httpx.HTTPStatusError(
+                            f"404 Not Found — Asset nicht erreichbar. "
+                            f"{'Pruefe GITHUB_TOKEN fuer private Repos.' if not has_token else 'Token hat keinen Zugriff auf dieses Asset.'}",
+                            request=resp.request, response=resp,
+                        )
                     resp.raise_for_status()
                     total = int(resp.headers.get("content-length", 0))
                     self._download_progress[download_id]["total_bytes"] = total
@@ -271,7 +332,7 @@ class UpdateService:
                 "file_path": str(download_path),
             })
 
-            logger.info(f"Download complete: {asset_name} ({downloaded} bytes)")
+            logger.info(f"[Download] Complete: {asset_name} ({downloaded} bytes)")
             return self._download_progress[download_id]
 
         except Exception as e:
@@ -279,8 +340,49 @@ class UpdateService:
                 "status": "failed",
                 "error": str(e),
             })
-            logger.error(f"Download failed for {asset_name}: {e}")
+            logger.error(f"[Download] Failed for {asset_name}: {e}")
+            # Clean up partial download
+            if download_path.exists():
+                download_path.unlink()
             return self._download_progress[download_id]
+
+    def _resolve_download_url(self, asset_url: str, asset_name: str, has_token: bool) -> tuple:
+        """
+        Resolve the correct download URL for a GitHub release asset.
+
+        Private repos: browser_download_url returns 404 with token auth.
+        Must use the API endpoint with Accept: application/octet-stream instead.
+
+        Returns: (url, headers)
+        """
+        headers = self._github_headers()
+
+        if has_token:
+            # Try to find the API URL from cached releases
+            api_url = self._find_api_url_for_asset(asset_name)
+            if api_url:
+                # Use API URL with octet-stream header for binary download
+                headers["Accept"] = "application/octet-stream"
+                logger.info(f"[Download] Using API URL for authenticated download: {api_url}")
+                return api_url, headers
+
+            # Fallback: construct API URL from browser URL
+            # browser_download_url: https://github.com/{owner}/{repo}/releases/download/{tag}/{filename}
+            # We need: https://api.github.com/repos/{owner}/{repo}/releases/assets/{asset_id}
+            # But without the asset_id, try the browser URL with token (works for some cases)
+            logger.info(f"[Download] No API URL cached, using browser URL with auth: {asset_url}")
+            return asset_url, headers
+
+        # Public repo: browser URL works without auth
+        return asset_url, headers
+
+    def _find_api_url_for_asset(self, asset_name: str) -> Optional[str]:
+        """Find the API URL for an asset from the cached releases."""
+        for release in self._cached_releases:
+            for asset in release.assets:
+                if asset.get("name") == asset_name and asset.get("api_url"):
+                    return asset["api_url"]
+        return None
 
     def get_download_progress(self, download_id: str) -> Optional[Dict]:
         return self._download_progress.get(download_id)
@@ -322,6 +424,8 @@ class UpdateService:
         # Auto-detect platform asset
         recommended_asset = None
         download_links = []
+        has_token = bool(os.environ.get("GITHUB_TOKEN", ""))
+
         if release and release.assets:
             recommended_asset = self._detect_platform_asset(release.assets)
             for asset in release.assets:
@@ -332,12 +436,26 @@ class UpdateService:
                     label = f"Linux: {asset['name']}"
                 elif "source" in label.lower():
                     label = f"Source: {asset['name']}"
+
+                # For private repos: prefer api_url over browser_download_url
+                # browser_download_url returns 404 for private repo assets
+                effective_url = asset.get("download_url", "")
+                if has_token and asset.get("api_url"):
+                    effective_url = asset["api_url"]
+
                 download_links.append({
                     "label": label,
                     "name": asset["name"],
-                    "url": asset["download_url"],
+                    "url": effective_url,
                     "size": asset["size"],
                 })
+
+        # Same logic for recommended_asset
+        rec_url = ""
+        if recommended_asset:
+            rec_url = recommended_asset.get("download_url", "")
+            if has_token and recommended_asset.get("api_url"):
+                rec_url = recommended_asset["api_url"]
 
         return {
             "backup_created": backup_info is not None,
@@ -347,7 +465,7 @@ class UpdateService:
             "release_url": release.html_url if release else f"https://github.com/{GITHUB_REPO}/releases",
             "recommended_asset": {
                 "name": recommended_asset["name"],
-                "url": recommended_asset["download_url"],
+                "url": rec_url,
                 "size": recommended_asset["size"],
             } if recommended_asset else None,
             "download_links": download_links,
