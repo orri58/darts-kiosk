@@ -1,60 +1,33 @@
 """
-Autodarts Observer Service — MVP Observer Mode
-Opens the installed Chrome browser with a persistent profile and observes game state.
-Does NOT automate game setup or player entry.
+Autodarts Observer Service — Event-Driven Match Detection
+==========================================================
 
-MVP SCOPE:
-  Observer only tracks browser sessions launched by THIS system.
-  Manually opened external browser windows are NOT detected.
-  Each board gets its own isolated observer/browser instance.
+PRIMARY detection: WebSocket/console event capture (injected JS intercepts
+Autodarts' own real-time messages and console output).
 
-CHROME PROFILE:
-  Uses launch_persistent_context with channel="chrome" to reuse
-  the installed Chrome and its user profile. This preserves:
-    - Google login sessions
-    - Cookies and storage
-    - Browser extensions
-  Profile directory: data/chrome_profile/{board_id}/
-  Profile is NEVER recreated — operator logs in once and it persists.
+FALLBACK detection: DOM/UI polling (button text, CSS classes).
 
-AUTOMATION DETECTION:
-  ignore_default_args=["--enable-automation"] prevents the
-  "Chrome is being controlled by automated test software" banner.
-  Additional flags disable automation fingerprinting.
-
-WINDOW MANAGEMENT:
-  On Windows, after launching Chrome, the kiosk window is hidden via
-  Win32 API (SW_HIDE). On close, the kiosk window is restored to
-  fullscreen via SW_SHOW + SW_SHOWMAXIMIZED + SetForegroundWindow.
-
-States: closed, idle, in_game, round_transition, finished, unknown, error
+Key signals captured from Autodarts:
+  - WebSocket messages on autodarts.matches channels (state, game-events)
+  - Console output: "Winner Animation", "gameshot", "matchshot"
+  - Match state transitions: active -> finished
 
 Credit logic:
   Credits are decremented on game START (idle -> in_game), not on finish.
-  State guard prevents double-decrement.
 
 Session-end logic:
   Triggered ONLY by confirmed exit from in_game:
-    - in_game -> finished  (strong match-end markers: Rematch/Share buttons)
-    - in_game -> idle      (game aborted / returned to lobby)
-  ROUND_TRANSITION is NOT an exit signal — it indicates a normal turn/round
-  change and resets the exit debounce counter.
-  On confirmed exit: check credits. If exhausted → lock board, close browser, restore kiosk.
-
-State detection priority:
-  1. Strong match-end markers (Rematch/Share/NewGame button TEXT) → FINISHED
-     ALWAYS wins, even if in_game markers are still present in DOM.
-     (Autodarts keeps scoreboard elements visible on the results screen.)
-  2. in_game markers WITHOUT strong end markers → IN_GAME
-  3. Generic result CSS classes only → ROUND_TRANSITION
-  4. Nothing → IDLE
+    - Event-driven: WebSocket match_state="finished" + matchshot event
+    - DOM fallback: strong match-end markers (Rematch/Share buttons)
+    - Abort: return to lobby (idle)
+  On confirmed exit: check credits. If exhausted -> lock board, close browser, restore kiosk.
 """
 import asyncio
 import os
 import sys
 import logging
 from typing import Optional, Dict, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -65,13 +38,212 @@ AUTODARTS_URL = os.environ.get('AUTODARTS_URL', 'https://play.autodarts.io')
 OBSERVER_POLL_INTERVAL = int(os.environ.get('OBSERVER_POLL_INTERVAL', '4'))
 
 # Debounce: exiting in_game requires N consecutive non-in_game polls
-# This prevents false exits from turn changes / brief UI transitions
 DEBOUNCE_EXIT_POLLS = int(os.environ.get('OBSERVER_DEBOUNCE_POLLS', '3'))
 DEBOUNCE_POLL_INTERVAL = int(os.environ.get('OBSERVER_DEBOUNCE_INTERVAL', '2'))
 
-# Persistent Chrome profile directory — preserves Google login across sessions
+# Persistent Chrome profile directory
 _default_profile = str(Path(os.environ.get('DATA_DIR', './data')) / 'chrome_profile')
 CHROME_PROFILE_DIR = os.environ.get('CHROME_PROFILE_DIR', _default_profile)
+
+# ── JavaScript injected into the Autodarts page ──
+# Intercepts WebSocket messages and console.log output to capture
+# match state changes, game events, and winner signals.
+WS_INTERCEPT_SCRIPT = """
+(() => {
+    if (window.__dartsKioskCapture) return; // Already injected
+
+    window.__dartsKioskCapture = {
+        matchState: null,          // Latest match state string
+        matchFinished: false,      // Definitive match-end detected
+        matchStarted: false,       // Match currently active
+        winnerDetected: false,     // Winner animation / matchshot
+        lastGameEvent: null,       // Last game event type
+        lastMatchId: null,         // Last seen match ID
+        events: [],                // Ring buffer of last 50 events
+        wsMessageCount: 0,         // Total WS messages captured
+        consoleCaptures: 0,        // Total console captures
+        lastUpdate: null,          // ISO timestamp of last event
+
+        _pushEvent: function(type, data) {
+            var entry = {
+                type: type,
+                data: data,
+                ts: new Date().toISOString()
+            };
+            this.events.push(entry);
+            if (this.events.length > 50) this.events.shift();
+            this.lastUpdate = entry.ts;
+        },
+
+        reset: function() {
+            this.matchState = null;
+            this.matchFinished = false;
+            this.matchStarted = false;
+            this.winnerDetected = false;
+            this.lastGameEvent = null;
+            this.events = [];
+        }
+    };
+
+    // ── 1. WebSocket message interception ──
+    var OrigWebSocket = window.WebSocket;
+    var origSend = OrigWebSocket.prototype.send;
+
+    // Patch each new WebSocket instance
+    var origAddEventListener = OrigWebSocket.prototype.addEventListener;
+    var patchWs = function(ws) {
+        if (ws.__dartsPatched) return;
+        ws.__dartsPatched = true;
+
+        var origOnMessage = null;
+        var descriptor = Object.getOwnPropertyDescriptor(ws, 'onmessage') ||
+                         Object.getOwnPropertyDescriptor(OrigWebSocket.prototype, 'onmessage');
+
+        ws.addEventListener('message', function(evt) {
+            try {
+                var raw = typeof evt.data === 'string' ? evt.data : '';
+                if (!raw) return;
+
+                window.__dartsKioskCapture.wsMessageCount++;
+
+                // Autodarts uses patterns like:
+                //   autodarts.matches.{id}.state
+                //   autodarts.matches.{id}.game-events
+                var isMatchMsg = raw.indexOf('autodarts.matches') !== -1 ||
+                                 raw.indexOf('match') !== -1;
+                if (!isMatchMsg) return;
+
+                // Try to extract JSON payload
+                var payload = null;
+                try {
+                    // Messages may be JSON or JSON inside a wrapper
+                    payload = JSON.parse(raw);
+                } catch(e) {
+                    // Try extracting JSON from mixed format (e.g. "42[event,{...}]")
+                    var jsonStart = raw.indexOf('{');
+                    var jsonEnd = raw.lastIndexOf('}');
+                    if (jsonStart !== -1 && jsonEnd > jsonStart) {
+                        try {
+                            payload = JSON.parse(raw.substring(jsonStart, jsonEnd + 1));
+                        } catch(e2) {}
+                    }
+                }
+
+                // ── Match state messages ──
+                if (raw.indexOf('.state') !== -1 || raw.indexOf('state') !== -1) {
+                    var state = null;
+                    if (payload) {
+                        state = payload.state || payload.matchState ||
+                                (payload.data && payload.data.state) ||
+                                (payload.match && payload.match.state);
+                    }
+                    if (state) {
+                        window.__dartsKioskCapture.matchState = state;
+                        window.__dartsKioskCapture._pushEvent('ws_match_state', { state: state, raw_length: raw.length });
+
+                        if (state === 'finished' || state === 'completed' || state === 'ended') {
+                            window.__dartsKioskCapture.matchFinished = true;
+                        }
+                        if (state === 'active' || state === 'running' || state === 'started') {
+                            window.__dartsKioskCapture.matchStarted = true;
+                            window.__dartsKioskCapture.matchFinished = false;
+                            window.__dartsKioskCapture.winnerDetected = false;
+                        }
+                    }
+                }
+
+                // ── Game event messages ──
+                if (raw.indexOf('game-event') !== -1 || raw.indexOf('gameEvent') !== -1 ||
+                    raw.indexOf('matchshot') !== -1 || raw.indexOf('gameshot') !== -1) {
+                    var eventType = null;
+                    if (payload) {
+                        eventType = payload.type || payload.event || payload.eventType ||
+                                    (payload.data && (payload.data.type || payload.data.event));
+                    }
+                    // Also check raw string for key signals
+                    if (!eventType) {
+                        if (raw.indexOf('matchshot') !== -1) eventType = 'matchshot';
+                        else if (raw.indexOf('gameshot') !== -1) eventType = 'gameshot';
+                    }
+                    if (eventType) {
+                        window.__dartsKioskCapture.lastGameEvent = eventType;
+                        window.__dartsKioskCapture._pushEvent('ws_game_event', { event: eventType });
+
+                        var lower = eventType.toLowerCase();
+                        if (lower === 'matchshot' || lower === 'match_won' || lower === 'match_finished') {
+                            window.__dartsKioskCapture.matchFinished = true;
+                            window.__dartsKioskCapture.winnerDetected = true;
+                        }
+                    }
+                }
+
+                // ── Match ID tracking ──
+                if (payload) {
+                    var matchId = payload.matchId || payload.match_id ||
+                                  (payload.data && (payload.data.matchId || payload.data.match_id)) ||
+                                  (payload.match && payload.match.id);
+                    if (matchId) {
+                        window.__dartsKioskCapture.lastMatchId = matchId;
+                    }
+                }
+
+            } catch(err) {
+                // Silent - don't break Autodarts
+            }
+        });
+    };
+
+    // Patch existing WebSocket instances and new ones
+    var OrigWsConstruct = window.WebSocket;
+    window.WebSocket = function(url, protocols) {
+        var ws = protocols ? new OrigWsConstruct(url, protocols) : new OrigWsConstruct(url);
+        setTimeout(function() { patchWs(ws); }, 0);
+        return ws;
+    };
+    window.WebSocket.prototype = OrigWsConstruct.prototype;
+    window.WebSocket.CONNECTING = OrigWsConstruct.CONNECTING;
+    window.WebSocket.OPEN = OrigWsConstruct.OPEN;
+    window.WebSocket.CLOSING = OrigWsConstruct.CLOSING;
+    window.WebSocket.CLOSED = OrigWsConstruct.CLOSED;
+
+    // ── 2. Console.log interception ──
+    // Autodarts logs "Winner Animation - Initializing", "gameshot", "matchshot"
+    var origLog = console.log;
+    console.log = function() {
+        origLog.apply(console, arguments);
+        try {
+            var msg = Array.prototype.join.call(arguments, ' ');
+            var cap = window.__dartsKioskCapture;
+
+            if (/winner.?animation/i.test(msg)) {
+                cap.winnerDetected = true;
+                cap.matchFinished = true;
+                cap._pushEvent('console_winner_animation', { msg: msg.substring(0, 200) });
+                cap.consoleCaptures++;
+            }
+            else if (/matchshot/i.test(msg)) {
+                cap.matchFinished = true;
+                cap.winnerDetected = true;
+                cap.lastGameEvent = 'matchshot';
+                cap._pushEvent('console_matchshot', { msg: msg.substring(0, 200) });
+                cap.consoleCaptures++;
+            }
+            else if (/gameshot/i.test(msg)) {
+                cap.lastGameEvent = 'gameshot';
+                cap._pushEvent('console_gameshot', { msg: msg.substring(0, 200) });
+                cap.consoleCaptures++;
+            }
+            else if (/match.*finish|match.*end|match.*complet/i.test(msg)) {
+                cap.matchFinished = true;
+                cap._pushEvent('console_match_end', { msg: msg.substring(0, 200) });
+                cap.consoleCaptures++;
+            }
+        } catch(e) {}
+    };
+
+    console.log('[DartsKiosk] WebSocket + console capture injected');
+})();
+"""
 
 
 class ObserverState(str, Enum):
@@ -112,9 +284,9 @@ class ObserverStatus:
 
 class AutodartsObserver:
     """
-    Per-board observer. Opens the installed Chrome to the Autodarts URL
-    using a persistent profile (login survives restarts), then polls
-    the DOM periodically to detect game start/end.
+    Per-board observer. Opens Chrome to Autodarts using a persistent profile,
+    injects WebSocket/console interceptors, and detects match state primarily
+    from captured events with DOM polling as fallback.
     """
 
     def __init__(self, board_id: str):
@@ -134,11 +306,14 @@ class AutodartsObserver:
         self._on_game_ended: Optional[Callable] = None
 
         # Debounce tracking for exiting in_game
-        self._exit_polls: int = 0          # Consecutive non-in_game polls
-        self._exit_saw_finished: bool = False  # Any exit poll returned FINISHED?
+        self._exit_polls: int = 0
+        self._exit_saw_finished: bool = False
 
         # Per-game tracking
         self._credit_consumed = False
+
+        # Event-driven tracking
+        self._ws_interceptor_injected = False
 
     @property
     def is_open(self) -> bool:
@@ -163,11 +338,12 @@ class AutodartsObserver:
         self._exit_polls = 0
         self._exit_saw_finished = False
         self._credit_consumed = False
+        self._ws_interceptor_injected = False
 
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
 
-        # Persistent Chrome profile per board — NEVER recreated
+        # Persistent Chrome profile per board
         profile_dir = os.path.join(CHROME_PROFILE_DIR, self.board_id)
         profile_dir_abs = os.path.abspath(profile_dir)
         profile_default = os.path.join(profile_dir, 'Default')
@@ -179,35 +355,13 @@ class AutodartsObserver:
         logger.info(f"[Observer:{self.board_id}]   URL: {url}")
         logger.info(f"[Observer:{self.board_id}]   headless: {headless}")
         logger.info(f"[Observer:{self.board_id}]   platform: {sys.platform}")
-        logger.info(f"[Observer:{self.board_id}]   event_loop: {type(asyncio.get_event_loop_policy()).__name__}")
-        logger.info(f"[Observer:{self.board_id}]   Using kiosk Chrome profile: {profile_dir_abs}")
-        logger.info(f"[Observer:{self.board_id}]   profile_directory_exists: {os.path.isdir(profile_dir)}")
-        logger.info(f"[Observer:{self.board_id}]   profile_has_data (Default/): {profile_exists}")
-        if profile_exists:
-            # Log evidence of existing profile content
-            try:
-                default_contents = os.listdir(profile_default)
-                has_cookies = 'Cookies' in default_contents
-                has_extensions = os.path.isdir(os.path.join(profile_default, 'Extensions'))
-                ext_count = len(os.listdir(os.path.join(profile_default, 'Extensions'))) if has_extensions else 0
-                logger.info(f"[Observer:{self.board_id}]   profile_status: REUSING EXISTING PROFILE")
-                logger.info(f"[Observer:{self.board_id}]     cookies_present: {has_cookies}")
-                logger.info(f"[Observer:{self.board_id}]     extensions_dir: {has_extensions} ({ext_count} entries)")
-                logger.info(f"[Observer:{self.board_id}]     → Google login + extensions will be preserved")
-            except Exception:
-                logger.info(f"[Observer:{self.board_id}]   profile_status: REUSING (could not inspect contents)")
-        else:
-            logger.info(f"[Observer:{self.board_id}]   profile_status: NEW PROFILE (first launch)")
-            logger.info(f"[Observer:{self.board_id}]     → Run setup_profile.bat first to log in and install extensions")
+        logger.info(f"[Observer:{self.board_id}]   profile: {profile_dir_abs} (exists={profile_exists})")
 
         try:
-            logger.info(f"[Observer:{self.board_id}]   Step 1/5: Importing playwright...")
             from playwright.async_api import async_playwright
 
-            logger.info(f"[Observer:{self.board_id}]   Step 2/5: Starting playwright runtime...")
             self._playwright = await async_playwright().start()
 
-            # Chrome launch args — clean, preserve extensions, no automation fingerprint
             chrome_args = [
                 '--disable-blink-features=AutomationControlled',
                 '--disable-dev-shm-usage',
@@ -217,25 +371,15 @@ class AutodartsObserver:
                 '--autoplay-policy=no-user-gesture-required',
             ]
             if not headless:
-                chrome_args.extend([
-                    '--start-fullscreen',
-                    '--kiosk',
-                ])
+                chrome_args.extend(['--start-fullscreen', '--kiosk'])
 
-            # Playwright default args to EXCLUDE so extensions + login work:
-            #   --enable-automation          → causes "controlled by automation" banner
-            #   --disable-extensions         → prevents operator-installed extensions
-            #   --disable-component-extensions-with-background-pages → breaks some extensions
             ignore_args = [
                 "--enable-automation",
                 "--disable-extensions",
                 "--disable-component-extensions-with-background-pages",
             ]
 
-            logger.info(f"[Observer:{self.board_id}]   Step 3/5: Launching Chrome (persistent context, channel=chrome)...")
-            logger.info(f"[Observer:{self.board_id}]   ignore_default_args: {ignore_args}")
-            logger.info(f"[Observer:{self.board_id}]   custom args: {chrome_args}")
-
+            logger.info(f"[Observer:{self.board_id}]   Launching Chrome (persistent context, channel=chrome)...")
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=profile_dir,
                 channel="chrome",
@@ -247,45 +391,51 @@ class AutodartsObserver:
                 ignore_https_errors=True,
                 accept_downloads=False,
             )
-            logger.info(f"[Observer:{self.board_id}]   Step 3/5: Chrome launched OK (no automation banner)")
+            logger.info(f"[Observer:{self.board_id}]   Chrome launched OK")
 
-            # Use existing page or create new one
             if self._context.pages:
                 self._page = self._context.pages[0]
             else:
                 self._page = await self._context.new_page()
 
-            logger.info(f"[Observer:{self.board_id}]   Step 4/5: Navigating to {url}...")
+            logger.info(f"[Observer:{self.board_id}]   Navigating to {url}...")
             await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
+
+            # Inject WebSocket/console interceptor BEFORE any match events
+            await self._inject_ws_interceptor()
 
             self.status.browser_open = True
             self._set_state(ObserverState.IDLE)
             self._stable_state = ObserverState.IDLE
-            logger.info(f"[Observer:{self.board_id}]   Step 5/5: Window management...")
 
-            # OS-level window management: hide kiosk, Autodarts takes foreground
+            # OS-level window management
             try:
                 from backend.services.window_manager import hide_kiosk_window
-                await asyncio.sleep(1.5)  # Let Chrome window fully render
+                await asyncio.sleep(1.5)
                 await hide_kiosk_window()
-                logger.info(f"[Observer:{self.board_id}]   Kiosk window hidden (Autodarts visible)")
+                logger.info(f"[Observer:{self.board_id}]   Kiosk window hidden")
             except Exception as wm_err:
                 logger.warning(f"[Observer:{self.board_id}]   Window management skipped: {wm_err}")
 
             logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH SUCCESS ===")
-            logger.info(f"[Observer:{self.board_id}]   Autodarts fullscreen, kiosk hidden")
-            logger.info(f"[Observer:{self.board_id}]   Profile: {profile_dir}")
-
             self._observe_task = asyncio.create_task(self._observe_loop())
 
         except Exception as e:
-            logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH FAILED ===")
-            logger.error(f"[Observer:{self.board_id}]   Error type: {type(e).__name__}")
-            logger.error(f"[Observer:{self.board_id}]   Error: {e}", exc_info=True)
-            error_msg = str(e).split('\n')[0][:200]
-            self.status.last_error = f"{type(e).__name__}: {error_msg}"
+            logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH FAILED === {e}", exc_info=True)
+            self.status.last_error = f"{type(e).__name__}: {str(e)[:200]}"
             self._set_state(ObserverState.ERROR)
             await self._cleanup()
+
+    async def _inject_ws_interceptor(self):
+        """Inject the WebSocket/console capture script into the Autodarts page."""
+        if self._ws_interceptor_injected or not self._page:
+            return
+        try:
+            await self._page.evaluate(WS_INTERCEPT_SCRIPT)
+            self._ws_interceptor_injected = True
+            logger.info(f"[Observer:{self.board_id}] WebSocket/console interceptor injected")
+        except Exception as e:
+            logger.warning(f"[Observer:{self.board_id}] Interceptor injection failed: {e}")
 
     async def close_session(self):
         """Close Chrome and stop observing. Restore kiosk window."""
@@ -299,20 +449,17 @@ class AutodartsObserver:
                 await self._observe_task
             except asyncio.CancelledError:
                 pass
-            logger.info(f"[Observer:{self.board_id}]   observe_task cancelled")
 
-        logger.info(f"[Observer:{self.board_id}]   cleaning up browser context...")
         await self._cleanup()
         self._set_state(ObserverState.CLOSED)
-        logger.info(f"[Observer:{self.board_id}]   browser context closed, state=CLOSED")
 
-        # Restore kiosk window to fullscreen foreground
+        # Restore kiosk window
         try:
             from backend.services.window_manager import restore_kiosk_window
             logger.info(f"[Observer:{self.board_id}]   restoring kiosk window...")
-            await asyncio.sleep(0.5)  # Brief pause after Chrome closes
+            await asyncio.sleep(0.5)
             await restore_kiosk_window()
-            logger.info(f"[Observer:{self.board_id}]   kiosk window restored to foreground OK")
+            logger.info(f"[Observer:{self.board_id}]   kiosk window restored OK")
         except Exception as wm_err:
             logger.warning(f"[Observer:{self.board_id}]   kiosk window restore FAILED: {wm_err}")
 
@@ -334,151 +481,122 @@ class AutodartsObserver:
         self._context = None
         self._playwright = None
         self.status.browser_open = False
+        self._ws_interceptor_injected = False
+
+    # ═══════════════════════════════════════════════════════════════
+    # OBSERVE LOOP
+    # ═══════════════════════════════════════════════════════════════
 
     async def _observe_loop(self):
         """
-        Poll the Autodarts page for game state changes.
+        Main observation loop. Each cycle:
+          1. Read captured WebSocket/console events (primary source)
+          2. Fall back to DOM detection if no event data
+          3. Apply debounce logic for state transitions
 
-        STATE MAPPING HIERARCHY (from _detect_state):
-          IN_GAME          — active match markers (scoreboard, dart-input, etc.)
-          FINISHED         — strong end-of-match markers (Rematch/Share/NewGame buttons)
-          ROUND_TRANSITION — generic result/winner CSS classes only (turn/round change)
-          IDLE             — no game markers (lobby/setup)
-
-        DEBOUNCE LOGIC for exiting IN_GAME:
-          ROUND_TRANSITION → does NOT count as exit. Normal turn change.
-          FINISHED         → counts as exit poll (saw_finished=True).
-          IDLE             → counts as exit poll (abort scenario).
-          IN_GAME          → resets exit counter (still playing).
-
-          Only DEBOUNCE_EXIT_POLLS consecutive FINISHED/IDLE polls confirm an exit.
-          ROUND_TRANSITION polls reset the counter because they indicate the
-          match is still active (just between turns).
-
-        Credit logic: credits consumed on first IN_GAME detection (immediate).
+        Priority: WS events > DOM signals > fallback
         """
-        logger.info(f"[Observer:{self.board_id}] Observe loop started")
-        logger.info(f"[Observer:{self.board_id}]   normal_poll: {OBSERVER_POLL_INTERVAL}s")
-        logger.info(f"[Observer:{self.board_id}]   debounce_exit_polls: {DEBOUNCE_EXIT_POLLS}")
-        logger.info(f"[Observer:{self.board_id}]   debounce_poll: {DEBOUNCE_POLL_INTERVAL}s")
+        logger.info(f"[Observer:{self.board_id}] Observe loop started (event-driven + DOM fallback)")
+        logger.info(f"[Observer:{self.board_id}]   poll_interval={OBSERVER_POLL_INTERVAL}s, "
+                     f"debounce_polls={DEBOUNCE_EXIT_POLLS}, debounce_interval={DEBOUNCE_POLL_INTERVAL}s")
 
         while not self._stopping:
             try:
-                # Use faster polling during debounce confirmation
                 interval = DEBOUNCE_POLL_INTERVAL if self._exit_polls > 0 else OBSERVER_POLL_INTERVAL
                 await asyncio.sleep(interval)
                 if not self._page or self._stopping:
                     break
 
-                raw = await self._detect_state()
+                # Re-inject interceptor if page navigated
+                if not self._ws_interceptor_injected:
+                    await self._inject_ws_interceptor()
+
+                # ── PRIMARY: Read captured events ──
+                event_state = await self._read_captured_events()
+
+                # ── FALLBACK: DOM detection ──
+                dom_state = await self._detect_state_dom()
+
+                # ── MERGE: Events take priority ──
+                raw = self._merge_detection(event_state, dom_state)
+
                 now = datetime.now(timezone.utc).isoformat()
                 self.status.last_poll = now
-
                 stable = self._stable_state
 
-                # ═══════════════════════════════════════════════
-                # CASE A: Stable state is IN_GAME (match active)
-                # ═══════════════════════════════════════════════
+                # ═══════════════════════════════════════════
+                # CASE A: Currently IN_GAME
+                # ═══════════════════════════════════════════
                 if stable == ObserverState.IN_GAME:
                     if raw == ObserverState.IN_GAME:
-                        # Still in game — clear any pending exit
                         if self._exit_polls > 0:
-                            logger.info(
-                                f"[Observer:{self.board_id}] debounce: RECOVERED to IN_GAME "
-                                f"after {self._exit_polls} exit polls (turn change / UI flicker)"
-                            )
+                            logger.info(f"[Observer:{self.board_id}] debounce: RECOVERED to IN_GAME "
+                                        f"after {self._exit_polls} exit polls")
                             self._exit_polls = 0
                             self._exit_saw_finished = False
                         continue
 
                     if raw == ObserverState.ROUND_TRANSITION:
-                        # Normal turn/round change — NOT an exit signal.
-                        # Reset exit counter: the match is clearly still active.
                         if self._exit_polls > 0:
-                            logger.info(
-                                f"[Observer:{self.board_id}] debounce: RESET by ROUND_TRANSITION "
-                                f"(was at {self._exit_polls}/{DEBOUNCE_EXIT_POLLS} exit polls) — "
-                                f"turn change detected, match still active"
-                            )
+                            logger.info(f"[Observer:{self.board_id}] debounce: RESET by ROUND_TRANSITION "
+                                        f"({self._exit_polls}/{DEBOUNCE_EXIT_POLLS}) — turn change")
                             self._exit_polls = 0
                             self._exit_saw_finished = False
-                        else:
-                            logger.info(
-                                f"[Observer:{self.board_id}] ROUND_TRANSITION detected — "
-                                f"normal turn/round change, session continues"
-                            )
                         continue
 
-                    # ─── IDLE or FINISHED: real exit candidate ─────
+                    # ─── IDLE or FINISHED: exit candidate ─────
                     self._exit_polls += 1
                     if raw == ObserverState.FINISHED:
                         self._exit_saw_finished = True
 
-                    logger.info(
-                        f"[Observer:{self.board_id}] debounce: exit poll "
-                        f"{self._exit_polls}/{DEBOUNCE_EXIT_POLLS} "
-                        f"(raw={raw.value}, saw_finished={self._exit_saw_finished})"
-                    )
+                    logger.info(f"[Observer:{self.board_id}] debounce: exit poll "
+                                f"{self._exit_polls}/{DEBOUNCE_EXIT_POLLS} "
+                                f"(raw={raw.value}, saw_finished={self._exit_saw_finished})")
 
                     if self._exit_polls < DEBOUNCE_EXIT_POLLS:
-                        # Not yet confirmed — continue polling faster
                         continue
 
                     # ─── CONFIRMED: match is really over ──────────
                     reason = "finished" if self._exit_saw_finished else "aborted"
                     confirmed_state = ObserverState.FINISHED if self._exit_saw_finished else raw
 
-                    logger.info(
-                        f"[Observer:{self.board_id}] === DEBOUNCE CONFIRMED: "
-                        f"in_game -> {confirmed_state.value} (reason={reason}) ==="
-                    )
-                    logger.info(
-                        f"[Observer:{self.board_id}]   exit polls needed: {DEBOUNCE_EXIT_POLLS}, "
-                        f"saw_finished: {self._exit_saw_finished}"
-                    )
+                    logger.info(f"[Observer:{self.board_id}] === DEBOUNCE CONFIRMED: "
+                                f"in_game -> {confirmed_state.value} (reason={reason}) ===")
 
                     self._stable_state = confirmed_state
                     self._set_state(confirmed_state)
                     self._exit_polls = 0
                     self._exit_saw_finished = False
 
-                    # Fire callback
                     if self._on_game_ended:
                         try:
                             await self._on_game_ended(self.board_id, reason)
                         except Exception as e:
-                            logger.error(
-                                f"[Observer:{self.board_id}] on_game_ended({reason}) ERROR: {e}",
-                                exc_info=True,
-                            )
+                            logger.error(f"[Observer:{self.board_id}] on_game_ended({reason}) ERROR: {e}",
+                                         exc_info=True)
                     self._credit_consumed = False
 
-                # ═══════════════════════════════════════════════
-                # CASE B: Stable state is NOT in_game
-                # ═══════════════════════════════════════════════
+                    # Reset captured events for next game
+                    await self._reset_captured_events()
+
+                # ═══════════════════════════════════════════
+                # CASE B: NOT in_game
+                # ═══════════════════════════════════════════
                 else:
                     if raw == stable:
-                        continue  # No change
+                        continue
 
-                    # Normalize ROUND_TRANSITION to IDLE for non-in_game stable states
-                    # (round_transition only matters when we're actively in a game)
                     effective_raw = raw
                     if raw == ObserverState.ROUND_TRANSITION:
                         effective_raw = ObserverState.IDLE
-                        logger.info(
-                            f"[Observer:{self.board_id}] ROUND_TRANSITION outside IN_GAME "
-                            f"→ treating as IDLE (stable={stable.value})"
-                        )
 
                     if effective_raw == stable:
                         continue
 
-                    # ─── Entering IN_GAME: immediate (credit consumed) ──
+                    # ─── Entering IN_GAME ──
                     if effective_raw == ObserverState.IN_GAME:
-                        logger.info(
-                            f"[Observer:{self.board_id}] === TRANSITION: "
-                            f"{stable.value} -> in_game (immediate) ==="
-                        )
+                        logger.info(f"[Observer:{self.board_id}] === TRANSITION: "
+                                    f"{stable.value} -> in_game (immediate) ===")
                         self._stable_state = ObserverState.IN_GAME
                         self._set_state(ObserverState.IN_GAME)
                         self._credit_consumed = True
@@ -486,25 +604,21 @@ class AutodartsObserver:
                         self._exit_saw_finished = False
                         self.status.games_observed += 1
 
-                        logger.info(
-                            f"[Observer:{self.board_id}] GAME STARTED — "
-                            f"credit_consumed=True, games_observed={self.status.games_observed}"
-                        )
+                        # Reset captured events for fresh game tracking
+                        await self._reset_captured_events()
+
+                        logger.info(f"[Observer:{self.board_id}] GAME STARTED — "
+                                    f"games_observed={self.status.games_observed}")
                         if self._on_game_started:
                             try:
                                 await self._on_game_started(self.board_id)
                             except Exception as e:
-                                logger.error(
-                                    f"[Observer:{self.board_id}] on_game_started ERROR: {e}",
-                                    exc_info=True,
-                                )
+                                logger.error(f"[Observer:{self.board_id}] on_game_started ERROR: {e}",
+                                             exc_info=True)
 
-                    # ─── Post-game: finished → idle (result dismissed) ──
                     elif stable == ObserverState.FINISHED and effective_raw == ObserverState.IDLE:
-                        logger.info(
-                            f"[Observer:{self.board_id}] === TRANSITION: "
-                            f"finished -> idle (result dismissed) ==="
-                        )
+                        logger.info(f"[Observer:{self.board_id}] === TRANSITION: "
+                                    f"finished -> idle (result dismissed) ===")
                         self._stable_state = ObserverState.IDLE
                         self._set_state(ObserverState.IDLE)
 
@@ -512,18 +626,11 @@ class AutodartsObserver:
                             try:
                                 await self._on_game_ended(self.board_id, "post_finish_check")
                             except Exception as e:
-                                logger.error(
-                                    f"[Observer:{self.board_id}] "
-                                    f"on_game_ended(post_finish_check) ERROR: {e}",
-                                    exc_info=True,
-                                )
-
-                    # ─── Other transitions (idle ↔ unknown, etc.) ──
+                                logger.error(f"[Observer:{self.board_id}] "
+                                             f"on_game_ended(post_finish_check) ERROR: {e}", exc_info=True)
                     else:
-                        logger.info(
-                            f"[Observer:{self.board_id}] === TRANSITION: "
-                            f"{stable.value} -> {effective_raw.value} ==="
-                        )
+                        logger.info(f"[Observer:{self.board_id}] === TRANSITION: "
+                                    f"{stable.value} -> {effective_raw.value} ===")
                         self._stable_state = effective_raw
                         self._set_state(effective_raw)
 
@@ -538,28 +645,117 @@ class AutodartsObserver:
 
         logger.info(f"[Observer:{self.board_id}] Observe loop ended")
 
-    async def _detect_state(self) -> ObserverState:
+    # ═══════════════════════════════════════════════════════════════
+    # EVENT CAPTURE (PRIMARY)
+    # ═══════════════════════════════════════════════════════════════
+
+    async def _read_captured_events(self) -> Optional[ObserverState]:
         """
-        Three-tier DOM detection: in_game > match_finished > round_transition > idle.
+        Read the captured WebSocket/console data from the injected script.
+        Returns a definitive ObserverState if event data is available,
+        or None if no event data captured.
+        """
+        try:
+            data = await self._page.evaluate("""() => {
+                var cap = window.__dartsKioskCapture;
+                if (!cap) return null;
+                return {
+                    matchState: cap.matchState,
+                    matchFinished: cap.matchFinished,
+                    matchStarted: cap.matchStarted,
+                    winnerDetected: cap.winnerDetected,
+                    lastGameEvent: cap.lastGameEvent,
+                    lastMatchId: cap.lastMatchId,
+                    wsMessageCount: cap.wsMessageCount,
+                    consoleCaptures: cap.consoleCaptures,
+                    recentEvents: cap.events.slice(-5)
+                };
+            }""")
+        except Exception as e:
+            logger.warning(f"[Observer:{self.board_id}] event_capture_read_error: {e}")
+            self._ws_interceptor_injected = False
+            return None
 
-        Tier 1 — IN_GAME: Active match markers (scoreboard, dart input, etc.).
-                 If present, state is always IN_GAME regardless of other signals.
+        if not data:
+            return None
 
-        Tier 2 — FINISHED (match_finished): Definitive end-of-match markers.
-                 ONLY button text matching (Rematch, Play again, Share, New Game)
-                 qualifies. CSS class-based markers alone are NOT sufficient
-                 because Autodarts reuses generic classes during round transitions.
+        match_state = data.get('matchState')
+        match_finished = data.get('matchFinished', False)
+        winner_detected = data.get('winnerDetected', False)
+        match_started = data.get('matchStarted', False)
+        last_game_event = data.get('lastGameEvent')
+        ws_count = data.get('wsMessageCount', 0)
+        console_count = data.get('consoleCaptures', 0)
+        recent = data.get('recentEvents', [])
 
-        Tier 3 — ROUND_TRANSITION: Generic result/winner/finished CSS classes
-                 WITHOUT the strong button-text markers. This is the normal
-                 state between turns/rounds/legs. Must NOT trigger session end.
+        # Log captured data
+        if ws_count > 0 or console_count > 0:
+            logger.info(
+                f"[Observer:{self.board_id}] event_capture: "
+                f"match_state={match_state}, finished={match_finished}, "
+                f"winner={winner_detected}, started={match_started}, "
+                f"last_event={last_game_event}, ws_msgs={ws_count}, "
+                f"console_caps={console_count}"
+            )
+            if recent:
+                for ev in recent:
+                    logger.info(f"[Observer:{self.board_id}]   recent_event: "
+                                f"type={ev.get('type')}, data={ev.get('data')}, ts={ev.get('ts')}")
 
-        Tier 4 — IDLE: No game-related markers at all (lobby/setup screen).
+        # ── Definitive match end from events ──
+        if match_finished and winner_detected:
+            logger.info(f"[Observer:{self.board_id}] EVENT_SIGNAL: final_match_end_detected "
+                        f"(matchFinished=True, winnerDetected=True, event={last_game_event})")
+            return ObserverState.FINISHED
+
+        if match_finished and last_game_event and 'matchshot' in str(last_game_event).lower():
+            logger.info(f"[Observer:{self.board_id}] EVENT_SIGNAL: matchshot_detected "
+                        f"(matchFinished=True, lastGameEvent={last_game_event})")
+            return ObserverState.FINISHED
+
+        if match_state in ('finished', 'completed', 'ended'):
+            logger.info(f"[Observer:{self.board_id}] EVENT_SIGNAL: ws_match_state_finished "
+                        f"(matchState={match_state})")
+            return ObserverState.FINISHED
+
+        # ── Match active from events ──
+        if match_started and not match_finished:
+            if match_state in ('active', 'running', 'started', None):
+                # Only return IN_GAME from events if we also have WS data
+                if ws_count > 0:
+                    return ObserverState.IN_GAME
+
+        # ── Gameshot (leg won, NOT match won) — NOT a match end ──
+        if last_game_event and 'gameshot' in str(last_game_event).lower() and not match_finished:
+            # Gameshot = leg end, match continues. This is a round transition.
+            logger.info(f"[Observer:{self.board_id}] EVENT_SIGNAL: gameshot_only (leg end, match continues)")
+            return ObserverState.ROUND_TRANSITION
+
+        return None  # No definitive event data — fall back to DOM
+
+    async def _reset_captured_events(self):
+        """Reset the captured event data for a new game."""
+        try:
+            await self._page.evaluate("""() => {
+                if (window.__dartsKioskCapture) {
+                    window.__dartsKioskCapture.reset();
+                }
+            }""")
+        except Exception:
+            pass
+
+    # ═══════════════════════════════════════════════════════════════
+    # DOM DETECTION (FALLBACK)
+    # ═══════════════════════════════════════════════════════════════
+
+    async def _detect_state_dom(self) -> ObserverState:
+        """
+        DOM-based state detection (fallback).
+        Three-tier: in_game > match_finished > round_transition > idle.
         """
         try:
             signals = await self._page.evaluate("""() => {
-                // === Tier 1: Active match indicators ===
-                const inGame = !!(
+                var inGame = !!(
                     document.querySelector('[class*="scoreboard"]') ||
                     document.querySelector('[class*="dart-input"]') ||
                     document.querySelector('[class*="throw"]') ||
@@ -573,33 +769,27 @@ class AutodartsObserver:
                     document.querySelector('#match')
                 );
 
-                // === Tier 2: Strong end-of-match markers (button text ONLY) ===
-                // These buttons ONLY appear after the ENTIRE match is over.
-                const allButtons = Array.from(document.querySelectorAll('button, a[role="button"], [class*="btn"]'));
-                const buttonTexts = allButtons.map(function(b) { return (b.textContent || '').trim().toLowerCase(); });
+                var allButtons = Array.from(document.querySelectorAll('button, a[role="button"], [class*="btn"]'));
+                var buttonTexts = allButtons.map(function(b) { return (b.textContent || '').trim().toLowerCase(); });
 
-                const hasRematchBtn = buttonTexts.some(function(t) {
+                var hasRematchBtn = buttonTexts.some(function(t) {
                     return /rematch|nochmal spielen|play again|erneut spielen/i.test(t);
                 });
-                const hasShareBtn = buttonTexts.some(function(t) {
+                var hasShareBtn = buttonTexts.some(function(t) {
                     return /share|teilen|share result|ergebnis teilen/i.test(t);
                 });
-                const hasNewGameBtn = buttonTexts.some(function(t) {
+                var hasNewGameBtn = buttonTexts.some(function(t) {
                     return /new game|neues spiel|new match|neues match/i.test(t);
                 });
-
-                // Also check for post-match summary containers
-                const hasPostMatchUI = !!(
+                var hasPostMatchUI = !!(
                     document.querySelector('[class*="post-match"]') ||
                     document.querySelector('[class*="match-summary"]') ||
                     document.querySelector('[class*="match-end"]') ||
                     document.querySelector('[class*="game-over"]')
                 );
+                var strongMatchEnd = hasRematchBtn || hasShareBtn || hasNewGameBtn || hasPostMatchUI;
 
-                const strongMatchEnd = hasRematchBtn || hasShareBtn || hasNewGameBtn || hasPostMatchUI;
-
-                // === Tier 3: Generic result markers (round/turn transitions) ===
-                const hasGenericResult = !!(
+                var hasGenericResult = !!(
                     document.querySelector('[class*="result"]') ||
                     document.querySelector('[class*="winner"]') ||
                     document.querySelector('[class*="finished"]') ||
@@ -611,81 +801,68 @@ class AutodartsObserver:
                     inGame: inGame,
                     strongMatchEnd: strongMatchEnd,
                     hasGenericResult: hasGenericResult,
-                    // Debug detail
-                    _detail: {
-                        hasRematchBtn: hasRematchBtn,
-                        hasShareBtn: hasShareBtn,
-                        hasNewGameBtn: hasNewGameBtn,
-                        hasPostMatchUI: hasPostMatchUI,
-                        buttonSample: buttonTexts.slice(0, 5)
-                    }
+                    hasRematchBtn: hasRematchBtn,
+                    hasShareBtn: hasShareBtn,
+                    hasNewGameBtn: hasNewGameBtn,
+                    hasPostMatchUI: hasPostMatchUI
                 };
             }""")
 
             in_game = signals.get('inGame', False)
             strong_match_end = signals.get('strongMatchEnd', False)
             has_generic_result = signals.get('hasGenericResult', False)
-            detail = signals.get('_detail', {})
 
-            # Always log raw detection for traceability
-            logger.info(
-                f"[Observer:{self.board_id}] raw_detected_state: "
-                f"in_game={in_game}, strong_match_end={strong_match_end}, "
-                f"generic_result={has_generic_result}, "
-                f"detail={detail}"
-            )
+            logger.info(f"[Observer:{self.board_id}] dom_fallback: "
+                        f"in_game={in_game}, strong_end={strong_match_end}, "
+                        f"generic_result={has_generic_result}")
 
-            # === State mapping ===
-            # PRIORITY ORDER:
-            #   1. Strong match-end markers → FINISHED (ALWAYS, even with in_game present)
-            #   2. in_game WITHOUT strong markers → IN_GAME
-            #   3. Generic result only → ROUND_TRANSITION
-            #   4. Nothing → IDLE
-            #
-            # WHY strong markers override in_game:
-            # On the Autodarts match-end screen, scoreboard/match-view elements
-            # remain in the DOM alongside Rematch/Share buttons. If we let in_game
-            # markers take priority, FINISHED is never detected and the last-credit
-            # lock never fires.
-
-            # Tier 1: Strong end-of-match markers ALWAYS win
             if strong_match_end:
-                logger.info(
-                    f"[Observer:{self.board_id}] mapped_state: FINISHED | "
-                    f"reason: match_finished — strong end markers detected "
-                    f"(rematch={detail.get('hasRematchBtn')}, "
-                    f"share={detail.get('hasShareBtn')}, "
-                    f"newgame={detail.get('hasNewGameBtn')}, "
-                    f"postmatch_ui={detail.get('hasPostMatchUI')}), "
-                    f"in_game_markers_also_present={in_game}"
-                )
+                logger.info(f"[Observer:{self.board_id}] DOM_SIGNAL: FINISHED (strong end markers)")
                 return ObserverState.FINISHED
-
-            # Tier 2: in_game markers WITHOUT strong end markers → active match
             if in_game:
-                reason = "active match markers present, no strong end markers"
-                if has_generic_result:
-                    reason += " + round result overlay (normal turn change)"
-                logger.info(f"[Observer:{self.board_id}] mapped_state: IN_GAME | reason: {reason}")
                 return ObserverState.IN_GAME
-
-            # Tier 3: Generic result markers WITHOUT strong markers → round transition
             if has_generic_result:
-                logger.info(
-                    f"[Observer:{self.board_id}] mapped_state: ROUND_TRANSITION | "
-                    f"reason: generic result/winner/finished CSS classes detected "
-                    f"but NO strong match-end buttons — interpreting as turn/round change"
-                )
                 return ObserverState.ROUND_TRANSITION
-
-            # Tier 4: Nothing game-related → lobby/setup
-            logger.info(f"[Observer:{self.board_id}] mapped_state: IDLE | reason: no game markers detected")
             return ObserverState.IDLE
 
         except Exception as e:
             logger.warning(f"[Observer:{self.board_id}] DOM detection error: {e}")
             self.status.last_error = str(e)[:200]
             return ObserverState.UNKNOWN
+
+    # ═══════════════════════════════════════════════════════════════
+    # MERGE: Events > DOM
+    # ═══════════════════════════════════════════════════════════════
+
+    def _merge_detection(self, event_state: Optional[ObserverState], dom_state: ObserverState) -> ObserverState:
+        """
+        Merge event-based and DOM-based detection.
+        Events take priority when they provide a definitive signal.
+        DOM is used as fallback.
+
+        Priority:
+          1. Event says FINISHED → FINISHED (strongest signal)
+          2. Event says IN_GAME  → IN_GAME
+          3. Event says ROUND_TRANSITION → DOM decides between ROUND_TRANSITION and IN_GAME
+          4. No event data       → DOM result
+        """
+        if event_state == ObserverState.FINISHED:
+            # Events say match is over — always trust this
+            if dom_state != ObserverState.FINISHED:
+                logger.info(f"[Observer:{self.board_id}] merge: EVENT=FINISHED overrides DOM={dom_state.value}")
+            return ObserverState.FINISHED
+
+        if event_state == ObserverState.IN_GAME:
+            return ObserverState.IN_GAME
+
+        if event_state == ObserverState.ROUND_TRANSITION:
+            # Gameshot detected — if DOM still shows in_game, keep it (leg change during match)
+            if dom_state == ObserverState.IN_GAME:
+                return ObserverState.IN_GAME
+            return ObserverState.ROUND_TRANSITION
+
+        # No event data — use DOM
+        return dom_state
 
     def _set_state(self, state: ObserverState):
         if self.status.state != state:
