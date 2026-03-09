@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from backend.database import get_db
 from backend.models import User, Settings
-from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG, DEFAULT_LOCKSCREEN_QR
+from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG, DEFAULT_LOCKSCREEN_QR, DEFAULT_OVERLAY_CONFIG
 from backend.schemas import SettingsUpdate
 from backend.dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
 from backend.services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
@@ -282,4 +282,26 @@ async def update_lockscreen_qr(data: SettingsUpdate, admin: User = Depends(requi
         db.add(setting)
     await db.flush()
     await log_audit(db, admin, "update_lockscreen_qr", "settings", "lockscreen_qr")
+    return setting.value
+
+
+
+# ===== Credits Overlay Config =====
+
+@router.get("/settings/overlay")
+async def get_overlay_config(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "overlay_config", DEFAULT_OVERLAY_CONFIG)
+
+
+@router.put("/settings/overlay")
+async def update_overlay_config(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "overlay_config"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="overlay_config", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_overlay_config", "settings", "overlay_config")
     return setting.value

@@ -366,3 +366,8 @@ DEFAULT_LOCKSCREEN_QR = {
     "label": "Leaderboard & Stats",
     "path": "/public/leaderboard",
 }
+
+DEFAULT_OVERLAY_CONFIG = {
+    "enabled": True,
+    "position": "bottom-left",
+}

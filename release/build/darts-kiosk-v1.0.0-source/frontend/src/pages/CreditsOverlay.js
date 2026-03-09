@@ -1,33 +1,86 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import axios from 'axios';
+import { useBoardWS } from '../hooks/useBoardWS';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 /**
- * Lightweight credits overlay — opens in a small separate window.
- * Polls /api/kiosk/{board_id}/overlay every 3 seconds.
+ * Credits Overlay — lightweight always-on-top display.
+ * Opens in a small separate browser window positioned bottom-left.
+ * Receives real-time updates via WebSocket + polling fallback.
  * Route: /overlay/:boardId
  */
 export default function CreditsOverlay() {
   const { boardId } = useParams();
   const [data, setData] = useState(null);
+  const [flash, setFlash] = useState(false);
   const intervalRef = useRef(null);
+  const prevCreditsRef = useRef(null);
 
+  // WebSocket handler for real-time credit updates
+  const handleWsEvent = useCallback((event, wsData) => {
+    if (!wsData || wsData.board_id !== boardId) return;
+
+    if (event === 'credit_update') {
+      setData(prev => {
+        if (!prev) return prev;
+        const wasHigher = prev.credits_remaining > wsData.credits_remaining;
+        if (wasHigher) setFlash(true);
+        return {
+          ...prev,
+          credits_remaining: wsData.credits_remaining,
+          is_last_game: wsData.is_last_game,
+        };
+      });
+    }
+
+    if (event === 'board_status') {
+      if (wsData.status === 'locked') {
+        setData(null); // Hide overlay when board locks
+      }
+    }
+  }, [boardId]);
+
+  const { connected } = useBoardWS(handleWsEvent);
+
+  // Polling fallback (every 3s)
   useEffect(() => {
     const fetchOverlay = async () => {
       try {
-        const res = await axios.get(`${API}/kiosk/${boardId}/overlay`);
-        setData(res.data);
-      } catch {
-        setData(null);
-      }
+        const res = await fetch(`${API}/kiosk/${boardId}/overlay`);
+        if (res.ok) {
+          const d = await res.json();
+          setData(prev => {
+            // Detect credit change for flash animation
+            if (prev && prev.credits_remaining > d.credits_remaining) {
+              setFlash(true);
+            }
+            return d;
+          });
+        }
+      } catch { /* silent */ }
     };
     fetchOverlay();
     intervalRef.current = setInterval(fetchOverlay, 3000);
     return () => clearInterval(intervalRef.current);
   }, [boardId]);
 
+  // Clear flash after animation
+  useEffect(() => {
+    if (flash) {
+      const t = setTimeout(() => setFlash(false), 800);
+      return () => clearTimeout(t);
+    }
+  }, [flash]);
+
+  // Track previous credits for transition
+  useEffect(() => {
+    if (data?.credits_remaining !== undefined) {
+      prevCreditsRef.current = data.credits_remaining;
+    }
+  }, [data?.credits_remaining]);
+
+  // Hidden state: transparent full page
   if (!data || !data.visible) {
     return (
       <div style={{
@@ -40,76 +93,142 @@ export default function CreditsOverlay() {
 
   const isLastGame = data.is_last_game;
   const isTimeMode = data.pricing_mode === 'per_time';
+  const credits = data.credits_remaining ?? 0;
+  const timeLeft = data.time_remaining_seconds;
 
   const formatTime = (seconds) => {
-    if (!seconds) return '--:--';
+    if (seconds == null) return '--:--';
     const m = Math.floor(seconds / 60);
     const s = seconds % 60;
     return `${m}:${s.toString().padStart(2, '0')}`;
   };
 
+  const isTimeLow = isTimeMode && timeLeft != null && timeLeft < 300;
+
   return (
     <div style={{
       position: 'fixed',
-      bottom: 16,
-      left: 16,
+      bottom: 20,
+      left: 20,
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
       zIndex: 99999,
+      pointerEvents: 'none',
     }}>
       <div
         data-testid="credits-overlay"
         style={{
-          background: 'rgba(0, 0, 0, 0.85)',
-          backdropFilter: 'blur(8px)',
-          borderRadius: 8,
-          padding: '10px 16px',
+          background: isLastGame
+            ? 'rgba(127, 29, 29, 0.92)'
+            : 'rgba(9, 9, 11, 0.88)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          borderRadius: 10,
+          padding: isLastGame ? '14px 20px' : '12px 18px',
           color: '#fff',
-          minWidth: 140,
-          border: isLastGame ? '1px solid rgba(239, 68, 68, 0.5)' : '1px solid rgba(255, 255, 255, 0.1)',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+          minWidth: 160,
+          border: isLastGame
+            ? '1.5px solid rgba(239, 68, 68, 0.6)'
+            : '1px solid rgba(255, 255, 255, 0.08)',
+          boxShadow: isLastGame
+            ? '0 4px 24px rgba(239, 68, 68, 0.3), 0 0 0 1px rgba(239, 68, 68, 0.1)'
+            : '0 4px 24px rgba(0, 0, 0, 0.5)',
+          transition: 'all 0.3s ease',
+          transform: flash ? 'scale(1.05)' : 'scale(1)',
         }}
       >
-        {isTimeMode ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1 }}>
-              Zeit
-            </span>
-            <span style={{
-              fontSize: 20,
-              fontWeight: 700,
-              fontVariantNumeric: 'tabular-nums',
-              color: data.time_remaining_seconds < 300 ? '#f59e0b' : '#fff',
+        {isLastGame ? (
+          /* === LETZTES SPIEL WARNING === */
+          <div style={{ textAlign: 'center' }}>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              marginBottom: 2,
             }}>
-              {formatTime(data.time_remaining_seconds)}
-            </span>
+              <span style={{ fontSize: 18 }}>&#9888;</span>
+              <span style={{
+                fontSize: 15,
+                fontWeight: 800,
+                textTransform: 'uppercase',
+                letterSpacing: 2,
+                color: '#fca5a5',
+              }}>
+                LETZTES SPIEL
+              </span>
+            </div>
+          </div>
+        ) : isTimeMode ? (
+          /* === TIME MODE === */
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isTimeLow ? '#f59e0b' : '#71717a'} strokeWidth="2.5" strokeLinecap="round">
+              <circle cx="12" cy="12" r="10" />
+              <path d="M12 6v6l4 2" />
+            </svg>
+            <div>
+              <div style={{
+                fontSize: 10,
+                color: '#71717a',
+                textTransform: 'uppercase',
+                letterSpacing: 1.5,
+                marginBottom: 2,
+              }}>
+                Zeit übrig
+              </div>
+              <div style={{
+                fontSize: 22,
+                fontWeight: 700,
+                fontVariantNumeric: 'tabular-nums',
+                color: isTimeLow ? '#f59e0b' : '#fff',
+                lineHeight: 1,
+              }}>
+                {formatTime(timeLeft)}
+              </div>
+            </div>
           </div>
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 11, color: '#999', textTransform: 'uppercase', letterSpacing: 1 }}>
-              Spiele
-            </span>
-            <span style={{
-              fontSize: 20,
-              fontWeight: 700,
-              fontVariantNumeric: 'tabular-nums',
-              color: data.credits_remaining <= 1 ? '#f59e0b' : '#fff',
-            }}>
-              {data.credits_remaining}
-            </span>
-          </div>
-        )}
-        {isLastGame && (
-          <div style={{
-            fontSize: 10,
-            color: '#ef4444',
-            textTransform: 'uppercase',
-            letterSpacing: 1,
-            marginTop: 2,
-          }}>
-            Letztes Spiel
+          /* === CREDIT MODE === */
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={credits <= 1 ? '#f59e0b' : '#71717a'} strokeWidth="2.5" strokeLinecap="round">
+              <circle cx="12" cy="5" r="3" />
+              <line x1="12" y1="8" x2="12" y2="16" />
+              <path d="M9 20l3-4 3 4" />
+            </svg>
+            <div>
+              <div style={{
+                fontSize: 10,
+                color: '#71717a',
+                textTransform: 'uppercase',
+                letterSpacing: 1.5,
+                marginBottom: 2,
+              }}>
+                Spiele übrig
+              </div>
+              <div style={{
+                fontSize: 22,
+                fontWeight: 700,
+                fontVariantNumeric: 'tabular-nums',
+                color: credits <= 1 ? '#f59e0b' : '#fff',
+                lineHeight: 1,
+                transition: 'color 0.3s ease',
+              }}>
+                {credits}
+              </div>
+            </div>
           </div>
         )}
       </div>
+
+      {/* Connection indicator (tiny dot) */}
+      <div style={{
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        background: connected ? '#22c55e' : '#ef4444',
+        marginTop: 6,
+        marginLeft: 8,
+        opacity: 0.6,
+      }} />
     </div>
   );
 }

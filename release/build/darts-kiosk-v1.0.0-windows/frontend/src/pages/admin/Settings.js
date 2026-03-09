@@ -73,6 +73,7 @@ export default function AdminSettings() {
   const [localKioskTexts, setLocalKioskTexts] = useState(kioskTexts);
   const [localPwa, setLocalPwa] = useState(pwaConfig);
   const [localQr, setLocalQr] = useState(lockscreenQr);
+  const [localOverlay, setLocalOverlay] = useState({ enabled: true });
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -259,6 +260,17 @@ export default function AdminSettings() {
     setLocalQr(lockscreenQr);
   }, [lockscreenQr]);
 
+  // Fetch overlay config
+  useEffect(() => {
+    const fetchOverlay = async () => {
+      try {
+        const res = await axios.get(`${API}/settings/overlay`);
+        setLocalOverlay(res.data);
+      } catch { /* use default */ }
+    };
+    fetchOverlay();
+  }, []);
+
   const handleSaveKioskTexts = async () => {
     setSaving(true);
     try {
@@ -266,6 +278,7 @@ export default function AdminSettings() {
       await Promise.all([
         axios.put(`${API}/settings/kiosk-texts`, { value: localKioskTexts }, { headers }),
         axios.put(`${API}/settings/lockscreen-qr`, { value: localQr }, { headers }),
+        axios.put(`${API}/settings/overlay`, { value: localOverlay }, { headers }),
       ]);
       refreshSettings();
       toast.success('Kiosk-Einstellungen gespeichert');
@@ -1287,6 +1300,24 @@ export default function AdminSettings() {
                     <Label className="text-zinc-300">Zeit-Label</Label>
                     <Input data-testid="kiosk-text-time-label" value={localKioskTexts.time_label || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, time_label: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Zeit übrig" />
                   </div>
+                </div>
+              </div>
+
+              {/* Credits Overlay Toggle */}
+              <div className="border-t border-zinc-800 pt-4">
+                <h4 className="text-sm font-medium text-zinc-300 mb-3">Credits-Overlay</h4>
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <Label className="text-zinc-300">Credits-Overlay während Spielen anzeigen</Label>
+                    <p className="text-xs text-zinc-500">Zeigt verbleibende Spiele/Zeit als kleines Overlay an</p>
+                  </div>
+                  <button
+                    data-testid="overlay-toggle"
+                    onClick={() => setLocalOverlay(p => ({ ...p, enabled: !p.enabled }))}
+                    className={`w-12 h-6 rounded-full transition-colors relative ${localOverlay.enabled ? 'bg-amber-500' : 'bg-zinc-700'}`}
+                  >
+                    <div className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${localOverlay.enabled ? 'left-6' : 'left-0.5'}`} />
+                  </button>
                 </div>
               </div>
 

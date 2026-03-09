@@ -15,9 +15,9 @@ from sqlalchemy import select
 from pydantic import BaseModel
 
 from backend.database import get_db, AsyncSessionLocal
-from backend.models import Board, Session, MatchResult, Player, BoardStatus, SessionStatus, PricingMode, Settings
+from backend.models import Board, Session, MatchResult, Player, User, BoardStatus, SessionStatus, PricingMode, Settings
 from backend.schemas import StartGameRequest, EndGameRequest
-from backend.dependencies import get_active_session_for_board, log_audit, get_or_create_setting
+from backend.dependencies import get_active_session_for_board, log_audit, get_or_create_setting, require_admin
 from backend.services.ws_manager import board_ws
 from backend.services.autodarts_observer import observer_manager, ObserverState
 
@@ -389,10 +389,19 @@ async def reset_observer(board_id: str):
 @router.get("/kiosk/{board_id}/overlay")
 async def get_overlay_data(board_id: str, db: AsyncSession = Depends(get_db)):
     """Returns minimal data for the credits overlay display."""
+    # Check if overlay is enabled in settings
+    overlay_config = await get_or_create_setting(db, "overlay_config", {"enabled": True})
+    if not overlay_config.get("enabled", True):
+        return {"visible": False, "reason": "disabled"}
+
     result = await db.execute(select(Board).where(Board.board_id == board_id))
     board = result.scalar_one_or_none()
     if not board:
         return {"visible": False}
+
+    # Only show overlay when board is unlocked or in_game
+    if board.status not in (BoardStatus.UNLOCKED.value, BoardStatus.IN_GAME.value):
+        return {"visible": False, "board_status": board.status}
 
     session = await get_active_session_for_board(db, board.id)
     if not session:
@@ -404,15 +413,20 @@ async def get_overlay_data(board_id: str, db: AsyncSession = Depends(get_db)):
         time_remaining = max(0, int(delta.total_seconds()))
 
     obs_status = observer_manager.get_status(board_id)
+    is_last = obs_status.get("is_last_game", False)
+    if not is_last and session.pricing_mode == PricingMode.PER_GAME.value:
+        is_last = (session.credits_remaining or 0) <= 0
 
     return {
         "visible": True,
         "board_name": board.name,
+        "board_status": board.status,
         "pricing_mode": session.pricing_mode,
         "credits_remaining": session.credits_remaining,
         "time_remaining_seconds": time_remaining,
         "observer_state": obs_status.get("state"),
-        "is_last_game": obs_status.get("is_last_game", False),
+        "is_last_game": is_last,
+        "session_id": session.id,
     }
 
 
@@ -427,3 +441,22 @@ class SoundTrigger(BaseModel):
 async def trigger_sound(board_id: str, data: SoundTrigger):
     await board_ws.broadcast("sound_event", {"board_id": board_id, "event": data.event})
     return {"message": f"Sound '{data.event}' triggered", "board_id": board_id}
+
+
+
+# =====================================================================
+# Observer simulation (for testing without real Autodarts)
+# =====================================================================
+
+@router.post("/kiosk/{board_id}/simulate-game-start")
+async def simulate_game_start(board_id: str, admin: User = Depends(require_admin)):
+    """Simulate observer detecting idle→in_game (for testing only)."""
+    await _on_game_started(board_id)
+    return {"message": f"Simulated game start on {board_id}"}
+
+
+@router.post("/kiosk/{board_id}/simulate-game-end")
+async def simulate_game_end(board_id: str, admin: User = Depends(require_admin)):
+    """Simulate observer detecting in_game→finished (for testing only)."""
+    await _on_game_finished(board_id)
+    return {"message": f"Simulated game end on {board_id}"}
