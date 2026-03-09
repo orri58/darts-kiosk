@@ -616,6 +616,9 @@ export default function AdminSystem() {
                         <span className="text-2xl font-mono text-white font-bold" data-testid="update-current-version">
                           v{updates?.current_version || '1.0.0'}
                         </span>
+                        <p className="text-xs text-emerald-500/80 mt-1 font-mono" data-testid="update-build-tag">
+                          Build: production-hardened | Update-System aktiv
+                        </p>
                       </div>
                     </div>
                     {updates?.github_repo && (
