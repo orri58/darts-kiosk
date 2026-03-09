@@ -14,11 +14,11 @@ import ErrorScreen from './ErrorScreen';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-// Kiosk states
 const STATES = {
   LOCKED: 'locked',
   SETUP: 'setup',
   IN_GAME: 'in_game',
+  OBSERVER_ACTIVE: 'observer_active',
   FINISHED: 'finished',
   ERROR: 'error'
 };
@@ -28,7 +28,6 @@ export default function KioskLayout() {
   const { branding, pricing, loading: settingsLoading } = useSettings();
   const { play: playSound } = useSoundManager(boardId);
 
-  // Listen for WS sound events (from Autodarts or manual triggers)
   const handleWsEvent = useCallback((event, data) => {
     if (event === 'sound_event' && data?.board_id === boardId) {
       playSound(data.event);
@@ -38,45 +37,36 @@ export default function KioskLayout() {
   
   const [kioskState, setKioskState] = useState(STATES.LOCKED);
   const [session, setSession] = useState(null);
-  const [boardStatus, setBoardStatus] = useState('locked');
   const [autodartsMode, setAutodartsMode] = useState(null);
+  const [observerBrowserOpen, setObserverBrowserOpen] = useState(false);
+  const [observerState, setObserverState] = useState('closed');
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState(null);
   const [matchToken, setMatchToken] = useState(null);
-  
-  // Ref to track if QR screen is showing (avoids closure issues)
   const showingQrRef = useRef(false);
 
-  // Fetch board session status
   const fetchBoardStatus = useCallback(async () => {
     try {
       const response = await axios.get(`${API}/boards/${boardId}/session`);
-      setBoardStatus(response.data.board_status);
-      setSession(response.data.session);
-      if (response.data.autodarts_mode) {
-        setAutodartsMode(response.data.autodarts_mode);
-      }
-      
-      // Don't override FINISHED state while QR screen is showing (60s timeout handles transition)
-      if (showingQrRef.current) {
-        return;
-      }
-      
-      // Determine kiosk state based on board status
-      switch (response.data.board_status) {
+      const d = response.data;
+      setSession(d.session);
+      setAutodartsMode(d.autodarts_mode || null);
+      setObserverBrowserOpen(d.observer_browser_open || false);
+      setObserverState(d.observer_state || 'closed');
+
+      if (showingQrRef.current) return;
+
+      const isObserver = d.autodarts_mode === 'observer';
+
+      switch (d.board_status) {
         case 'locked':
           setKioskState(STATES.LOCKED);
           break;
         case 'unlocked':
-          // Observer mode: skip setup screen entirely
-          if (response.data.autodarts_mode === 'observer') {
-            setKioskState(STATES.SETUP); // reuse SETUP state, component decides what to render
-          } else {
-            setKioskState(STATES.SETUP);
-          }
+          setKioskState(isObserver ? STATES.OBSERVER_ACTIVE : STATES.SETUP);
           break;
         case 'in_game':
-          setKioskState(STATES.IN_GAME);
+          setKioskState(isObserver ? STATES.OBSERVER_ACTIVE : STATES.IN_GAME);
           break;
         default:
           setKioskState(STATES.LOCKED);
@@ -89,14 +79,12 @@ export default function KioskLayout() {
     }
   }, [boardId]);
 
-  // Poll for status updates
   useEffect(() => {
     fetchBoardStatus();
     const interval = setInterval(fetchBoardStatus, 3000);
     return () => clearInterval(interval);
   }, [fetchBoardStatus]);
 
-  // Handle game start
   const handleStartGame = async (gameType, players) => {
     try {
       await axios.post(`${API}/kiosk/${boardId}/start-game`, {
@@ -108,14 +96,13 @@ export default function KioskLayout() {
       toast.success('SPIEL GESTARTET!');
       fetchBoardStatus();
     } catch (error) {
-      const errorMsg = error.response?.data?.detail || 'Fehler beim Starten des Spiels';
-      setErrorMessage(errorMsg);
+      const msg = error.response?.data?.detail || 'Fehler beim Starten des Spiels';
+      setErrorMessage(msg);
       setKioskState(STATES.ERROR);
-      toast.error(errorMsg);
+      toast.error(msg);
     }
   };
 
-  // Handle game end
   const handleEndGame = async () => {
     try {
       const response = await axios.post(`${API}/kiosk/${boardId}/end-game`);
@@ -131,7 +118,12 @@ export default function KioskLayout() {
         playSound('checkout');
         toast.info('Session beendet');
       } else {
-        setKioskState(STATES.SETUP);
+        // Credits remaining — stay in observer active
+        if (autodartsMode === 'observer') {
+          setKioskState(STATES.OBSERVER_ACTIVE);
+        } else {
+          setKioskState(STATES.SETUP);
+        }
         playSound('checkout');
         toast.success(`Noch ${response.data.credits_remaining} Spiele uebrig`);
       }
@@ -141,32 +133,28 @@ export default function KioskLayout() {
     }
   };
 
-  // Handle QR screen timeout -> return to locked or setup
   const handleMatchTimeout = useCallback(() => {
-    showingQrRef.current = false;  // Clear ref to allow polling to update state
+    showingQrRef.current = false;
     setMatchToken(null);
     setKioskState(STATES.LOCKED);
     fetchBoardStatus();
   }, [fetchBoardStatus]);
 
-  // Handle call staff
   const handleCallStaff = async () => {
     try {
       await axios.post(`${API}/kiosk/${boardId}/call-staff`);
       toast.success('Personal wurde benachrichtigt');
-    } catch (error) {
+    } catch {
       toast.error('Fehler beim Benachrichtigen');
     }
   };
 
-  // Handle return to locked from error state
   const handleReturnToLocked = () => {
     setErrorMessage(null);
     setKioskState(STATES.LOCKED);
     fetchBoardStatus();
   };
 
-  // Handle retry from error state
   const handleRetry = () => {
     setErrorMessage(null);
     fetchBoardStatus();
@@ -176,7 +164,7 @@ export default function KioskLayout() {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[var(--color-bg)]" data-testid="kiosk-loading">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
           <p className="text-zinc-400 font-heading uppercase tracking-wider">Lade...</p>
         </div>
       </div>
@@ -192,18 +180,20 @@ export default function KioskLayout() {
           boardId={boardId}
         />
       )}
-      
-      {kioskState === STATES.SETUP && autodartsMode === 'observer' && (
+
+      {kioskState === STATES.OBSERVER_ACTIVE && (
         <ObserverActiveScreen
           branding={branding}
           session={session}
           boardId={boardId}
+          observerBrowserOpen={observerBrowserOpen}
+          observerState={observerState}
           onEndGame={handleEndGame}
           onCallStaff={handleCallStaff}
         />
       )}
 
-      {kioskState === STATES.SETUP && autodartsMode !== 'observer' && (
+      {kioskState === STATES.SETUP && (
         <SetupScreen 
           branding={branding}
           pricing={pricing}
@@ -211,18 +201,8 @@ export default function KioskLayout() {
           onStartGame={handleStartGame}
         />
       )}
-      
-      {kioskState === STATES.IN_GAME && autodartsMode === 'observer' && (
-        <ObserverActiveScreen
-          branding={branding}
-          session={session}
-          boardId={boardId}
-          onEndGame={handleEndGame}
-          onCallStaff={handleCallStaff}
-        />
-      )}
 
-      {kioskState === STATES.IN_GAME && autodartsMode !== 'observer' && (
+      {kioskState === STATES.IN_GAME && (
         <InGameScreen 
           branding={branding}
           session={session}
