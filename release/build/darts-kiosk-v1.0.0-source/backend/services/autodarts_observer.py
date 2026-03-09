@@ -54,6 +54,11 @@ logger = logging.getLogger(__name__)
 AUTODARTS_URL = os.environ.get('AUTODARTS_URL', 'https://play.autodarts.io')
 OBSERVER_POLL_INTERVAL = int(os.environ.get('OBSERVER_POLL_INTERVAL', '4'))
 
+# Debounce: exiting in_game requires N consecutive non-in_game polls
+# This prevents false exits from turn changes / brief UI transitions
+DEBOUNCE_EXIT_POLLS = int(os.environ.get('OBSERVER_DEBOUNCE_POLLS', '3'))
+DEBOUNCE_POLL_INTERVAL = int(os.environ.get('OBSERVER_DEBOUNCE_INTERVAL', '2'))
+
 # Persistent Chrome profile directory — preserves Google login across sessions
 _default_profile = str(Path(os.environ.get('DATA_DIR', './data')) / 'chrome_profile')
 CHROME_PROFILE_DIR = os.environ.get('CHROME_PROFILE_DIR', _default_profile)
@@ -109,11 +114,17 @@ class AutodartsObserver:
         self._playwright = None
         self._observe_task: Optional[asyncio.Task] = None
         self._stopping = False
-        self._prev_state: ObserverState = ObserverState.CLOSED
+
+        # Stable confirmed state (only changes after debounce)
+        self._stable_state: ObserverState = ObserverState.CLOSED
 
         # Callbacks
         self._on_game_started: Optional[Callable] = None
         self._on_game_ended: Optional[Callable] = None
+
+        # Debounce tracking for exiting in_game
+        self._exit_polls: int = 0          # Consecutive non-in_game polls
+        self._exit_saw_finished: bool = False  # Any exit poll returned FINISHED?
 
         # Per-game tracking
         self._credit_consumed = False
@@ -137,7 +148,9 @@ class AutodartsObserver:
         self._on_game_started = on_game_started
         self._on_game_ended = on_game_ended
         self._stopping = False
-        self._prev_state = ObserverState.CLOSED
+        self._stable_state = ObserverState.CLOSED
+        self._exit_polls = 0
+        self._exit_saw_finished = False
         self._credit_consumed = False
 
         url = autodarts_url or AUTODARTS_URL
@@ -236,7 +249,7 @@ class AutodartsObserver:
 
             self.status.browser_open = True
             self._set_state(ObserverState.IDLE)
-            self._prev_state = ObserverState.IDLE
+            self._stable_state = ObserverState.IDLE
             logger.info(f"[Observer:{self.board_id}]   Step 5/5: Window management...")
 
             # OS-level window management: hide kiosk, Autodarts takes foreground
@@ -307,67 +320,127 @@ class AutodartsObserver:
         self.status.browser_open = False
 
     async def _observe_loop(self):
-        """Poll the Autodarts page for game state changes."""
-        logger.info(f"[Observer:{self.board_id}] Observe loop started (poll={OBSERVER_POLL_INTERVAL}s)")
+        """
+        Poll the Autodarts page for game state changes.
+
+        DEBOUNCE LOGIC:
+        When the stable state is IN_GAME, exiting requires confirmation.
+        Autodarts briefly changes its DOM during turn changes (3-dart completion,
+        player switch). A single non-in_game poll must NOT end the session.
+
+        Rule: exiting IN_GAME requires DEBOUNCE_EXIT_POLLS consecutive
+        non-in_game polls. During the confirmation phase, we poll faster
+        (DEBOUNCE_POLL_INTERVAL instead of OBSERVER_POLL_INTERVAL).
+
+        Entering IN_GAME is immediate (no debounce) since the credit should
+        be consumed promptly when a match starts.
+        """
+        logger.info(f"[Observer:{self.board_id}] Observe loop started")
+        logger.info(f"[Observer:{self.board_id}]   normal_poll: {OBSERVER_POLL_INTERVAL}s")
+        logger.info(f"[Observer:{self.board_id}]   debounce_exit_polls: {DEBOUNCE_EXIT_POLLS}")
+        logger.info(f"[Observer:{self.board_id}]   debounce_poll: {DEBOUNCE_POLL_INTERVAL}s")
 
         while not self._stopping:
             try:
-                await asyncio.sleep(OBSERVER_POLL_INTERVAL)
+                # Use faster polling during debounce confirmation
+                interval = DEBOUNCE_POLL_INTERVAL if self._exit_polls > 0 else OBSERVER_POLL_INTERVAL
+                await asyncio.sleep(interval)
                 if not self._page or self._stopping:
                     break
 
-                new_state = await self._detect_state()
+                raw = await self._detect_state()
                 now = datetime.now(timezone.utc).isoformat()
                 self.status.last_poll = now
 
-                if new_state == self._prev_state:
-                    continue
+                stable = self._stable_state
 
-                logger.info(f"[Observer:{self.board_id}] === TRANSITION: {self._prev_state.value} -> {new_state.value} ===")
-                self._set_state(new_state)
+                # ═══════════════════════════════════════════════
+                # CASE A: Stable state is IN_GAME (match active)
+                # ═══════════════════════════════════════════════
+                if stable == ObserverState.IN_GAME:
+                    if raw == ObserverState.IN_GAME:
+                        # Still in game — clear any pending exit
+                        if self._exit_polls > 0:
+                            logger.info(f"[Observer:{self.board_id}] debounce: RECOVERED to in_game after {self._exit_polls} exit polls (turn change / UI flicker)")
+                            self._exit_polls = 0
+                            self._exit_saw_finished = False
+                        continue
 
-                # ─── GAME STARTED: * → in_game ─────────────────────
-                if new_state == ObserverState.IN_GAME and self._prev_state != ObserverState.IN_GAME:
-                    self._credit_consumed = True
-                    self.status.games_observed += 1
-                    logger.info(f"[Observer:{self.board_id}] GAME STARTED — credit_consumed=True, games_observed={self.status.games_observed}")
-                    if self._on_game_started:
-                        try:
-                            await self._on_game_started(self.board_id)
-                        except Exception as e:
-                            logger.error(f"[Observer:{self.board_id}] on_game_started callback ERROR: {e}", exc_info=True)
+                    # Non-in_game detected while match should be active
+                    self._exit_polls += 1
+                    if raw == ObserverState.FINISHED:
+                        self._exit_saw_finished = True
 
-                # ─── GAME FINISHED: in_game → finished ──────────────
-                elif new_state == ObserverState.FINISHED and self._prev_state == ObserverState.IN_GAME:
-                    logger.info(f"[Observer:{self.board_id}] GAME FINISHED — calling on_game_ended(reason='finished')")
+                    logger.info(
+                        f"[Observer:{self.board_id}] debounce: exit poll {self._exit_polls}/{DEBOUNCE_EXIT_POLLS} "
+                        f"(raw={raw.value}, saw_finished={self._exit_saw_finished})"
+                    )
+
+                    if self._exit_polls < DEBOUNCE_EXIT_POLLS:
+                        # Not yet confirmed — continue polling faster
+                        continue
+
+                    # ─── CONFIRMED: match is really over ──────────
+                    reason = "finished" if self._exit_saw_finished else "aborted"
+                    confirmed_state = ObserverState.FINISHED if self._exit_saw_finished else raw
+
+                    logger.info(f"[Observer:{self.board_id}] === DEBOUNCE CONFIRMED: in_game -> {confirmed_state.value} (reason={reason}) ===")
+                    logger.info(f"[Observer:{self.board_id}]   exit polls needed: {DEBOUNCE_EXIT_POLLS}, saw_finished: {self._exit_saw_finished}")
+
+                    self._stable_state = confirmed_state
+                    self._set_state(confirmed_state)
+                    self._exit_polls = 0
+                    self._exit_saw_finished = False
+
+                    # Fire callback
                     if self._on_game_ended:
                         try:
-                            await self._on_game_ended(self.board_id, "finished")
+                            await self._on_game_ended(self.board_id, reason)
                         except Exception as e:
-                            logger.error(f"[Observer:{self.board_id}] on_game_ended(finished) callback ERROR: {e}", exc_info=True)
+                            logger.error(f"[Observer:{self.board_id}] on_game_ended({reason}) ERROR: {e}", exc_info=True)
                     self._credit_consumed = False
 
-                # ─── GAME ABORTED: in_game → idle ──────────────────
-                elif self._prev_state == ObserverState.IN_GAME and new_state in (ObserverState.IDLE, ObserverState.UNKNOWN):
-                    logger.info(f"[Observer:{self.board_id}] GAME ABORTED — credit already consumed, calling on_game_ended(reason='aborted')")
-                    if self._on_game_ended:
-                        try:
-                            await self._on_game_ended(self.board_id, "aborted")
-                        except Exception as e:
-                            logger.error(f"[Observer:{self.board_id}] on_game_ended(aborted) callback ERROR: {e}", exc_info=True)
-                    self._credit_consumed = False
+                # ═══════════════════════════════════════════════
+                # CASE B: Stable state is NOT in_game
+                # ═══════════════════════════════════════════════
+                else:
+                    if raw == stable:
+                        continue  # No change
 
-                # ─── POST-GAME: finished → idle (result dismissed) ──
-                elif self._prev_state == ObserverState.FINISHED and new_state == ObserverState.IDLE:
-                    logger.info(f"[Observer:{self.board_id}] POST-GAME: finished → idle (result screen dismissed)")
-                    # Safety net: if session should have ended but didn't, check now
-                    if self._on_game_ended:
-                        try:
-                            await self._on_game_ended(self.board_id, "post_finish_check")
-                        except Exception as e:
-                            logger.error(f"[Observer:{self.board_id}] on_game_ended(post_finish_check) ERROR: {e}", exc_info=True)
+                    # ─── Entering IN_GAME: immediate (credit consumed) ──
+                    if raw == ObserverState.IN_GAME:
+                        logger.info(f"[Observer:{self.board_id}] === TRANSITION: {stable.value} -> in_game (immediate) ===")
+                        self._stable_state = ObserverState.IN_GAME
+                        self._set_state(ObserverState.IN_GAME)
+                        self._credit_consumed = True
+                        self._exit_polls = 0
+                        self._exit_saw_finished = False
+                        self.status.games_observed += 1
 
-                self._prev_state = new_state
+                        logger.info(f"[Observer:{self.board_id}] GAME STARTED — credit_consumed=True, games_observed={self.status.games_observed}")
+                        if self._on_game_started:
+                            try:
+                                await self._on_game_started(self.board_id)
+                            except Exception as e:
+                                logger.error(f"[Observer:{self.board_id}] on_game_started ERROR: {e}", exc_info=True)
+
+                    # ─── Post-game: finished → idle (result dismissed) ──
+                    elif stable == ObserverState.FINISHED and raw == ObserverState.IDLE:
+                        logger.info(f"[Observer:{self.board_id}] === TRANSITION: finished -> idle (result dismissed) ===")
+                        self._stable_state = ObserverState.IDLE
+                        self._set_state(ObserverState.IDLE)
+
+                        if self._on_game_ended:
+                            try:
+                                await self._on_game_ended(self.board_id, "post_finish_check")
+                            except Exception as e:
+                                logger.error(f"[Observer:{self.board_id}] on_game_ended(post_finish_check) ERROR: {e}", exc_info=True)
+
+                    # ─── Other transitions (idle ↔ unknown, etc.) ──
+                    else:
+                        logger.info(f"[Observer:{self.board_id}] === TRANSITION: {stable.value} -> {raw.value} ===")
+                        self._stable_state = raw
+                        self._set_state(raw)
 
             except asyncio.CancelledError:
                 break
@@ -375,7 +448,7 @@ class AutodartsObserver:
                 logger.error(f"[Observer:{self.board_id}] Observe loop error: {e}")
                 self.status.last_error = str(e)[:200]
                 self._set_state(ObserverState.ERROR)
-                self._prev_state = ObserverState.ERROR
+                self._stable_state = ObserverState.ERROR
                 await asyncio.sleep(OBSERVER_POLL_INTERVAL * 2)
 
         logger.info(f"[Observer:{self.board_id}] Observe loop ended")
