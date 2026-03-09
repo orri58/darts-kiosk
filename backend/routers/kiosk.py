@@ -417,6 +417,15 @@ async def get_overlay_data(board_id: str, db: AsyncSession = Depends(get_db)):
     if not is_last and session.pricing_mode == PricingMode.PER_GAME.value:
         is_last = (session.credits_remaining or 0) <= 0
 
+    # Include upsell texts for last-game display (credit mode only)
+    upsell_message = ""
+    upsell_pricing = ""
+    if is_last and session.pricing_mode != PricingMode.PER_TIME.value:
+        from backend.models import DEFAULT_KIOSK_TEXTS
+        kiosk_texts = await get_or_create_setting(db, "kiosk_texts", DEFAULT_KIOSK_TEXTS)
+        upsell_message = kiosk_texts.get("upsell_message", "")
+        upsell_pricing = kiosk_texts.get("upsell_pricing", "")
+
     return {
         "visible": True,
         "board_name": board.name,
@@ -427,6 +436,8 @@ async def get_overlay_data(board_id: str, db: AsyncSession = Depends(get_db)):
         "observer_state": obs_status.get("state"),
         "is_last_game": is_last,
         "session_id": session.id,
+        "upsell_message": upsell_message,
+        "upsell_pricing": upsell_pricing,
     }
 
 
