@@ -87,16 +87,18 @@ export default function KioskLayout() {
     return () => clearInterval(interval);
   }, [fetchBoardStatus]);
 
-  // Window management: hide kiosk window when Autodarts Chrome is active
+  // Stable window title for Win32 window manager identification
+  useEffect(() => {
+    document.title = 'DartsKiosk';
+  }, []);
+
+  // Fallback window management (non-kiosk-mode or non-Windows)
+  // The real hiding is done by backend window_manager.py via Win32 API
   const prevBrowserOpenRef = useRef(false);
   useEffect(() => {
     if (observerBrowserOpen && !prevBrowserOpenRef.current) {
-      // Autodarts Chrome just opened — push kiosk to background
-      document.title = 'Darts Kiosk — Autodarts aktiv';
       try { window.blur(); } catch {}
     } else if (!observerBrowserOpen && prevBrowserOpenRef.current) {
-      // Autodarts Chrome closed — bring kiosk to foreground
-      document.title = 'Darts Kiosk';
       try { window.focus(); } catch {}
     }
     prevBrowserOpenRef.current = observerBrowserOpen;

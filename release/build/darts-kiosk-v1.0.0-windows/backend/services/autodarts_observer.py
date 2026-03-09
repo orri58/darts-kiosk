@@ -14,6 +14,18 @@ CHROME PROFILE:
     - Google login sessions
     - Cookies and storage
     - Browser extensions
+  Profile directory: data/chrome_profile/{board_id}/
+  Profile is NEVER recreated — operator logs in once and it persists.
+
+AUTOMATION DETECTION:
+  ignore_default_args=["--enable-automation"] prevents the
+  "Chrome is being controlled by automated test software" banner.
+  Additional flags disable automation fingerprinting.
+
+WINDOW MANAGEMENT:
+  On Windows, after launching Chrome, the kiosk window is hidden via
+  Win32 API (SW_HIDE). On close, the kiosk window is restored to
+  fullscreen via SW_SHOW + SW_SHOWMAXIMIZED + SetForegroundWindow.
 
 States: closed, idle, in_game, finished, unknown, error
 
@@ -119,8 +131,9 @@ class AutodartsObserver:
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
 
-        # Determine Chrome profile directory per board
+        # Persistent Chrome profile per board — NEVER recreated
         profile_dir = os.path.join(CHROME_PROFILE_DIR, self.board_id)
+        profile_exists = os.path.exists(os.path.join(profile_dir, 'Default'))
         os.makedirs(profile_dir, exist_ok=True)
         self.status.chrome_profile = profile_dir
 
@@ -130,23 +143,26 @@ class AutodartsObserver:
         logger.info(f"[Observer:{self.board_id}]   platform: {sys.platform}")
         logger.info(f"[Observer:{self.board_id}]   event_loop: {type(asyncio.get_event_loop_policy()).__name__}")
         logger.info(f"[Observer:{self.board_id}]   chrome_profile: {profile_dir}")
+        if profile_exists:
+            logger.info(f"[Observer:{self.board_id}]   profile_status: REUSING (Google login preserved)")
+        else:
+            logger.info(f"[Observer:{self.board_id}]   profile_status: NEW (first launch — login required)")
 
         try:
-            logger.info(f"[Observer:{self.board_id}]   Step 1/4: Importing playwright...")
+            logger.info(f"[Observer:{self.board_id}]   Step 1/5: Importing playwright...")
             from playwright.async_api import async_playwright
 
-            logger.info(f"[Observer:{self.board_id}]   Step 2/4: Starting playwright runtime...")
+            logger.info(f"[Observer:{self.board_id}]   Step 2/5: Starting playwright runtime...")
             self._playwright = await async_playwright().start()
 
-            # Build Chrome launch args
+            # Chrome launch args — clean, no automation fingerprinting
             chrome_args = [
-                '--no-sandbox',
+                '--disable-blink-features=AutomationControlled',
                 '--disable-dev-shm-usage',
-                '--disable-infobars',
-                '--disable-extensions-except=',
                 '--disable-default-apps',
                 '--disable-translate',
                 '--disable-sync',
+                '--disable-background-timer-throttling',
                 '--no-first-run',
                 '--no-default-browser-check',
                 '--autoplay-policy=no-user-gesture-required',
@@ -157,20 +173,20 @@ class AutodartsObserver:
                     '--kiosk',
                 ])
 
-            logger.info(f"[Observer:{self.board_id}]   Step 3/4: Launching Chrome (persistent context, channel=chrome)...")
-            logger.info(f"[Observer:{self.board_id}]     args: {chrome_args}")
+            logger.info(f"[Observer:{self.board_id}]   Step 3/5: Launching Chrome (persistent context, channel=chrome)...")
 
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=profile_dir,
                 channel="chrome",
                 headless=headless,
+                ignore_default_args=["--enable-automation"],
                 args=chrome_args,
                 viewport=None if not headless else {"width": 1280, "height": 800},
                 no_viewport=not headless,
                 ignore_https_errors=True,
                 accept_downloads=False,
             )
-            logger.info(f"[Observer:{self.board_id}]   Step 3/4: Chrome launched OK (persistent context)")
+            logger.info(f"[Observer:{self.board_id}]   Step 3/5: Chrome launched OK (no automation banner)")
 
             # Use existing page or create new one
             if self._context.pages:
@@ -178,15 +194,26 @@ class AutodartsObserver:
             else:
                 self._page = await self._context.new_page()
 
-            logger.info(f"[Observer:{self.board_id}]   Step 4/4: Navigating to {url}...")
+            logger.info(f"[Observer:{self.board_id}]   Step 4/5: Navigating to {url}...")
             await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
             self.status.browser_open = True
             self._set_state(ObserverState.IDLE)
             self._prev_state = ObserverState.IDLE
+            logger.info(f"[Observer:{self.board_id}]   Step 5/5: Window management...")
+
+            # OS-level window management: hide kiosk, Autodarts takes foreground
+            try:
+                from backend.services.window_manager import hide_kiosk_window
+                await asyncio.sleep(1.5)  # Let Chrome window fully render
+                await hide_kiosk_window()
+                logger.info(f"[Observer:{self.board_id}]   Kiosk window hidden (Autodarts visible)")
+            except Exception as wm_err:
+                logger.warning(f"[Observer:{self.board_id}]   Window management skipped: {wm_err}")
+
             logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH SUCCESS ===")
-            logger.info(f"[Observer:{self.board_id}]   Chrome is now fullscreen with Autodarts")
-            logger.info(f"[Observer:{self.board_id}]   Google login preserved via profile: {profile_dir}")
+            logger.info(f"[Observer:{self.board_id}]   Autodarts fullscreen, kiosk hidden")
+            logger.info(f"[Observer:{self.board_id}]   Profile: {profile_dir}")
 
             self._observe_task = asyncio.create_task(self._observe_loop())
 
@@ -200,8 +227,8 @@ class AutodartsObserver:
             await self._cleanup()
 
     async def close_session(self):
-        """Close Chrome and stop observing."""
-        logger.info(f"[Observer:{self.board_id}] Closing session (closing Chrome)...")
+        """Close Chrome and stop observing. Restore kiosk window."""
+        logger.info(f"[Observer:{self.board_id}] Closing session...")
         self._stopping = True
 
         if self._observe_task and not self._observe_task.done():
@@ -213,7 +240,17 @@ class AutodartsObserver:
 
         await self._cleanup()
         self._set_state(ObserverState.CLOSED)
-        logger.info(f"[Observer:{self.board_id}] Session closed — Chrome closed, kiosk can return to foreground")
+
+        # Restore kiosk window to fullscreen foreground
+        try:
+            from backend.services.window_manager import restore_kiosk_window
+            await asyncio.sleep(0.5)  # Brief pause after Chrome closes
+            await restore_kiosk_window()
+            logger.info(f"[Observer:{self.board_id}] Kiosk window restored to foreground")
+        except Exception as wm_err:
+            logger.warning(f"[Observer:{self.board_id}] Window restore skipped: {wm_err}")
+
+        logger.info(f"[Observer:{self.board_id}] Session closed")
 
     async def _cleanup(self):
         """Close context and playwright. Profile data is preserved on disk."""
