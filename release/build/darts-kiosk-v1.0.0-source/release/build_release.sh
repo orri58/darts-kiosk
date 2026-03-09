@@ -104,6 +104,7 @@ echo "playwright==1.58.0" >> "${WIN_DIR}/backend/requirements.txt"
 
 # Copy Windows scripts
 cp "${SCRIPT_DIR}/windows/"*.bat "${WIN_DIR}/"
+cp "${SCRIPT_DIR}/windows/run_backend.py" "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/README.md" "${WIN_DIR}/"
 
 # Create Windows .env files
@@ -120,6 +121,8 @@ AUTODARTS_URL=https://play.autodarts.io
 AUTODARTS_MODE=observer
 AUTODARTS_HEADLESS=false
 AUTODARTS_MOCK=false
+UPDATE_CHECK_ENABLED=true
+UPDATE_CHECK_INTERVAL_HOURS=24
 EOF
 
 # Frontend .env will be dynamically updated by start.bat with LAN IP

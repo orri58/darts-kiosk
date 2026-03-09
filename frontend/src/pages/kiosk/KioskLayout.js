@@ -40,6 +40,7 @@ export default function KioskLayout() {
   const [autodartsMode, setAutodartsMode] = useState(null);
   const [observerBrowserOpen, setObserverBrowserOpen] = useState(false);
   const [observerState, setObserverState] = useState('closed');
+  const [observerError, setObserverError] = useState(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState(null);
   const [matchToken, setMatchToken] = useState(null);
@@ -53,6 +54,7 @@ export default function KioskLayout() {
       setAutodartsMode(d.autodarts_mode || null);
       setObserverBrowserOpen(d.observer_browser_open || false);
       setObserverState(d.observer_state || 'closed');
+      setObserverError(d.observer_error || null);
 
       if (showingQrRef.current) return;
 
@@ -188,6 +190,7 @@ export default function KioskLayout() {
           boardId={boardId}
           observerBrowserOpen={observerBrowserOpen}
           observerState={observerState}
+          observerError={observerError}
           onEndGame={handleEndGame}
           onCallStaff={handleCallStaff}
         />

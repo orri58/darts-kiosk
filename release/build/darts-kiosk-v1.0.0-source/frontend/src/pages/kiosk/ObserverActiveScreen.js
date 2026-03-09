@@ -23,6 +23,7 @@ export default function ObserverActiveScreen({
   boardId,
   observerBrowserOpen,
   observerState,
+  observerError,
   onEndGame,
   onCallStaff,
 }) {
@@ -97,9 +98,11 @@ export default function ObserverActiveScreen({
             : 'Verbindung zu Autodarts wird hergestellt...'}
         </p>
 
-        {observerState === 'error' && (
-          <p className="text-sm text-red-400/70 mb-6">
-            Pruefen Sie die Autodarts-URL in den Board-Einstellungen und starten Sie erneut.
+        {isError && (
+          <p className="text-sm text-red-400/70 mb-6 max-w-md">
+            {observerError
+              ? observerError.split('\n')[0].substring(0, 120)
+              : 'Pruefen Sie die Autodarts-URL und starten Sie erneut.'}
           </p>
         )}
 

@@ -151,6 +151,17 @@ if %ERRORLEVEL% NEQ 0 (
     echo   [OK] Playwright Chromium installiert
 )
 
+REM Validate Playwright browser can launch
+echo   Teste Playwright Browser-Start...
+python -c "import asyncio; asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy()); from playwright.sync_api import sync_playwright; p = sync_playwright().start(); b = p.chromium.launch(headless=True); b.close(); p.stop(); print('  [OK] Playwright Browser startet erfolgreich')" 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo   [WARN] Playwright Browser-Start fehlgeschlagen
+    echo          Playwright-Abhaengigkeiten installieren...
+    python -m playwright install-deps chromium 2>nul
+) else (
+    echo   [OK] Playwright Browser-Validierung bestanden
+)
+
 REM === 7. Frontend ===
 echo.
 echo [7/7] Frontend-Pakete installieren (kann 3-5 Min dauern)...

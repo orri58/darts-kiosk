@@ -274,6 +274,7 @@ async def get_board_session(board_id: str, db: AsyncSession = Depends(get_db)):
         "autodarts_mode": os.environ.get('AUTODARTS_MODE', 'observer'),
         "observer_browser_open": obs_status.get("browser_open", False),
         "observer_state": obs_status.get("state", "closed"),
+        "observer_error": obs_status.get("last_error"),
         "session": SessionResponse(
             id=session.id, board_id=session.board_id, pricing_mode=session.pricing_mode,
             game_type=session.game_type, credits_total=session.credits_total,

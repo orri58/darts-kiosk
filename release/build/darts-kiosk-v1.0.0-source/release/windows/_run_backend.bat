@@ -1,7 +1,7 @@
 @echo off
-REM Helper: activates venv and launches backend from project root
+REM Helper: activates venv and launches backend via dedicated Windows launcher
 cd /d "%~dp0"
 if exist ".venv\Scripts\activate.bat" (
     call .venv\Scripts\activate.bat
 )
-python -m uvicorn backend.server:app --host 0.0.0.0 --port 8001 --reload > logs\backend.log 2>&1
+python run_backend.py > logs\backend.log 2>&1

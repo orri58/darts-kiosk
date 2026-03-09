@@ -203,11 +203,16 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
         logger.info(f"[Kiosk] AUTODARTS_MODE={AUTODARTS_MODE}, skipping observer")
         return
     if not autodarts_url:
-        logger.info(f"[Kiosk] No autodarts_url for {board_id}, skipping observer")
+        logger.warning(f"[Kiosk] No autodarts_url for {board_id}, skipping observer start")
         return
 
-    logger.info(f"[Kiosk] Starting observer for {board_id} -> {autodarts_url}")
-    headless = os.environ.get('AUTODARTS_HEADLESS', 'true').lower() == 'true'
+    headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
+    logger.info("[Kiosk] === Observer Start Request ===")
+    logger.info(f"[Kiosk]   board_id: {board_id}")
+    logger.info(f"[Kiosk]   autodarts_url: {autodarts_url}")
+    logger.info(f"[Kiosk]   headless: {headless}")
+    logger.info(f"[Kiosk]   AUTODARTS_MODE: {AUTODARTS_MODE}")
+
     await observer_manager.open(
         board_id=board_id,
         autodarts_url=autodarts_url,
@@ -216,9 +221,14 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
         headless=headless,
     )
 
+    status = observer_manager.get_status(board_id)
+    logger.info(f"[Kiosk] Observer post-start status: state={status['state']}, browser_open={status['browser_open']}")
+
 
 async def stop_observer_for_board(board_id: str):
+    logger.info(f"[Kiosk] Stopping observer for {board_id} (closing Autodarts browser)")
     await observer_manager.close(board_id)
+    logger.info(f"[Kiosk] Observer stopped for {board_id}")
 
 
 # =====================================================================

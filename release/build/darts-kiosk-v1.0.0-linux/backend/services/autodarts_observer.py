@@ -3,6 +3,11 @@ Autodarts Observer Service — MVP Observer Mode
 Opens the Autodarts browser and passively observes game state.
 Does NOT automate game setup or player entry.
 
+MVP SCOPE:
+  Observer only tracks browser sessions launched by THIS system.
+  Manually opened external browser windows are NOT detected.
+  Each board gets its own isolated observer/browser instance.
+
 States: closed, idle, in_game, finished, unknown, error
 
 Credit logic:
@@ -21,6 +26,12 @@ logger = logging.getLogger(__name__)
 
 AUTODARTS_URL = os.environ.get('AUTODARTS_URL', 'https://play.autodarts.io')
 OBSERVER_POLL_INTERVAL = int(os.environ.get('OBSERVER_POLL_INTERVAL', '4'))
+
+
+def import_platform() -> str:
+    import sys
+    import platform
+    return f"{sys.platform}/{platform.machine()}"
 
 
 class ObserverState(str, Enum):
@@ -102,10 +113,17 @@ class AutodartsObserver:
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
 
-        logger.info(f"[Observer:{self.board_id}] Opening browser -> {url} (headless={headless})")
+        logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH START ===")
+        logger.info(f"[Observer:{self.board_id}]   URL: {url}")
+        logger.info(f"[Observer:{self.board_id}]   headless: {headless}")
+        logger.info(f"[Observer:{self.board_id}]   platform: {import_platform()}")
+        logger.info(f"[Observer:{self.board_id}]   event loop: {type(asyncio.get_event_loop_policy()).__name__}")
 
         try:
+            logger.info(f"[Observer:{self.board_id}]   Step 1/6: Importing playwright...")
             from playwright.async_api import async_playwright
+
+            logger.info(f"[Observer:{self.board_id}]   Step 2/6: Starting playwright runtime...")
             self._playwright = await async_playwright().start()
 
             launch_args = [
@@ -119,28 +137,40 @@ class AutodartsObserver:
                     '--kiosk',
                 ])
 
+            logger.info(f"[Observer:{self.board_id}]   Step 3/6: Launching chromium (args={launch_args})...")
             self._browser = await self._playwright.chromium.launch(
                 headless=headless,
                 args=launch_args,
             )
+            logger.info(f"[Observer:{self.board_id}]   Step 3/6: Browser process created OK")
+
+            logger.info(f"[Observer:{self.board_id}]   Step 4/6: Creating browser context...")
             self._context = await self._browser.new_context(
                 viewport=None if not headless else {"width": 1280, "height": 800},
                 no_viewport=not headless,
                 ignore_https_errors=True,
             )
+
+            logger.info(f"[Observer:{self.board_id}]   Step 5/6: Opening new page...")
             self._page = await self._context.new_page()
+
+            logger.info(f"[Observer:{self.board_id}]   Step 6/6: Navigating to {url}...")
             await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
             self.status.browser_open = True
             self._set_state(ObserverState.IDLE)
             self._prev_state = ObserverState.IDLE
-            logger.info(f"[Observer:{self.board_id}] Browser opened successfully")
+            logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH SUCCESS ===")
 
             self._observe_task = asyncio.create_task(self._observe_loop())
 
         except Exception as e:
-            logger.error(f"[Observer:{self.board_id}] Failed to open browser: {e}", exc_info=True)
-            self.status.last_error = str(e)
+            logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH FAILED ===")
+            logger.error(f"[Observer:{self.board_id}]   Error type: {type(e).__name__}")
+            logger.error(f"[Observer:{self.board_id}]   Error: {e}", exc_info=True)
+            # Store concise error for frontend display (first line only)
+            error_msg = str(e).split('\n')[0][:200]
+            self.status.last_error = f"{type(e).__name__}: {error_msg}"
             self._set_state(ObserverState.ERROR)
             await self._cleanup_browser()
 
