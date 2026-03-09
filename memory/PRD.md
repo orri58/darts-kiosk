@@ -9,14 +9,14 @@ Must behave like a real arcade machine on Windows kiosk PCs.
 - **Frontend:** React (pre-built static files served by backend — NO dev server needed)
 - **Deployment:** Windows .bat scripts (non-Docker) for kiosk PCs
 - **Integration:** Playwright for Autodarts browser automation
-- **Update System:** GitHub Releases → Admin Panel → External Updater (updater.py)
+- **Update System:** GitHub Releases -> Admin Panel -> External Updater (updater.py)
 
-## Production Architecture (v1.7.1)
+## Production Architecture (v1.7.2)
 ```
 Single Server (Port 8001):
-  /api/*     → FastAPI routes (REST + WebSocket)
-  /static/*  → Frontend JS/CSS/images (from frontend/build/static/)
-  /*         → SPA catch-all returns index.html
+  /api/*     -> FastAPI routes (REST + WebSocket)
+  /static/*  -> Frontend JS/CSS/images (from frontend/build/static/)
+  /*         -> SPA catch-all returns index.html
 
 No Node.js required at runtime. No dev server.
 Backend is the ONLY process (+ Chrome overlay).
@@ -24,23 +24,58 @@ Backend is the ONLY process (+ Chrome overlay).
 
 ## Observer State Machine
 ```
-Detection Priority (FIXED in v1.7.1):
-  1. Strong match-end buttons (Rematch/Share/NewGame TEXT) → FINISHED
+Detection Priority:
+  1. Strong match-end buttons (Rematch/Share/NewGame TEXT) -> FINISHED
      ALWAYS wins, even if in_game markers still present in DOM.
-  2. in_game markers WITHOUT strong end markers → IN_GAME
-  3. Generic result CSS classes only → ROUND_TRANSITION
-  4. Nothing → IDLE
+  2. in_game markers WITHOUT strong end markers -> IN_GAME
+  3. Generic result CSS classes only -> ROUND_TRANSITION
+  4. Nothing -> IDLE
 
 Debounce (exit from IN_GAME):
-  ROUND_TRANSITION → resets exit counter (turn change, match active)
-  FINISHED         → increments exit counter (saw_finished=True)
-  IDLE             → increments exit counter (abort scenario)
-  3 consecutive exit polls confirm → callback fired
+  ROUND_TRANSITION -> resets exit counter (turn change, match active)
+  FINISHED         -> increments exit counter (saw_finished=True)
+  IDLE             -> increments exit counter (abort scenario)
+  3 consecutive exit polls confirm -> callback fired
 
-Last-Credit Lock (FIXED in v1.7.1):
-  Match ends → FINISHED confirmed → _on_game_ended("finished")
-  → credits_remaining <= 0 → should_lock=True
-  → close observer/browser → lock board → restore kiosk
+Last-Credit Lock (FIXED in v1.7.2):
+  Match ends -> FINISHED confirmed -> _on_game_ended("finished")
+  -> credits_remaining <= 0 -> should_lock=True
+  -> close observer/browser -> kill overlay process -> lock board -> restore kiosk
+  Full 3-step finalization chain with step-by-step logging.
+```
+
+## Finalization Chain (v1.7.2)
+```
+_on_game_ended(board_id, reason):
+  1. Check credits/time -> decide should_lock
+  2. If should_lock: update session (FINISHED), set board (LOCKED)
+  3. Broadcast board_status=locked via WebSocket
+  4. Schedule _safe_close_observer:
+     step_1: Close observer (Autodarts browser)
+     step_2: Kill credits overlay process (window_manager.kill_overlay_process)
+     step_3: Verify board locked in DB
+  5. Observer close_session:
+     - Cancel observe loop
+     - Close Playwright context (Chrome)
+     - Restore kiosk window (window_manager.restore_kiosk_window)
+```
+
+## Update System (v1.7.2)
+```
+Install flow:
+  1. Create app backup
+  2. Find downloaded asset
+  3. Extract & validate ZIP structure
+  4. Write update manifest
+  5. Launch external updater process
+  6. If launch fails -> HTTP 500 with error detail to frontend
+
+External updater.py:
+  - File-based logging to logs/updater.log
+  - Absolute path resolution for all operations
+  - Step-by-step logging (project_root, staging_dir, backup_path)
+  - Windows: subprocess.Popen with CREATE_NEW_CONSOLE (no close_fds)
+  - Linux: start_new_session with stdout/stderr redirect
 ```
 
 ## Windows Startup (v1.7.1)
@@ -73,16 +108,20 @@ autostart.bat:
 - v1.7.0: GitHub-based Update System (check, download, install, rollback, admin UI)
 - v1.7.1: Production Hardening
   - Frontend served as static build by FastAPI (no Node.js/dev server at runtime)
-  - SPA routing: all non-API routes → index.html
+  - SPA routing: all non-API routes -> index.html
   - WebSocket URL auto-detection for same-origin mode
   - Windows watchdog (auto-restart on crash, max 5 within 5 min)
   - Windows autostart (VBS launcher + Startup folder, no admin required)
-  - Simplified start.bat (backend + overlay only, no frontend process)
-  - Observer fix: strong match-end markers override in_game (Rematch/Share buttons)
-  - Detailed finalization logging (should_lock, lock_reason, credits)
+  - Observer fix: strong match-end markers override in_game
   - Private repo download fix: uses GitHub API URL with Accept: application/octet-stream
-  - 401 handling for invalid/expired tokens, clear error messages
-  - 30/30 tests passed (16 unit + 15 API/UI)
+- v1.7.2: P0 Bug Fixes (2026-03-09)
+  - Update installer: proper error propagation (500 with detail instead of silent 200 OK)
+  - Update installer: Windows-compatible subprocess.Popen (CREATE_NEW_CONSOLE, no close_fds)
+  - External updater.py: file-based logging to logs/updater.log + absolute paths
+  - Match-end finalization: 3-step chain (observer close, overlay kill, DB verify)
+  - Overlay termination: window_manager.kill_overlay_process() via taskkill/pkill
+  - Observer close_session: step-by-step logging for debugging
+  - All tests passing: 9/9 backend tests (iteration_30)
 
 ## Remaining Backlog
 ### P1
