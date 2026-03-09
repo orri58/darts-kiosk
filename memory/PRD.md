@@ -3,64 +3,71 @@
 ## Original Problem Statement
 Production-ready, local-first Darts Kiosk + Admin Control system for a cafe running on Mini-PCs. Must behave like a real arcade machine on Windows kiosk PCs.
 
+## Core Architecture
+- **Backend:** FastAPI + SQLAlchemy + SQLite
+- **Frontend:** React + Tailwind CSS + Shadcn/UI
+- **Deployment:** Windows .bat scripts (non-Docker) for kiosk PCs
+- **Integration:** Playwright for Autodarts browser automation
+- **Update System:** GitHub Releases → Admin Panel → External Updater (updater.py)
+
 ## Observer State Machine (Three-Tier + Debounced)
 ```
 States: closed, idle, in_game, round_transition, finished, unknown, error
 
 DOM Detection (Three-Tier):
-  Tier 1: Active match markers (scoreboard, dart-input, etc.) → IN_GAME
+  Tier 1: Active match markers (scoreboard, dart-input) → IN_GAME
   Tier 2: Strong end buttons (Rematch/Share/NewGame text) → FINISHED
   Tier 3: Generic result CSS classes only → ROUND_TRANSITION
   Tier 4: No game markers → IDLE
 
-Observer Loop Logic (when stable=IN_GAME):
-  raw IN_GAME          → clear exit counter, continue
-  raw ROUND_TRANSITION → RESET exit counter to 0 (turn change, match active)
-  raw FINISHED         → increment exit counter, saw_finished=True
-  raw IDLE             → increment exit counter (abort scenario)
+Observer Loop:
+  raw IN_GAME          → clear exit counter
+  raw ROUND_TRANSITION → RESET exit counter (turn change)
+  raw FINISHED         → increment exit counter
+  raw IDLE             → increment exit counter
   exit_polls >= 3      → CONFIRMED exit → callback
-
-Normal poll: every 4s
-Debounce: 3 consecutive FINISHED/IDLE polls × 2s = 6s total
-ROUND_TRANSITION polls NEVER count toward exit.
-
-Entering in_game: IMMEDIATE (credit consumed promptly)
-Exiting in_game: DEBOUNCED with ROUND_TRANSITION immunity
-
-  idle → in_game (immediate):    _on_game_started → credit -1
-  in_game → round_transition:    NO ACTION (turn/round change)
-  in_game → finished (×3):       CONFIRMED → _on_game_ended("finished")
-  in_game → idle (×3):           CONFIRMED → _on_game_ended("aborted")
-  finished → idle:               _on_game_ended("post_finish_check")
-
-Lock decision: credits_remaining <= 0 OR time expired → close browser, restore kiosk
 ```
 
-## Chrome Launch Config
-```python
-ignore_default_args = [
-    "--enable-automation",           # removes automation banner
-    "--disable-extensions",          # preserves operator extensions
-    "--disable-component-extensions-with-background-pages",
-]
+## Update System Architecture
 ```
+Admin Panel → Backend (prepare) → updater.py (execute)
 
-## Setup Flow
-1. `setup_profile.bat` → operator opens Chrome with kiosk profile, logs into Google/Autodarts, installs extensions
-2. `start.bat` → reuses prepared profile, extensions + login preserved
+Flow:
+1. Admin: "Check for Updates" → GitHub API
+2. Admin: "Download" → Backend downloads .zip to data/downloads/
+3. Admin: "Install" → Backend: backup → extract → validate → manifest → launch updater.py
+4. updater.py: stop → replace files → start → health check
+5. On failure: automatic rollback from backup
+
+Protected paths (NEVER overwritten):
+- data/, logs/, chrome_profile/, .env files
+
+Release asset naming: darts-kiosk-v{VERSION}-windows.zip
+Version source: /VERSION file (single source of truth)
+```
 
 ## All Implemented Features
-- v1.0-1.5: Core system (Kiosk, Admin, Auth, Boards, Pricing, Sessions, Sound, i18n, White-Label, Updates, Observer)
+- v1.0-1.5: Core system (Kiosk, Admin, Auth, Boards, Pricing, Sessions, Sound, i18n, White-Label)
 - v1.6.0: Arcade Machine Runtime (overlay, window management)
 - v1.6.1-1.6.3: Chrome profile persistence, extension support, automation banner removal
-- v1.6.4: Observer Debounce Logic
+- v1.6.4: Observer Debounce Logic (3 polls × 2s = 6s confirmation)
 - v1.6.5: Three-Tier State Detection & ROUND_TRANSITION
-  - New ROUND_TRANSITION state prevents turn/round changes from locking the board
-  - Strong match-end markers (button text: Rematch/Share/NewGame) required for FINISHED
-  - Generic result CSS classes only → ROUND_TRANSITION (no session end)
-  - ROUND_TRANSITION resets exit debounce counter
-  - Unit tests: 10 scenarios + 5 regression (15 total observer tests)
-  - Full API lifecycle verified (26 tests total)
+  - ROUND_TRANSITION prevents turn changes from locking the board
+  - Strong match-end markers (Rematch/Share/NewGame buttons) required for FINISHED
+  - 15 unit tests for observer logic
+- v1.7.0: GitHub-based Update System
+  - VERSION file as single source of truth
+  - /api/system/version (public) and /api/health endpoints
+  - Full app backup (backend + frontend + scripts + VERSION)
+  - Update install pipeline: download → backup → extract → validate → manifest → updater.py
+  - Standalone updater.py (stop → replace → restart → health check → auto-rollback)
+  - Rollback from any app backup
+  - Admin UI: Install button, Rollback button, Update Result banner, Progress display
+  - Enhanced update history with event tracking
+  - .gitignore for proper GitHub repo structure
+  - RELEASE_GUIDE.md documentation
+  - update.bat for manual Windows update
+  - All 18 tests passed (13 backend API + 5 frontend UI)
 
 ## Remaining Backlog
 ### P1
