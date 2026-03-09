@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Lock, QrCode, Euro, Shield, Trophy, Crown, ShieldCheck, Target } from 'lucide-react';
 import { useI18n } from '../../context/I18nContext';
 import { useSettings } from '../../context/SettingsContext';
+import { QRCodeSVG } from 'qrcode.react';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -238,9 +239,30 @@ function PairingCode({ boardId }) {
 export default function LockedScreen({ branding, pricing, boardId }) {
   const { t } = useI18n();
   const { kioskTexts } = useSettings();
+  const [qrConfig, setQrConfig] = useState(null);
+  const [baseUrl, setBaseUrl] = useState('');
+
   const formatPrice = (amount, currency = 'EUR') => {
     return `${amount.toFixed(2)} ${currency}`;
   };
+
+  // Fetch QR config and base URL
+  useEffect(() => {
+    const fetchQrConfig = async () => {
+      try {
+        const [qrRes, urlRes] = await Promise.all([
+          fetch(`${API}/settings/lockscreen-qr`),
+          fetch(`${API}/system/base-url`),
+        ]);
+        if (qrRes.ok) setQrConfig(await qrRes.json());
+        if (urlRes.ok) {
+          const data = await urlRes.json();
+          setBaseUrl(data.base_url || '');
+        }
+      } catch { /* silent */ }
+    };
+    fetchQrConfig();
+  }, []);
 
   return (
     <div className="h-full w-full flex flex-col texture-overlay" data-testid="locked-screen">
@@ -337,9 +359,27 @@ export default function LockedScreen({ branding, pricing, boardId }) {
             <span className="text-sm uppercase tracking-wider">{t('board')}: {boardId}</span>
           </div>
           <PairingCode boardId={boardId} />
-          <div className="text-zinc-600 text-sm">
-            Staff Panel: <span className="font-mono">/admin</span>
-          </div>
+          {qrConfig?.enabled && baseUrl && (
+            <div className="flex items-center gap-3" data-testid="lockscreen-qr">
+              <div className="text-right">
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{qrConfig.label || 'Leaderboard'}</p>
+              </div>
+              <div className="bg-white p-1 rounded-sm">
+                <QRCodeSVG
+                  value={`${baseUrl}${qrConfig.path || '/public/leaderboard'}`}
+                  size={48}
+                  bgColor="#ffffff"
+                  fgColor="#09090b"
+                  level="L"
+                />
+              </div>
+            </div>
+          )}
+          {!qrConfig?.enabled && (
+            <div className="text-zinc-600 text-sm">
+              Staff Panel: <span className="font-mono">/admin</span>
+            </div>
+          )}
         </div>
       </div>
     </div>

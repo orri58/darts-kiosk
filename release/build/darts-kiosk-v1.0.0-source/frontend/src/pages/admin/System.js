@@ -52,6 +52,10 @@ export default function AdminSystem() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [githubReleases, setGithubReleases] = useState(null);
+  const [preparingUpdate, setPreparingUpdate] = useState(false);
+  const [updatePrep, setUpdatePrep] = useState(null);
   const headers = { Authorization: `Bearer ${token}` };
 
   const fetchAll = useCallback(async () => {
@@ -89,6 +93,38 @@ export default function AdminSystem() {
       toast.error('Backup fehlgeschlagen');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const handleCheckUpdates = async () => {
+    setCheckingUpdates(true);
+    try {
+      const res = await axios.get(`${API}/updates/check`, { headers });
+      setGithubReleases(res.data);
+      if (res.data.update_available) {
+        toast.success(`Neue Version v${res.data.latest_version} verfügbar!`);
+      } else if (!res.data.message) {
+        toast.info('Keine neuen Updates verfügbar');
+      }
+    } catch {
+      toast.error('Update-Prüfung fehlgeschlagen');
+    } finally {
+      setCheckingUpdates(false);
+    }
+  };
+
+  const handlePrepareUpdate = async (version) => {
+    setPreparingUpdate(true);
+    try {
+      const res = await axios.post(`${API}/updates/prepare?target_version=${version}`, {}, { headers });
+      setUpdatePrep(res.data);
+      if (res.data.backup_created) {
+        toast.success('Backup erstellt. Update bereit.');
+      }
+    } catch {
+      toast.error('Update-Vorbereitung fehlgeschlagen');
+    } finally {
+      setPreparingUpdate(false);
     }
   };
 
@@ -310,9 +346,22 @@ export default function AdminSystem() {
         <TabsContent value="updates">
           <Card className="bg-zinc-900 border-zinc-800">
             <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <ArrowUpCircle className="w-5 h-5 text-amber-500" /> Updates & Versionen
-              </CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-white flex items-center gap-2">
+                  <ArrowUpCircle className="w-5 h-5 text-amber-500" /> Updates & Versionen
+                </CardTitle>
+                <Button
+                  onClick={handleCheckUpdates}
+                  disabled={checkingUpdates}
+                  variant="outline"
+                  size="sm"
+                  className="border-zinc-700 text-zinc-400 hover:text-white"
+                  data-testid="check-updates-btn"
+                >
+                  <RefreshCw className={`w-3 h-3 mr-1 ${checkingUpdates ? 'animate-spin' : ''}`} />
+                  {checkingUpdates ? 'Prüfe...' : 'Auf Updates prüfen'}
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Current Version */}
@@ -321,32 +370,122 @@ export default function AdminSystem() {
                 <div className="flex items-center gap-3">
                   <CheckCircle className="w-5 h-5 text-emerald-500" />
                   <span className="text-xl font-mono text-white font-bold" data-testid="update-current-version">
-                    v{updates?.current_version}
+                    v{updates?.current_version || '1.0.0'}
                   </span>
-                  <span className="text-sm text-zinc-500">Image: {sysInfo?.image_tag}</span>
+                  {updates?.github_repo && (
+                    <span className="text-sm text-zinc-500">Repo: {updates.github_repo}</span>
+                  )}
                 </div>
               </div>
 
-              {/* Available Versions */}
-              <div>
-                <p className="text-sm text-zinc-400 mb-3 uppercase tracking-wider">Verfuegbare Versionen</p>
-                <div className="space-y-2">
-                  {updates?.available_versions?.map((v) => (
-                    <div key={v.version} className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid={`version-${v.version}`}>
-                      <div className="flex items-center gap-3">
-                        {v.is_current
-                          ? <CheckCircle className="w-4 h-4 text-emerald-500" />
-                          : <ArrowUpCircle className="w-4 h-4 text-zinc-500" />
-                        }
-                        <span className="text-white font-mono">v{v.version}</span>
-                        <span className="text-xs px-2 py-0.5 rounded bg-zinc-700 text-zinc-300">{v.tag}</span>
-                        {v.is_stable && <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">stable</span>}
-                        {v.is_current && <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">aktiv</span>}
+              {/* GitHub Check Result */}
+              {githubReleases && (
+                <>
+                  {githubReleases.message && (
+                    <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-sm">
+                      <p className="text-sm text-amber-400">{githubReleases.message}</p>
+                    </div>
+                  )}
+
+                  {!githubReleases.configured && (
+                    <div className="p-4 bg-zinc-800/30 border border-zinc-700/50 rounded-sm">
+                      <p className="text-sm text-zinc-400 mb-2 flex items-center gap-2">
+                        <Info className="w-4 h-4" /> GitHub-Repository konfigurieren
+                      </p>
+                      <p className="text-xs text-zinc-500">
+                        Setze <code className="text-amber-400">GITHUB_REPO=owner/darts-kiosk</code> in der .env Datei.
+                        Optional: <code className="text-amber-400">GITHUB_TOKEN</code> für private Repos.
+                      </p>
+                    </div>
+                  )}
+
+                  {githubReleases.update_available && (
+                    <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-sm">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-emerald-400 font-medium flex items-center gap-2">
+                            <ArrowUpCircle className="w-4 h-4" />
+                            Neue Version verfügbar: v{githubReleases.latest_version}
+                          </p>
+                          <p className="text-xs text-zinc-400 mt-1">{githubReleases.latest_name}</p>
+                          {githubReleases.latest_body && (
+                            <p className="text-xs text-zinc-500 mt-2 whitespace-pre-line">{githubReleases.latest_body}</p>
+                          )}
+                        </div>
+                        <Button
+                          onClick={() => handlePrepareUpdate(githubReleases.latest_version)}
+                          disabled={preparingUpdate}
+                          size="sm"
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white ml-4"
+                          data-testid="prepare-update-btn"
+                        >
+                          <Download className="w-3 h-3 mr-1" />
+                          {preparingUpdate ? 'Vorbereiten...' : 'Update vorbereiten'}
+                        </Button>
                       </div>
                     </div>
-                  ))}
+                  )}
+
+                  {/* Release List */}
+                  {githubReleases.releases?.length > 0 && (
+                    <div>
+                      <p className="text-sm text-zinc-400 mb-3 uppercase tracking-wider">GitHub Releases</p>
+                      <div className="space-y-2">
+                        {githubReleases.releases.map((r) => (
+                          <div key={r.tag} className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid={`release-${r.tag}`}>
+                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                              {r.is_current
+                                ? <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                                : r.is_newer
+                                  ? <ArrowUpCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                                  : <Clock className="w-4 h-4 text-zinc-600 flex-shrink-0" />
+                              }
+                              <span className="text-white font-mono">{r.tag}</span>
+                              <span className="text-xs text-zinc-500 truncate">{r.name}</span>
+                              {r.is_prerelease && <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">pre</span>}
+                              {r.is_current && <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">aktiv</span>}
+                            </div>
+                            {r.html_url && (
+                              <a href={r.html_url} target="_blank" rel="noreferrer" className="text-xs text-zinc-500 hover:text-amber-500 ml-2">
+                                GitHub &rarr;
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {githubReleases.last_check && (
+                    <p className="text-xs text-zinc-600">
+                      Zuletzt geprüft: {new Date(githubReleases.last_check).toLocaleString('de-DE')}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* Update Preparation Result */}
+              {updatePrep && (
+                <div className="p-4 bg-zinc-800/30 border border-zinc-700/50 rounded-sm space-y-3">
+                  <p className="text-sm text-zinc-300 font-medium">Update auf v{updatePrep.target_version} vorbereitet</p>
+                  {updatePrep.backup_created && (
+                    <p className="text-xs text-emerald-400 flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3" /> Backup erstellt: {updatePrep.backup_path}
+                    </p>
+                  )}
+                  <div className="text-xs text-zinc-500 space-y-1">
+                    <p className="font-medium text-zinc-400 mb-1">Manuelle Schritte:</p>
+                    {updatePrep.manual_steps?.map((step, i) => (
+                      <p key={i}>{step}</p>
+                    ))}
+                  </div>
+                  {updatePrep.release_url && (
+                    <a href={updatePrep.release_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-amber-500 hover:text-amber-400">
+                      <Download className="w-3 h-3" /> Release-Seite öffnen
+                    </a>
+                  )}
                 </div>
-              </div>
+              )}
 
               {/* Update History */}
               {updates?.update_history?.length > 0 && (
@@ -355,26 +494,15 @@ export default function AdminSystem() {
                   <div className="space-y-2">
                     {updates.update_history.map((h, i) => (
                       <div key={i} className="flex items-center gap-3 p-3 bg-zinc-800/50 rounded-sm text-sm">
-                        {h.success ? <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" /> : <XCircle className="w-4 h-4 text-red-500 flex-shrink-0" />}
-                        <span className="text-zinc-400">{h.board_id}</span>
-                        <span className="text-zinc-500">v{h.old_version} → v{h.new_version}</span>
+                        <Clock className="w-4 h-4 text-zinc-500 flex-shrink-0" />
+                        <span className="text-zinc-400">{h.action}</span>
+                        <span className="text-zinc-500">→ v{h.target_version}</span>
                         <span className="text-xs text-zinc-600 ml-auto">{new Date(h.timestamp).toLocaleString('de-DE')}</span>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
-
-              {/* Manual Update Instructions */}
-              <div className="p-4 bg-zinc-800/30 border border-zinc-700/50 rounded-sm">
-                <p className="text-sm text-zinc-400 mb-2 flex items-center gap-2">
-                  <Info className="w-4 h-4" /> Manuelles Update (Docker)
-                </p>
-                <code className="block text-xs text-zinc-500 font-mono space-y-1">
-                  <p>docker pull darts-kiosk:latest</p>
-                  <p>cd /opt/darts-kiosk && docker compose down && docker compose up -d</p>
-                </code>
-              </div>
             </CardContent>
           </Card>
         </TabsContent>

@@ -43,16 +43,22 @@ export function SettingsProvider({ children }) {
     theme_color: '#09090b',
     background_color: '#09090b',
   });
+  const [lockscreenQr, setLockscreenQr] = useState({
+    enabled: false,
+    label: 'Leaderboard & Stats',
+    path: '/public/leaderboard',
+  });
   const [loading, setLoading] = useState(true);
 
   const fetchSettings = useCallback(async () => {
     try {
-      const [brandingRes, pricingRes, palettesRes, textsRes, pwaRes] = await Promise.all([
+      const [brandingRes, pricingRes, palettesRes, textsRes, pwaRes, qrRes] = await Promise.all([
         axios.get(`${API}/settings/branding`),
         axios.get(`${API}/settings/pricing`),
         axios.get(`${API}/settings/palettes`),
         axios.get(`${API}/settings/kiosk-texts`).catch(() => ({ data: null })),
         axios.get(`${API}/settings/pwa`).catch(() => ({ data: null })),
+        axios.get(`${API}/settings/lockscreen-qr`).catch(() => ({ data: null })),
       ]);
       
       setBranding(brandingRes.data);
@@ -60,6 +66,7 @@ export function SettingsProvider({ children }) {
       setPalettes(palettesRes.data);
       if (textsRes.data) setKioskTexts(prev => ({ ...prev, ...textsRes.data }));
       if (pwaRes.data) setPwaConfig(prev => ({ ...prev, ...pwaRes.data }));
+      if (qrRes.data) setLockscreenQr(prev => ({ ...prev, ...qrRes.data }));
 
       // Set document title from branding
       document.title = brandingRes.data.cafe_name || 'Darts Kiosk';
@@ -122,6 +129,7 @@ export function SettingsProvider({ children }) {
       palettes,
       kioskTexts,
       pwaConfig,
+      lockscreenQr,
       loading,
       updateBranding,
       updatePricing,

@@ -65,13 +65,14 @@ const COLOR_FIELDS = [
 const EMPTY_PALETTE = { bg: '#09090b', surface: '#18181b', primary: '#f59e0b', secondary: '#ffffff', accent: '#ef4444', text: '#e4e4e7' };
 
 export default function AdminSettings() {
-  const { branding, pricing, palettes, kioskTexts, pwaConfig, updateBranding, updatePricing, updatePalettes, refreshSettings } = useSettings();
+  const { branding, pricing, palettes, kioskTexts, pwaConfig, lockscreenQr, updateBranding, updatePricing, updatePalettes, refreshSettings } = useSettings();
   const { token } = useAuth();
   
   const [localBranding, setLocalBranding] = useState(branding);
   const [localPricing, setLocalPricing] = useState(pricing);
   const [localKioskTexts, setLocalKioskTexts] = useState(kioskTexts);
   const [localPwa, setLocalPwa] = useState(pwaConfig);
+  const [localQr, setLocalQr] = useState(lockscreenQr);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -254,14 +255,20 @@ export default function AdminSettings() {
   useEffect(() => {
     setLocalPwa(pwaConfig);
   }, [pwaConfig]);
+  useEffect(() => {
+    setLocalQr(lockscreenQr);
+  }, [lockscreenQr]);
 
   const handleSaveKioskTexts = async () => {
     setSaving(true);
     try {
       const headers = { Authorization: `Bearer ${token}` };
-      await axios.put(`${API}/settings/kiosk-texts`, { value: localKioskTexts }, { headers });
+      await Promise.all([
+        axios.put(`${API}/settings/kiosk-texts`, { value: localKioskTexts }, { headers }),
+        axios.put(`${API}/settings/lockscreen-qr`, { value: localQr }, { headers }),
+      ]);
       refreshSettings();
-      toast.success('Kiosk-Texte gespeichert');
+      toast.success('Kiosk-Einstellungen gespeichert');
     } catch { toast.error('Fehler beim Speichern'); }
     finally { setSaving(false); }
   };
@@ -1281,6 +1288,36 @@ export default function AdminSettings() {
                     <Input data-testid="kiosk-text-time-label" value={localKioskTexts.time_label || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, time_label: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Zeit übrig" />
                   </div>
                 </div>
+              </div>
+
+              {/* Lock Screen QR Toggle */}
+              <div className="border-t border-zinc-800 pt-4">
+                <h4 className="text-sm font-medium text-zinc-300 mb-3">QR-Code auf Sperrbildschirm</h4>
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <Label className="text-zinc-300">QR für Leaderboard anzeigen</Label>
+                    <p className="text-xs text-zinc-500">Kleiner QR-Code unten rechts auf dem Sperrbildschirm</p>
+                  </div>
+                  <button
+                    data-testid="lockscreen-qr-toggle"
+                    onClick={() => setLocalQr(p => ({ ...p, enabled: !p.enabled }))}
+                    className={`w-12 h-6 rounded-full transition-colors relative ${localQr.enabled ? 'bg-amber-500' : 'bg-zinc-700'}`}
+                  >
+                    <div className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${localQr.enabled ? 'left-6' : 'left-0.5'}`} />
+                  </button>
+                </div>
+                {localQr.enabled && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                    <div>
+                      <Label className="text-zinc-300">QR-Label</Label>
+                      <Input data-testid="lockscreen-qr-label" value={localQr.label || ''} onChange={(e) => setLocalQr(p => ({ ...p, label: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Leaderboard & Stats" />
+                    </div>
+                    <div>
+                      <Label className="text-zinc-300">Zielseite (Pfad)</Label>
+                      <Input data-testid="lockscreen-qr-path" value={localQr.path || ''} onChange={(e) => setLocalQr(p => ({ ...p, path: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="/public/leaderboard" />
+                    </div>
+                  </div>
+                )}
               </div>
 
               <Button data-testid="save-kiosk-texts-btn" onClick={handleSaveKioskTexts} disabled={saving} className="bg-amber-500 hover:bg-amber-600 text-black">

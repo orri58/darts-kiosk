@@ -360,3 +360,9 @@ DEFAULT_PWA_CONFIG = {
     "theme_color": "#09090b",
     "background_color": "#09090b",
 }
+
+DEFAULT_LOCKSCREEN_QR = {
+    "enabled": False,
+    "label": "Leaderboard & Stats",
+    "path": "/public/leaderboard",
+}
