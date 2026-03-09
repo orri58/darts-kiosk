@@ -83,3 +83,7 @@ data/update_result.json
 chainlit.md
 .ipynb_checkpoints/
 frontend/node_modules/.cache/default-development/11.pack
+-e 
+# Environment files
+*.env
+*.env.*

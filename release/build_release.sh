@@ -9,6 +9,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="${SCRIPT_DIR}/build"
 
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
 # Read version from VERSION file (single source of truth)
 VERSION_FILE="${APP_DIR}/VERSION"
 if [[ -f "$VERSION_FILE" ]]; then
@@ -19,12 +25,6 @@ else
 fi
 
 echo -e "${CYAN}Building release v${VERSION}${NC}"
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
 
 log() { echo -e "${GREEN}[OK]${NC}   $1"; }
 step() { echo -e "\n${CYAN}==> ${BOLD}$1${NC}"; }
@@ -125,8 +125,8 @@ cp "${APP_DIR}/VERSION" "${WIN_DIR}/"
 # Copy updater
 cp "${APP_DIR}/updater.py" "${WIN_DIR}/"
 
-# Create Windows .env files
-cat > "${WIN_DIR}/backend/.env" << 'EOF'
+# Create Windows .env.example files (template only — never overwrite user config)
+cat > "${WIN_DIR}/backend/.env.example" << 'EOF'
 DATABASE_URL=sqlite+aiosqlite:///./data/db/darts.sqlite
 SYNC_DATABASE_URL=sqlite:///./data/db/darts.sqlite
 DATA_DIR=./data
@@ -145,8 +145,8 @@ GITHUB_REPO=
 GITHUB_TOKEN=
 EOF
 
-# Frontend .env will be dynamically updated by start.bat with LAN IP
-cat > "${WIN_DIR}/frontend/.env" << 'EOF'
+# Frontend .env.example
+cat > "${WIN_DIR}/frontend/.env.example" << 'EOF'
 REACT_APP_BACKEND_URL=http://localhost:8001
 EOF
 

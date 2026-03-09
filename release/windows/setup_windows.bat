@@ -39,6 +39,14 @@ if exist "backend\.env" (
     echo   [OK] backend\.env existiert bereits
     goto check_frontend_env
 )
+REM Try to copy from .env.example first
+if exist "backend\.env.example" (
+    echo   Kopiere backend\.env.example nach backend\.env ...
+    copy "backend\.env.example" "backend\.env" >nul
+    echo   [OK] backend\.env aus Vorlage erstellt
+    echo   HINWEIS: Bitte GITHUB_REPO in backend\.env konfigurieren!
+    goto check_frontend_env
+)
 echo   Erstelle backend\.env ...
 (
     echo DATABASE_URL=sqlite+aiosqlite:///./data/db/darts.sqlite
@@ -53,13 +61,21 @@ echo   Erstelle backend\.env ...
     echo AUTODARTS_MODE=observer
     echo AUTODARTS_HEADLESS=false
     echo AUTODARTS_MOCK=false
-    echo BOARD_ID=BOARD-1
+    echo UPDATE_CHECK_ENABLED=true
+    echo UPDATE_CHECK_INTERVAL_HOURS=24
+    echo GITHUB_REPO=
+    echo GITHUB_TOKEN=
 ) > backend\.env
 echo   [OK] backend\.env erstellt
 
 :check_frontend_env
 if exist "frontend\.env" (
     echo   [OK] frontend\.env existiert bereits
+    goto create_venv
+)
+if exist "frontend\.env.example" (
+    copy "frontend\.env.example" "frontend\.env" >nul
+    echo   [OK] frontend\.env aus Vorlage erstellt
     goto create_venv
 )
 >frontend\.env echo REACT_APP_BACKEND_URL=http://localhost:8001
