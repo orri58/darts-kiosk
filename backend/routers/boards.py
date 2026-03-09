@@ -266,9 +266,14 @@ async def get_board_session(board_id: str, db: AsyncSession = Depends(get_db)):
 
     session = await get_active_session_for_board(db, board.id)
 
+    from backend.services.autodarts_observer import observer_manager
+    obs_status = observer_manager.get_status(board.board_id)
+
     return {
         "board_status": board.status,
         "autodarts_mode": os.environ.get('AUTODARTS_MODE', 'observer'),
+        "observer_browser_open": obs_status.get("browser_open", False),
+        "observer_state": obs_status.get("state", "closed"),
         "session": SessionResponse(
             id=session.id, board_id=session.board_id, pricing_mode=session.pricing_mode,
             game_type=session.game_type, credits_total=session.credits_total,
