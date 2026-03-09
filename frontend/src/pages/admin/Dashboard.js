@@ -12,8 +12,13 @@ import {
   Coins,
   RefreshCw,
   Plus,
-  Minus
+  Minus,
+  ArrowUpCircle,
+  X,
+  FileText,
+  Settings
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
@@ -42,12 +47,15 @@ export default function AdminDashboard() {
   const { pricing } = useSettings();
   const { token } = useAuth();
   const { t } = useI18n();
+  const navigate = useNavigate();
   const [boards, setBoards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [observerStatuses, setObserverStatuses] = useState({});
   const [selectedBoard, setSelectedBoard] = useState(null);
   const [showUnlockDialog, setShowUnlockDialog] = useState(false);
   const [showExtendDialog, setShowExtendDialog] = useState(false);
+  const [updateNotification, setUpdateNotification] = useState(null);
+  const [showChangelog, setShowChangelog] = useState(false);
   
   // Unlock form state
   const [unlockMode, setUnlockMode] = useState('per_game');
@@ -92,6 +100,38 @@ export default function AdminDashboard() {
     }, 30000);
     return () => clearInterval(interval);
   }, [fetchBoards, wsConnected]);
+
+  // Fetch update notification
+  useEffect(() => {
+    const fetchNotification = async () => {
+      try {
+        const res = await axios.get(`${API}/updates/notification`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        const data = res.data;
+        if (data.update_available && data.dismissed_version !== data.latest_version) {
+          setUpdateNotification(data);
+        } else {
+          setUpdateNotification(null);
+        }
+      } catch { /* silent */ }
+    };
+    fetchNotification();
+    const iv = setInterval(fetchNotification, 300000); // re-check every 5 min
+    return () => clearInterval(iv);
+  }, [token]);
+
+  const dismissNotification = async () => {
+    if (!updateNotification) return;
+    try {
+      await axios.post(
+        `${API}/updates/notification/dismiss?version=${updateNotification.latest_version}`,
+        {},
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+    } catch { /* silent */ }
+    setUpdateNotification(null);
+  };
 
   // Calculate price
   const calculatePrice = () => {
@@ -213,6 +253,66 @@ export default function AdminDashboard() {
           {t('refresh')}
         </Button>
       </div>
+
+      {/* Update Notification Banner */}
+      {updateNotification && (
+        <div
+          className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-sm flex items-center justify-between gap-4"
+          data-testid="update-notification-banner"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <ArrowUpCircle className="w-6 h-6 text-emerald-400 flex-shrink-0" />
+            <div className="min-w-0">
+              <p className="text-emerald-400 font-medium">
+                Neue Version verfuegbar: v{updateNotification.latest_version}
+              </p>
+              {updateNotification.latest_name && (
+                <p className="text-sm text-zinc-400 truncate">{updateNotification.latest_name}</p>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            {updateNotification.latest_body && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowChangelog(!showChangelog)}
+                className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+                data-testid="update-show-changelog-btn"
+              >
+                <FileText className="w-3 h-3 mr-1" /> Release Notes
+              </Button>
+            )}
+            <Button
+              size="sm"
+              onClick={() => navigate('/admin/system')}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              data-testid="update-go-to-updates-btn"
+            >
+              <Settings className="w-3 h-3 mr-1" /> Update starten
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={dismissNotification}
+              className="text-zinc-500 hover:text-zinc-300 h-8 w-8"
+              data-testid="update-dismiss-btn"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Changelog Preview */}
+      {showChangelog && updateNotification?.latest_body && (
+        <div className="mb-6 p-4 bg-zinc-900 border border-zinc-800 rounded-sm" data-testid="update-changelog-preview">
+          <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Release Notes - v{updateNotification.latest_version}</p>
+          <pre className="text-sm text-zinc-400 whitespace-pre-wrap font-sans leading-relaxed max-h-48 overflow-y-auto">
+            {updateNotification.latest_body}
+          </pre>
+        </div>
+      )}
 
       {/* Board Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
