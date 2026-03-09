@@ -174,6 +174,30 @@ async def update_language(data: SettingsUpdate, admin: User = Depends(require_ad
     return setting.value
 
 
+# ===== Match Sharing Settings =====
+
+DEFAULT_MATCH_SHARING = {"enabled": False, "qr_timeout": 60}
+
+@router.get("/settings/match-sharing")
+async def get_match_sharing(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "match_sharing", DEFAULT_MATCH_SHARING)
+
+
+@router.put("/settings/match-sharing")
+async def update_match_sharing(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "match_sharing"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="match_sharing", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_match_sharing", "settings", "match_sharing")
+    return setting.value
+
+
+
 @router.get("/sounds/{pack}/{event}.wav")
 async def get_sound_file(pack: str, event: str):
     """Serve a sound WAV file with strong cache headers."""

@@ -3,8 +3,8 @@ import axios from 'axios';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
-import { useAuth } from '../../hooks/useAuth';
-import { useI18n } from '../../hooks/useI18n';
+import { useAuth } from '../../context/AuthContext';
+import { useI18n } from '../../context/I18nContext';
 import { FileDown, Calendar, Filter, TrendingUp, DollarSign, BarChart3, Hash } from 'lucide-react';
 import { toast } from 'sonner';
 

@@ -315,6 +315,7 @@ async def export_sessions_csv(
     board_id: Optional[str] = Query(None),
     pricing_mode: Optional[str] = Query(None),
     preset: Optional[str] = Query(None),
+    token: Optional[str] = Query(None),
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):

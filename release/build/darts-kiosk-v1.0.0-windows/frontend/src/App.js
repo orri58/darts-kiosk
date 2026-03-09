@@ -17,8 +17,10 @@ import AdminHealth from "./pages/admin/Health";
 import AdminSystem from "./pages/admin/System";
 import AdminDiscovery from "./pages/admin/Discovery";
 import AdminLeaderboard from "./pages/admin/Leaderboard";
+import AdminReports from "./pages/admin/Reports";
 import MatchPublicPage from "./pages/MatchPublicPage";
 import SetupWizard from "./pages/admin/SetupWizard";
+import CreditsOverlay from "./pages/CreditsOverlay";
 
 // Context
 import { AuthProvider } from "./context/AuthContext";
@@ -42,6 +44,9 @@ function App() {
             {/* Public Match Result */}
             <Route path="/match/:token" element={<MatchPublicPage />} />
             
+            {/* Credits Overlay (opened in separate small window on board PC) */}
+            <Route path="/overlay/:boardId" element={<CreditsOverlay />} />
+            
             {/* Admin Routes */}
             <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/admin" element={<AdminLayout />}>
@@ -55,6 +60,7 @@ function App() {
               <Route path="system" element={<AdminSystem />} />
               <Route path="discovery" element={<AdminDiscovery />} />
               <Route path="leaderboard" element={<AdminLeaderboard />} />
+              <Route path="reports" element={<AdminReports />} />
             </Route>
             
             {/* Default redirect */}
