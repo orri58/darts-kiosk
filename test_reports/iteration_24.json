@@ -1,0 +1,125 @@
+{
+  "summary": "Iteration 24 - Chrome Profile & Extensions Fix Testing COMPLETE. All backend tests PASSED (23/23). All frontend tests PASSED. Code verification confirms: ignore_default_args has 3 entries (--enable-automation, --disable-extensions, --disable-component-extensions-with-background-pages), chrome_args does NOT have --disable-default-apps or --disable-sync, profile logging includes cookies_present and extensions_dir, window_manager has MAX_RETRIES=3, setup_profile.bat exists in release.",
+
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+
+  "passed_tests": [
+    "CODE: ignore_default_args includes --disable-extensions",
+    "CODE: ignore_default_args includes --disable-component-extensions-with-background-pages",
+    "CODE: ignore_default_args includes --enable-automation",
+    "CODE: chrome_args does NOT have --disable-default-apps",
+    "CODE: chrome_args does NOT have --disable-sync",
+    "CODE: Profile logging has cookies_present",
+    "CODE: Profile logging has extensions_dir",
+    "CODE: window_manager.py has MAX_RETRIES=3",
+    "CODE: window_manager.py has retry loop pattern with RETRY_DELAY",
+    "RELEASE: setup_profile.bat exists in /app/release/windows/",
+    "RELEASE: setup_profile.bat exists in release package",
+    "RELEASE: setup_profile.bat has instructions for Google login and extensions",
+    "GET /api/health returns healthy",
+    "Admin login returns access_token",
+    "POST /api/boards/BOARD-1/unlock creates session with credits",
+    "POST /api/kiosk/BOARD-1/simulate-game-start decrements credits (3→2)",
+    "POST /api/kiosk/BOARD-1/simulate-game-end stays unlocked when credits remain",
+    "Game 2 abort with credits remaining stays unlocked (2→1)",
+    "Game 3 finish with credits=0 triggers auto-lock (1→0→lock)",
+    "GET /api/kiosk/BOARD-1/overlay returns visible:false when locked",
+    "Single credit session: abort on last game triggers auto-lock (BUG FIX VERIFIED)",
+    "POST /api/boards/BOARD-1/lock works correctly",
+    "FRONTEND: document.title is 'DartsKiosk' on locked screen",
+    "FRONTEND: document.title stays 'DartsKiosk' on unlocked/fallback screen",
+    "FRONTEND: Locked screen renders 'GESPERRT' with pricing info",
+    "FRONTEND: Observer fallback screen shows when Chrome not available",
+    "FRONTEND: Fallback has retry button (observer-retry-btn)",
+    "FRONTEND: Fallback has call-staff button (fallback-call-staff-btn)",
+    "FRONTEND: Fallback has end-session button (fallback-end-session-btn)"
+  ],
+
+  "test_report_links": [
+    "/app/backend/tests/test_iteration24_profile_extensions.py",
+    "/app/test_reports/pytest/pytest_iteration24.xml"
+  ],
+
+  "action_items": [],
+
+  "critical_code_review_comments": [],
+
+  "updated_files": [
+    "/app/backend/tests/test_iteration24_profile_extensions.py"
+  ],
+
+  "success_rate": {
+    "backend": "100% (23/23 tests)",
+    "frontend": "100% (6/6 features verified)"
+  },
+
+  "test_credentials": {
+    "admin_login": {"username": "admin", "password": "admin123"},
+    "api_note": "API returns 'access_token' on login"
+  },
+
+  "seed_data_creation": "Multiple test scenarios: 3-credit lifecycle (3→2→1→0), single credit abort test. Board locked after tests.",
+
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+
+  "context_for_next_testing_agent": "Iteration 24 verified the NEW Chrome profile/extension fixes. KEY CHANGES VERIFIED: 1) ignore_default_args now has 3 entries: --enable-automation, --disable-extensions, --disable-component-extensions-with-background-pages. This preserves operator-installed Chrome extensions. 2) chrome_args cleaned: --disable-default-apps, --disable-sync, --disable-translate removed. 3) Profile content logging added: logs cookies_present and extensions_dir status on browser launch. 4) window_manager.py has MAX_RETRIES=3 retry logic for finding kiosk window. 5) NEW setup_profile.bat script exists in release for operators to prepare Chrome profile before first kiosk use. On Linux preview env without Chrome, observer fails with 'Chromium distribution chrome not found' - this is EXPECTED. All APIs work correctly, session-end chain verified.",
+
+  "key_implementation_verified": {
+    "ignore_default_args": {
+      "location": "/app/backend/services/autodarts_observer.py lines 205-209",
+      "values": ["--enable-automation", "--disable-extensions", "--disable-component-extensions-with-background-pages"],
+      "purpose": "Remove Playwright defaults that block extensions and show automation banner"
+    },
+    "chrome_args_cleaned": {
+      "removed": ["--disable-default-apps", "--disable-sync", "--disable-translate"],
+      "kept": ["--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage", "--no-first-run", "--kiosk"]
+    },
+    "profile_content_logging": {
+      "location": "lines 162-177",
+      "logs": ["cookies_present", "extensions_dir", "ext_count"],
+      "status_messages": "REUSING EXISTING PROFILE vs NEW PROFILE"
+    },
+    "window_manager_retry": {
+      "location": "/app/backend/services/window_manager.py lines 21-22",
+      "constants": "MAX_RETRIES=3, RETRY_DELAY=1.0",
+      "purpose": "Wait for kiosk window title to be set before hide/restore"
+    },
+    "setup_profile_bat": {
+      "location_source": "/app/release/windows/setup_profile.bat",
+      "location_release": "/app/release/build/darts-kiosk-v1.0.0-windows/setup_profile.bat",
+      "purpose": "Allow operator to log into Google and install extensions BEFORE kiosk mode starts"
+    }
+  },
+
+  "windows_runtime_fixes_summary": {
+    "problem_1_extensions_not_preserved": {
+      "cause": "Playwright adds --disable-extensions by default",
+      "fix": "ignore_default_args now includes --disable-extensions"
+    },
+    "problem_2_automation_banner": {
+      "cause": "Playwright adds --enable-automation by default",
+      "fix": "ignore_default_args includes --enable-automation (already existed)"
+    },
+    "problem_3_kiosk_window_not_found": {
+      "cause": "Chrome window title takes time to render",
+      "fix": "window_manager has MAX_RETRIES=3 with 1s delay"
+    },
+    "problem_4_profile_setup": {
+      "cause": "No way for operator to prepare profile before kiosk",
+      "fix": "NEW setup_profile.bat script opens Chrome with profile dir for manual setup"
+    },
+    "problem_5_session_end_logic": {
+      "status": "Already fixed in iteration 23 - verified working"
+    }
+  }
+}

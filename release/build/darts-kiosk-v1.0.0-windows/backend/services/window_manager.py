@@ -8,11 +8,8 @@ The kiosk Chrome window is identified by its document.title which the React app
 sets to a stable value ('DartsKiosk'). This title is used by EnumWindows to find
 the correct HWND.
 
-Flow:
-  1. Board unlocked → observer launches Autodarts Chrome
-  2. After successful launch → hide_kiosk_window() hides the kiosk Chrome
-  3. Session ends → observer closes Autodarts Chrome
-  4. After cleanup → restore_kiosk_window() restores kiosk Chrome to fullscreen
+Includes retry logic: Chrome in kiosk mode may take a moment to render the page
+and set the window title. The hide function retries up to 3 times with 1s delay.
 """
 import sys
 import asyncio
@@ -20,31 +17,51 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# The kiosk React page sets document.title = 'DartsKiosk'
-# Chrome kiosk mode uses this as the window title
 KIOSK_WINDOW_TITLE = 'DartsKiosk'
+MAX_RETRIES = 3
+RETRY_DELAY = 1.0
 
 
 async def hide_kiosk_window():
-    """Hide the kiosk Chrome window so Autodarts is visible."""
+    """Hide the kiosk Chrome window so Autodarts is visible. Retries on failure."""
     if sys.platform != 'win32':
         logger.debug("[WindowMgr] Not Windows — skip hide")
         return
-    await asyncio.to_thread(_win32_hide_by_title, KIOSK_WINDOW_TITLE)
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        found = await asyncio.to_thread(_win32_hide_by_title, KIOSK_WINDOW_TITLE)
+        if found:
+            logger.info(f"[WindowMgr] Kiosk window hidden (attempt {attempt})")
+            return
+        if attempt < MAX_RETRIES:
+            logger.info(f"[WindowMgr] Kiosk window not found (attempt {attempt}/{MAX_RETRIES}), retrying in {RETRY_DELAY}s...")
+            await asyncio.sleep(RETRY_DELAY)
+
+    logger.warning(f"[WindowMgr] Could not find kiosk window after {MAX_RETRIES} attempts")
 
 
 async def restore_kiosk_window():
-    """Restore the kiosk Chrome window to fullscreen foreground."""
+    """Restore the kiosk Chrome window to fullscreen foreground. Retries on failure."""
     if sys.platform != 'win32':
         logger.debug("[WindowMgr] Not Windows — skip restore")
         return
-    await asyncio.to_thread(_win32_restore_by_title, KIOSK_WINDOW_TITLE)
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        found = await asyncio.to_thread(_win32_restore_by_title, KIOSK_WINDOW_TITLE)
+        if found:
+            logger.info(f"[WindowMgr] Kiosk window restored (attempt {attempt})")
+            return
+        if attempt < MAX_RETRIES:
+            logger.info(f"[WindowMgr] Hidden kiosk window not found (attempt {attempt}/{MAX_RETRIES}), retrying...")
+            await asyncio.sleep(RETRY_DELAY)
+
+    logger.warning(f"[WindowMgr] Could not find hidden kiosk window after {MAX_RETRIES} attempts")
 
 
 # ─── Win32 Implementation ────────────────────────────────────────────
 
 def _win32_hide_by_title(pattern):
-    """Find and HIDE (not minimize) the kiosk window."""
+    """Find and HIDE (not minimize) the kiosk window. Returns True if found."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -69,25 +86,23 @@ def _win32_hide_by_title(pattern):
             user32.GetWindowTextW(hwnd, buf, length + 1)
             title = buf.value
             if pattern.lower() in title.lower():
-                # Don't hide Autodarts windows
                 if 'autodarts' in title.lower():
                     return True
-                logger.info(f"[WindowMgr] Hiding kiosk window: '{title}'")
+                logger.info(f"[WindowMgr] SW_HIDE: '{title}'")
                 user32.ShowWindow(hwnd, SW_HIDE)
                 found = True
             return True
 
         user32.EnumWindows(WNDENUMPROC(callback), 0)
-
-        if not found:
-            logger.warning(f"[WindowMgr] No window found matching '{pattern}'")
+        return found
 
     except Exception as e:
         logger.warning(f"[WindowMgr] Hide failed: {e}")
+        return False
 
 
 def _win32_restore_by_title(pattern):
-    """Find and restore the kiosk window to maximized foreground."""
+    """Find and restore the kiosk window. Returns True if found."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -103,7 +118,6 @@ def _win32_restore_by_title(pattern):
         targets = []
 
         def callback(hwnd, _lparam):
-            # Check ALL windows (including hidden ones)
             length = user32.GetWindowTextLengthW(hwnd)
             if length <= 0:
                 return True
@@ -118,21 +132,18 @@ def _win32_restore_by_title(pattern):
         user32.EnumWindows(WNDENUMPROC(callback), 0)
 
         for hwnd, title in targets:
-            logger.info(f"[WindowMgr] Restoring kiosk window: '{title}'")
+            logger.info(f"[WindowMgr] Restoring: '{title}'")
             user32.ShowWindow(hwnd, SW_SHOW)
             user32.ShowWindow(hwnd, SW_SHOWMAXIMIZED)
-
-            # Bring to foreground (workaround for Windows restriction)
             try:
-                # Simulate Alt key press to allow SetForegroundWindow
                 user32.keybd_event(0x12, 0, 0, 0)  # Alt down
                 user32.SetForegroundWindow(hwnd)
                 user32.keybd_event(0x12, 0, 2, 0)  # Alt up
             except Exception:
                 pass
 
-        if not targets:
-            logger.warning(f"[WindowMgr] No hidden window found matching '{pattern}'")
+        return len(targets) > 0
 
     except Exception as e:
         logger.warning(f"[WindowMgr] Restore failed: {e}")
+        return False

@@ -152,6 +152,8 @@ echo   Backend-API:  http://%LAN_IP%:8001/api/health
 echo.
 echo   Credits-Overlay: Zeigt sich automatisch bei aktiver Session
 echo.
+echo   Profil-Setup: setup_profile.bat (Google Login + Extensions)
+echo.
 echo   Logs: logs\backend.log  /  logs\frontend.log
 echo   Zum Beenden: stop.bat oder Taste druecken
 echo.

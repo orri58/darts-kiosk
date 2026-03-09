@@ -145,20 +145,36 @@ class AutodartsObserver:
 
         # Persistent Chrome profile per board — NEVER recreated
         profile_dir = os.path.join(CHROME_PROFILE_DIR, self.board_id)
-        profile_exists = os.path.exists(os.path.join(profile_dir, 'Default'))
+        profile_dir_abs = os.path.abspath(profile_dir)
+        profile_default = os.path.join(profile_dir, 'Default')
+        profile_exists = os.path.isdir(profile_default)
         os.makedirs(profile_dir, exist_ok=True)
-        self.status.chrome_profile = profile_dir
+        self.status.chrome_profile = profile_dir_abs
 
         logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH START ===")
         logger.info(f"[Observer:{self.board_id}]   URL: {url}")
         logger.info(f"[Observer:{self.board_id}]   headless: {headless}")
         logger.info(f"[Observer:{self.board_id}]   platform: {sys.platform}")
         logger.info(f"[Observer:{self.board_id}]   event_loop: {type(asyncio.get_event_loop_policy()).__name__}")
-        logger.info(f"[Observer:{self.board_id}]   chrome_profile: {profile_dir}")
+        logger.info(f"[Observer:{self.board_id}]   Using kiosk Chrome profile: {profile_dir_abs}")
+        logger.info(f"[Observer:{self.board_id}]   profile_directory_exists: {os.path.isdir(profile_dir)}")
+        logger.info(f"[Observer:{self.board_id}]   profile_has_data (Default/): {profile_exists}")
         if profile_exists:
-            logger.info(f"[Observer:{self.board_id}]   profile_status: REUSING (Google login preserved)")
+            # Log evidence of existing profile content
+            try:
+                default_contents = os.listdir(profile_default)
+                has_cookies = 'Cookies' in default_contents
+                has_extensions = os.path.isdir(os.path.join(profile_default, 'Extensions'))
+                ext_count = len(os.listdir(os.path.join(profile_default, 'Extensions'))) if has_extensions else 0
+                logger.info(f"[Observer:{self.board_id}]   profile_status: REUSING EXISTING PROFILE")
+                logger.info(f"[Observer:{self.board_id}]     cookies_present: {has_cookies}")
+                logger.info(f"[Observer:{self.board_id}]     extensions_dir: {has_extensions} ({ext_count} entries)")
+                logger.info(f"[Observer:{self.board_id}]     → Google login + extensions will be preserved")
+            except Exception:
+                logger.info(f"[Observer:{self.board_id}]   profile_status: REUSING (could not inspect contents)")
         else:
-            logger.info(f"[Observer:{self.board_id}]   profile_status: NEW (first launch — login required)")
+            logger.info(f"[Observer:{self.board_id}]   profile_status: NEW PROFILE (first launch)")
+            logger.info(f"[Observer:{self.board_id}]     → Run setup_profile.bat first to log in and install extensions")
 
         try:
             logger.info(f"[Observer:{self.board_id}]   Step 1/5: Importing playwright...")
@@ -167,13 +183,10 @@ class AutodartsObserver:
             logger.info(f"[Observer:{self.board_id}]   Step 2/5: Starting playwright runtime...")
             self._playwright = await async_playwright().start()
 
-            # Chrome launch args — clean, no automation fingerprinting
+            # Chrome launch args — clean, preserve extensions, no automation fingerprint
             chrome_args = [
                 '--disable-blink-features=AutomationControlled',
                 '--disable-dev-shm-usage',
-                '--disable-default-apps',
-                '--disable-translate',
-                '--disable-sync',
                 '--disable-background-timer-throttling',
                 '--no-first-run',
                 '--no-default-browser-check',
@@ -185,13 +198,25 @@ class AutodartsObserver:
                     '--kiosk',
                 ])
 
+            # Playwright default args to EXCLUDE so extensions + login work:
+            #   --enable-automation          → causes "controlled by automation" banner
+            #   --disable-extensions         → prevents operator-installed extensions
+            #   --disable-component-extensions-with-background-pages → breaks some extensions
+            ignore_args = [
+                "--enable-automation",
+                "--disable-extensions",
+                "--disable-component-extensions-with-background-pages",
+            ]
+
             logger.info(f"[Observer:{self.board_id}]   Step 3/5: Launching Chrome (persistent context, channel=chrome)...")
+            logger.info(f"[Observer:{self.board_id}]   ignore_default_args: {ignore_args}")
+            logger.info(f"[Observer:{self.board_id}]   custom args: {chrome_args}")
 
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=profile_dir,
                 channel="chrome",
                 headless=headless,
-                ignore_default_args=["--enable-automation"],
+                ignore_default_args=ignore_args,
                 args=chrome_args,
                 viewport=None if not headless else {"width": 1280, "height": 800},
                 no_viewport=not headless,

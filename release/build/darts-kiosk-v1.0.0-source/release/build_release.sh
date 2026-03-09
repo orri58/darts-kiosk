@@ -106,6 +106,7 @@ echo "playwright==1.58.0" >> "${WIN_DIR}/backend/requirements.txt"
 cp "${SCRIPT_DIR}/windows/"*.bat "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/run_backend.py" "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/credits_overlay.py" "${WIN_DIR}/"
+cp "${SCRIPT_DIR}/windows/setup_profile.bat" "${WIN_DIR}/" 2>/dev/null || true
 cp "${SCRIPT_DIR}/windows/README.md" "${WIN_DIR}/"
 
 # Create Windows .env files
