@@ -22,26 +22,30 @@ No Node.js required at runtime. No dev server.
 Backend is the ONLY process (+ Chrome overlay).
 ```
 
-## Observer State Machine
+## Observer State Machine (v1.8.0 — Event-Driven)
 ```
 Detection Priority:
-  1. Strong match-end buttons (Rematch/Share/NewGame TEXT) -> FINISHED
-     ALWAYS wins, even if in_game markers still present in DOM.
-  2. in_game markers WITHOUT strong end markers -> IN_GAME
-  3. Generic result CSS classes only -> ROUND_TRANSITION
-  4. Nothing -> IDLE
+  1. WebSocket/console event capture (PRIMARY — injected JS)
+     - WS messages on autodarts.matches channels (state, game-events)
+     - Console: "Winner Animation", "matchshot", "gameshot"
+     - matchFinished + winnerDetected → FINISHED (strongest signal)
+     - matchState="finished"/"completed" → FINISHED
+     - gameshot without matchFinished → ROUND_TRANSITION (leg end, match continues)
+  2. DOM/UI polling (FALLBACK only)
+     - Strong match-end buttons (Rematch/Share/NewGame TEXT) → FINISHED
+     - in_game markers without end markers → IN_GAME
+     - Generic result CSS → ROUND_TRANSITION
+     - Nothing → IDLE
+  3. Merge: _merge_detection(event_state, dom_state)
+     - Event FINISHED always wins over DOM
+     - Event IN_GAME takes priority
+     - No event data → use DOM result
 
 Debounce (exit from IN_GAME):
-  ROUND_TRANSITION -> resets exit counter (turn change, match active)
-  FINISHED         -> increments exit counter (saw_finished=True)
-  IDLE             -> increments exit counter (abort scenario)
-  3 consecutive exit polls confirm -> callback fired
-
-Last-Credit Lock (FIXED in v1.7.2):
-  Match ends -> FINISHED confirmed -> _on_game_ended("finished")
-  -> credits_remaining <= 0 -> should_lock=True
-  -> close observer/browser -> kill overlay process -> lock board -> restore kiosk
-  Full 3-step finalization chain with step-by-step logging.
+  ROUND_TRANSITION → resets exit counter (turn change, match active)
+  FINISHED → increments exit counter (saw_finished=True)
+  IDLE → increments exit counter (abort scenario)
+  3 consecutive exit polls confirm → callback fired
 ```
 
 ## Finalization Chain (v1.7.2)
@@ -131,6 +135,16 @@ autostart.bat:
   - Port consistency: Removed _run_frontend.bat (dev artifact, port 3000), README updated to 8001 only
   - GH Actions: Fixed REACT_APP_BACKEND_URL to empty string (same-origin, enables LAN access)
   - All tests passing: 11/11 (iteration_31)
+- v1.8.0: Event-Driven Observer Refactor (2026-03-09)
+  - Observer rewritten: WebSocket/console event capture as PRIMARY match-end detection
+  - Injected JS (WS_INTERCEPT_SCRIPT) intercepts Autodarts WS messages + console.log
+  - Captures: matchState, matchFinished, winnerDetected, matchshot, gameshot, Winner Animation
+  - DOM polling demoted to FALLBACK only via _detect_state_dom()
+  - New _merge_detection(): Events always override DOM for FINISHED signals
+  - gameshot (leg end) correctly mapped to ROUND_TRANSITION (NOT match end)
+  - matchshot/Winner Animation correctly mapped to FINISHED (true match end)
+  - All required logs: event_capture, EVENT_SIGNAL, DOM_SIGNAL, merge, finalization chain
+  - All tests passing: 14/14 (iteration_32)
 
 ## Remaining Backlog
 ### P1
