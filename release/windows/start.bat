@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 title Darts Kiosk - Gestartet
 cd /d "%~dp0"
@@ -34,7 +35,7 @@ if exist ".venv\Scripts\activate.bat" (
 
 REM Greenlet sanity check
 python -c "import greenlet" 2>nul
-if %ERRORLEVEL% NEQ 0 (
+if !ERRORLEVEL! NEQ 0 (
     echo [FAIL] greenlet kann nicht geladen werden!
     echo        VC++ Redistributable x64 fehlt: https://aka.ms/vs/17/release/vc_redist.x64.exe
     pause
@@ -66,7 +67,7 @@ if not defined LAN_IP (
     echo   [WARN] Keine LAN-IP gefunden, verwende localhost
     set LAN_IP=127.0.0.1
 ) else (
-    echo   [OK]   LAN-IP: %LAN_IP%
+    echo   [OK]   LAN-IP: !LAN_IP!
 )
 
 REM === Detect Google Chrome ===
@@ -81,13 +82,13 @@ for %%G in (
     )
 )
 if defined CHROME_PATH (
-    echo   [OK]   Chrome: %CHROME_PATH%
+    echo   [OK]   Chrome: !CHROME_PATH!
 ) else (
     echo   [WARN] Chrome nicht gefunden
 )
 
 REM === Start Backend (serves BOTH API and Frontend) ===
-echo [3/4] Backend starten (Port %BACKEND_PORT%, 0.0.0.0)...
+echo [3/4] Backend starten (Port !BACKEND_PORT!, 0.0.0.0)...
 start "Darts Backend" /MIN cmd /c ""%~dp0_run_backend.bat""
 echo   [OK] Backend gestartet
 
@@ -98,7 +99,7 @@ REM Health check with retry
 set BACKEND_READY=0
 for /L %%i in (1,1,6) do (
     if !BACKEND_READY!==0 (
-        curl -sf http://localhost:%BACKEND_PORT%/api/health >nul 2>&1
+        curl -sf http://localhost:!BACKEND_PORT!/api/health >nul 2>&1
         if !ERRORLEVEL!==0 (
             set BACKEND_READY=1
             echo   [OK]   Backend laeuft!
@@ -107,7 +108,7 @@ for /L %%i in (1,1,6) do (
         )
     )
 )
-if %BACKEND_READY%==0 (
+if !BACKEND_READY!==0 (
     echo   [WARN] Backend nicht erreichbar. Pruefe logs\backend.log
 )
 
@@ -115,32 +116,32 @@ REM === Launch Kiosk + Overlay ===
 echo [4/4] Kiosk-Modus starten...
 
 REM Start Credits Overlay (hidden until session active)
-start "Darts Overlay" /MIN pythonw "%~dp0credits_overlay.py" --board-id %BOARD_ID% --api http://localhost:%BACKEND_PORT%
+start "Darts Overlay" /MIN pythonw "%~dp0credits_overlay.py" --board-id !BOARD_ID! --api http://localhost:!BACKEND_PORT!
 echo   [OK] Credits-Overlay gestartet
 
 REM Launch Kiosk in Chrome kiosk mode (fullscreen)
 REM Backend serves the frontend on same port — no separate frontend server needed
 if defined CHROME_PATH (
     echo   [OK] Starte Kiosk im Chrome-Vollbild-Modus...
-    start "" "%CHROME_PATH%" --kiosk --user-data-dir="%~dp0data\kiosk_chrome_profile" --no-first-run --no-default-browser-check --disable-translate --disable-infobars --autoplay-policy=no-user-gesture-required "http://localhost:%BACKEND_PORT%/kiosk/%BOARD_ID%"
+    start "" "!CHROME_PATH!" --kiosk --user-data-dir="%~dp0data\kiosk_chrome_profile" --no-first-run --no-default-browser-check --disable-translate --disable-infobars --autoplay-policy=no-user-gesture-required "http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!"
 ) else (
-    start "" "http://localhost:%BACKEND_PORT%/kiosk/%BOARD_ID%"
+    start "" "http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!"
 )
 
 echo.
 echo ================================================================
 echo.
 echo   Darts Kiosk laeuft!
-echo   Board: %BOARD_ID%
+echo   Board: !BOARD_ID!
 echo.
 echo   === Zugriff (alle Geraete im LAN) ===
-echo   Kiosk:        http://%LAN_IP%:%BACKEND_PORT%/kiosk/%BOARD_ID%
-echo   Admin-Panel:  http://%LAN_IP%:%BACKEND_PORT%/admin
-echo   Backend-API:  http://%LAN_IP%:%BACKEND_PORT%/api/health
+echo   Kiosk:        http://!LAN_IP!:!BACKEND_PORT!/kiosk/!BOARD_ID!
+echo   Admin-Panel:  http://!LAN_IP!:!BACKEND_PORT!/admin
+echo   Backend-API:  http://!LAN_IP!:!BACKEND_PORT!/api/health
 echo.
 echo   === Lokal ===
-echo   Kiosk:        http://localhost:%BACKEND_PORT%/kiosk/%BOARD_ID%
-echo   Admin-Panel:  http://localhost:%BACKEND_PORT%/admin
+echo   Kiosk:        http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!
+echo   Admin-Panel:  http://localhost:!BACKEND_PORT!/admin
 echo.
 echo   Zum Beenden: stop.bat oder Taste druecken
 echo.
@@ -158,3 +159,4 @@ for /f "tokens=2" %%a in ('wmic process where "CommandLine like '%%kiosk_chrome_
 )
 taskkill /F /FI "WINDOWTITLE eq Darts Kiosk*" >nul 2>&1
 echo Alle Dienste beendet.
+endlocal

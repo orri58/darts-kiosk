@@ -122,6 +122,13 @@ autostart.bat:
   - Overlay termination: window_manager.kill_overlay_process() via taskkill/pkill
   - Observer close_session: step-by-step logging for debugging
   - All tests passing: 9/9 backend tests (iteration_30)
+- v1.7.3: start.bat Fix + PWA Admin Manifest (2026-03-09)
+  - start.bat: Added `setlocal enabledelayedexpansion` — Health-Check-Schleife funktioniert jetzt
+  - start.bat: `endlocal` hinzugefügt, saubere Struktur
+  - PWA: Neues `manifest-admin.json` mit `start_url: /admin` erstellt
+  - AdminLayout: Dynamischer Manifest-Swap — "Zum Home-Bildschirm" auf `/admin/*` installiert Admin statt Kiosk
+  - Apple-Meta-Tag: `apple-mobile-web-app-title` wird dynamisch auf "Darts Admin" gesetzt
+  - Neues Windows-ZIP: `darts-kiosk-v1.7.3-windows.zip` (1.6 MB) mit allen Fixes
 
 ## Remaining Backlog
 ### P1
