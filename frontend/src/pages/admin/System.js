@@ -283,7 +283,8 @@ export default function AdminSystem() {
         setTimeout(() => { clearInterval(pollInterval); setInstalling(false); }, 180000);
       }, 10000);
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Installation fehlgeschlagen');
+      const detail = err.response?.data?.detail || 'Installation fehlgeschlagen';
+      toast.error(detail);
       setInstalling(false);
     }
   };
@@ -315,7 +316,8 @@ export default function AdminSystem() {
         setTimeout(() => { clearInterval(pollInterval); setRollbackInProgress(false); }, 180000);
       }, 10000);
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Rollback fehlgeschlagen');
+      const detail = err.response?.data?.detail || 'Rollback fehlgeschlagen';
+      toast.error(detail);
       setRollbackInProgress(false);
     }
   };

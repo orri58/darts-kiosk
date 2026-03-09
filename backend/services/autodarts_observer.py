@@ -289,29 +289,34 @@ class AutodartsObserver:
 
     async def close_session(self):
         """Close Chrome and stop observing. Restore kiosk window."""
-        logger.info(f"[Observer:{self.board_id}] Closing session...")
+        logger.info(f"[Observer:{self.board_id}] === CLOSE SESSION START ===")
         self._stopping = True
 
         if self._observe_task and not self._observe_task.done():
+            logger.info(f"[Observer:{self.board_id}]   cancelling observe_task...")
             self._observe_task.cancel()
             try:
                 await self._observe_task
             except asyncio.CancelledError:
                 pass
+            logger.info(f"[Observer:{self.board_id}]   observe_task cancelled")
 
+        logger.info(f"[Observer:{self.board_id}]   cleaning up browser context...")
         await self._cleanup()
         self._set_state(ObserverState.CLOSED)
+        logger.info(f"[Observer:{self.board_id}]   browser context closed, state=CLOSED")
 
         # Restore kiosk window to fullscreen foreground
         try:
             from backend.services.window_manager import restore_kiosk_window
+            logger.info(f"[Observer:{self.board_id}]   restoring kiosk window...")
             await asyncio.sleep(0.5)  # Brief pause after Chrome closes
             await restore_kiosk_window()
-            logger.info(f"[Observer:{self.board_id}] Kiosk window restored to foreground")
+            logger.info(f"[Observer:{self.board_id}]   kiosk window restored to foreground OK")
         except Exception as wm_err:
-            logger.warning(f"[Observer:{self.board_id}] Window restore skipped: {wm_err}")
+            logger.warning(f"[Observer:{self.board_id}]   kiosk window restore FAILED: {wm_err}")
 
-        logger.info(f"[Observer:{self.board_id}] Session closed")
+        logger.info(f"[Observer:{self.board_id}] === CLOSE SESSION COMPLETE ===")
 
     async def _cleanup(self):
         """Close context and playwright. Profile data is preserved on disk."""

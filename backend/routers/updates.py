@@ -244,11 +244,18 @@ async def install_update(
     # Step 6: Launch updater
     launch_result = updater_service.launch_updater()
 
+    if not launch_result.get("launched"):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Updater konnte nicht gestartet werden: {launch_result.get('error', 'Unbekannter Fehler')}",
+        )
+
     return {
         "status": "update_started",
         "message": f"Update auf v{target_version} gestartet",
         "backup": backup_result["filename"],
-        "updater_launched": launch_result.get("launched", False),
+        "updater_launched": True,
+        "updater_pid": launch_result.get("pid"),
         "manifest": manifest_result["manifest"],
         "note": "Das System wird jetzt aktualisiert. Die Seite laedt automatisch neu, wenn das Update abgeschlossen ist.",
     }
@@ -285,10 +292,17 @@ async def rollback_update(
     # Launch updater
     launch_result = updater_service.launch_updater()
 
+    if not launch_result.get("launched"):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Updater konnte nicht gestartet werden: {launch_result.get('error', 'Unbekannter Fehler')}",
+        )
+
     return {
         "status": "rollback_started",
         "message": f"Rollback gestartet mit Backup: {backup_filename}",
-        "updater_launched": launch_result.get("launched", False),
+        "updater_launched": True,
+        "updater_pid": launch_result.get("pid"),
     }
 
 

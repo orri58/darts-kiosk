@@ -10,14 +10,20 @@ the correct HWND.
 
 Includes retry logic: Chrome in kiosk mode may take a moment to render the page
 and set the window title. The hide function retries up to 3 times with 1s delay.
+
+Also manages the credits overlay process lifecycle:
+  - kill_overlay_process() terminates any running credits_overlay.py process.
 """
 import sys
 import asyncio
 import logging
+import subprocess
 
 logger = logging.getLogger(__name__)
 
 KIOSK_WINDOW_TITLE = 'DartsKiosk'
+OVERLAY_WINDOW_TITLE = 'Darts Overlay'
+OVERLAY_PROCESS_NAME = 'credits_overlay'
 MAX_RETRIES = 3
 RETRY_DELAY = 1.0
 
@@ -146,4 +152,55 @@ def _win32_restore_by_title(pattern):
 
     except Exception as e:
         logger.warning(f"[WindowMgr] Restore failed: {e}")
+        return False
+
+
+async def kill_overlay_process():
+    """
+    Terminate the credits_overlay.py process.
+    On Windows: uses taskkill by window title, then falls back to process name.
+    On Linux: uses pkill.
+    """
+    if sys.platform == 'win32':
+        killed = await asyncio.to_thread(_win32_kill_overlay)
+        if killed:
+            logger.info("[WindowMgr] Overlay process terminated (Win32)")
+        else:
+            logger.info("[WindowMgr] No overlay process found to kill")
+    else:
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ['pkill', '-f', OVERLAY_PROCESS_NAME],
+                capture_output=True, timeout=5,
+            )
+            if result.returncode == 0:
+                logger.info("[WindowMgr] Overlay process terminated (Linux)")
+            else:
+                logger.info("[WindowMgr] No overlay process found (Linux)")
+        except Exception as e:
+            logger.warning(f"[WindowMgr] Overlay kill failed (Linux): {e}")
+
+
+def _win32_kill_overlay():
+    """Kill overlay process on Windows via taskkill."""
+    try:
+        # First try by window title
+        r = subprocess.run(
+            ['taskkill', '/F', '/FI', f'WINDOWTITLE eq {OVERLAY_WINDOW_TITLE}'],
+            capture_output=True, timeout=5,
+        )
+        if r.returncode == 0:
+            return True
+
+        # Fallback: kill by command line pattern
+        r = subprocess.run(
+            ['wmic', 'process', 'where',
+             f"CommandLine like '%{OVERLAY_PROCESS_NAME}%'",
+             'call', 'terminate'],
+            capture_output=True, timeout=5,
+        )
+        return r.returncode == 0
+    except Exception as e:
+        logger.warning(f"[WindowMgr] Win32 overlay kill failed: {e}")
         return False

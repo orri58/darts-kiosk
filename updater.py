@@ -50,12 +50,33 @@ from pathlib import Path
 
 # Log to both console and file
 LOG_LINES = []
+_LOG_FILE = None
+
+def _init_log_file(project_root):
+    """Initialize a persistent log file in the logs/ directory."""
+    global _LOG_FILE
+    try:
+        logs_dir = Path(project_root) / 'logs'
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        _LOG_FILE = open(logs_dir / 'updater.log', 'a', encoding='utf-8')
+        _LOG_FILE.write(f"\n{'='*60}\n")
+        _LOG_FILE.write(f"Updater started at {datetime.now().isoformat()}\n")
+        _LOG_FILE.write(f"{'='*60}\n")
+        _LOG_FILE.flush()
+    except Exception as e:
+        print(f"WARNING: Could not open log file: {e}")
 
 def log(msg):
     ts = datetime.now().strftime('%H:%M:%S')
     line = f"[{ts}] {msg}"
     print(line)
     LOG_LINES.append(line)
+    if _LOG_FILE:
+        try:
+            _LOG_FILE.write(line + '\n')
+            _LOG_FILE.flush()
+        except Exception:
+            pass
 
 def write_result(result_path, result):
     """Write the update result JSON for the backend to read on restart."""
@@ -241,7 +262,9 @@ def do_install(manifest):
     protected = manifest.get('protected_paths', [])
     health_url = manifest.get('health_check_url', 'http://localhost:8001/api/health')
     version_url = manifest.get('version_check_url', 'http://localhost:8001/api/system/version')
-    result_path = str(Path(manifest.get('project_root', '.')) / 'data' / 'update_result.json')
+    result_path = str(Path(project_root).resolve() / 'data' / 'update_result.json')
+
+    _init_log_file(project_root)
 
     result = {
         'action': 'install_update',
@@ -255,6 +278,13 @@ def do_install(manifest):
     try:
         # Step 1: Wait for backend to wind down
         log(f"=== DARTS KIOSK UPDATER v{target_version} ===")
+        log(f"  project_root: {project_root}")
+        log(f"  staging_dir:  {staging_dir}")
+        log(f"  backup_path:  {backup_path}")
+        log(f"  result_path:  {result_path}")
+        log(f"  protected:    {protected}")
+        log(f"  staging_exists: {Path(staging_dir).exists()}")
+        log(f"  backup_exists:  {Path(backup_path).exists()}")
         log("Waiting 5s for backend to wind down...")
         time.sleep(5)
 
@@ -283,7 +313,7 @@ def do_install(manifest):
         if version_check(version_url, target_version):
             result['version_ok'] = True
         else:
-            log(f"WARNING: Version mismatch, but health check passed")
+            log("WARNING: Version mismatch, but health check passed")
             result['version_ok'] = False
 
         result['success'] = True
@@ -324,7 +354,9 @@ def do_rollback(manifest):
     backup_path = manifest['backup_path']
     protected = manifest.get('protected_paths', [])
     health_url = manifest.get('health_check_url', 'http://localhost:8001/api/health')
-    result_path = str(Path(project_root) / 'data' / 'update_result.json')
+    result_path = str(Path(project_root).resolve() / 'data' / 'update_result.json')
+
+    _init_log_file(project_root)
 
     result = {
         'action': 'rollback',
@@ -367,8 +399,16 @@ def main():
         print("Usage: python updater.py <manifest_path>")
         sys.exit(1)
 
-    manifest_path = sys.argv[1]
+    manifest_path = os.path.abspath(sys.argv[1])
+    log(f"Updater process started: PID={os.getpid()}")
+    log(f"  python: {sys.executable}")
+    log(f"  cwd: {os.getcwd()}")
+    log(f"  platform: {sys.platform}")
     log(f"Reading manifest: {manifest_path}")
+
+    if not os.path.exists(manifest_path):
+        log(f"FATAL: Manifest file does not exist: {manifest_path}")
+        sys.exit(1)
 
     with open(manifest_path, 'r') as f:
         manifest = json.load(f)

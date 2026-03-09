@@ -224,10 +224,14 @@ async def _on_game_ended(board_id: str, reason: str):
             await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "checkout"})
 
         if should_lock:
+            logger.info(f"[Observer->Kiosk]   === LOCK SEQUENCE STARTED === board={board_id}")
+            logger.info("[Observer->Kiosk]     broadcast: board_status=locked")
             await board_ws.broadcast("board_status", {"board_id": board_id, "status": "locked"})
-            logger.info(f"[Observer->Kiosk]   browser_close_triggered: board={board_id}")
+            logger.info("[Observer->Kiosk]     scheduling: _safe_close_observer (browser close + overlay kill + kiosk restore)")
             asyncio.create_task(_safe_close_observer(board_id))
+            logger.info(f"[Observer->Kiosk]   === LOCK SEQUENCE SCHEDULED === board={board_id}")
         else:
+            logger.info("[Observer->Kiosk]   board_stays_unlocked: broadcasting status + credits")
             await board_ws.broadcast("board_status", {"board_id": board_id, "status": "unlocked"})
             await board_ws.broadcast("credit_update", {
                 "board_id": board_id,
@@ -240,13 +244,41 @@ async def _on_game_ended(board_id: str, reason: str):
 
 
 async def _safe_close_observer(board_id: str):
-    """Close observer with explicit error handling and logging."""
+    """Close observer and perform full session-end cleanup with explicit logging."""
     try:
-        logger.info(f"[Session-End] closing_observer: board={board_id}")
+        logger.info(f"[Session-End] === FINALIZATION START === board={board_id}")
+
+        # Step 1: Close observer (closes Autodarts browser)
+        logger.info("[Session-End] step_1: closing_observer (Autodarts browser)")
         await observer_manager.close(board_id)
-        logger.info(f"[Session-End] observer_closed_OK: board={board_id}")
+        logger.info("[Session-End] step_1: observer_closed_OK")
+
+        # Step 2: Kill credits overlay process
+        logger.info("[Session-End] step_2: killing_overlay_process")
+        try:
+            from backend.services.window_manager import kill_overlay_process
+            await kill_overlay_process()
+            logger.info("[Session-End] step_2: overlay_kill_OK")
+        except Exception as ov_err:
+            logger.warning(f"[Session-End] step_2: overlay_kill_SKIPPED: {ov_err}")
+
+        # Step 3: Verify board is locked in DB
+        logger.info("[Session-End] step_3: verifying_board_locked")
+        try:
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(select(Board).where(Board.board_id == board_id))
+                board = result.scalar_one_or_none()
+                if board:
+                    logger.info(f"[Session-End] step_3: board_status={board.status}")
+                else:
+                    logger.warning("[Session-End] step_3: board_not_found")
+        except Exception as db_err:
+            logger.warning(f"[Session-End] step_3: db_check_error: {db_err}")
+
+        logger.info(f"[Session-End] === FINALIZATION COMPLETE === board={board_id}")
+
     except Exception as e:
-        logger.error(f"[Session-End] observer_close_FAILED: board={board_id}: {e}", exc_info=True)
+        logger.error(f"[Session-End] === FINALIZATION FAILED === board={board_id}: {e}", exc_info=True)
 
 
 # =====================================================================
