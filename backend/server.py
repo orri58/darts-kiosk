@@ -10,7 +10,7 @@ _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from contextlib import asynccontextmanager
@@ -231,6 +231,38 @@ api_router.include_router(stats.router)
 api_router.include_router(players.router)
 
 app.include_router(api_router)
+
+
+# ===== Utility endpoint: LAN base URL =====
+
+@app.get("/api/system/base-url")
+async def get_base_url(request: Request):
+    """Return the best base URL for generating public links (QR codes etc)."""
+    import socket
+    # Prefer X-Forwarded-Host header (reverse proxy)
+    host_header = request.headers.get("x-forwarded-host") or request.headers.get("host", "")
+    scheme = request.headers.get("x-forwarded-proto", "http")
+
+    # If host looks like a real external URL, use it
+    if host_header and "localhost" not in host_header and "127.0.0.1" not in host_header:
+        return {"base_url": f"{scheme}://{host_header}"}
+
+    # Otherwise detect LAN IP
+    try:
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+        if local_ip.startswith("127."):
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                s.connect(("8.8.8.8", 80))
+                local_ip = s.getsockname()[0]
+            finally:
+                s.close()
+    except Exception:
+        local_ip = "127.0.0.1"
+
+    port = os.environ.get("PORT", "8001")
+    return {"base_url": f"http://{local_ip}:{port}"}
 
 
 # ===== WebSocket Endpoint for Real-Time Board Status =====
