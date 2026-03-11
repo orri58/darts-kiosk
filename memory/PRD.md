@@ -187,6 +187,18 @@ autostart.bat:
   - Chrome profile path unified: data/chrome_profile/BOARD-1 everywhere (no more kiosk_chrome_profile)
   - Profile diagnostics: logs Default_exists, Cookies_exists, Extensions_exists on browser launch
   - All tests passing: 19/19 (iteration_34)
+- v1.9.2: Chrome Profile Lock Fix (2026-03-11)
+  - ROOT CAUSE: start.bat launched kiosk UI Chrome with SAME user-data-dir as Playwright observer
+  - Chrome profile locking error: "Wird in einer aktuellen Browsersitzung geöffnet"
+  - FIX 1: start.bat now uses separate profile (data/kiosk_ui_profile) for kiosk UI Chrome
+  - FIX 2: data/chrome_profile/BOARD-1 is now EXCLUSIVELY owned by Playwright observer
+  - FIX 3: Safety check _check_profile_locked() before Playwright launch:
+    - Detects Chrome lock files (SingletonLock, lockfile)
+    - Verifies via PowerShell/pgrep if Chrome is actually using the profile
+    - Stale locks cleaned up automatically
+    - If locked: ERROR state + clear log message + abort (no Playwright crash)
+  - FIX 4: Cookie diagnostics now checks Default/Cookies AND Default/Network/Cookies
+  - All tests passing: 17/17 (iteration_35)
 
 ## Remaining Backlog
 ### P1
