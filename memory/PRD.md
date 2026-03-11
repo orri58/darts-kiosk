@@ -178,7 +178,15 @@ autostart.bat:
   - New /api/kiosk/{board_id}/ws-diagnostic endpoint for real-time event stream debugging
   - Logging: every match-relevant WS frame logged with channel, interpretation, payload fields
   - All tests passing: 12/12 (iteration_33)
-  - ZIP rebuilt: darts-kiosk-v1.7.3-windows.zip (1.6 MB)
+  - ZIP rebuilt
+- v1.9.1: False Lock Fix + Chrome Profile Fix (2026-03-11)
+  - CRITICAL FIX: _classify_frame was too aggressive — state:finished and gameWinner triggered false match_finished
+  - Now ONLY matchshot and matchWinner trigger match_finished (true match-end signals)
+  - state:finished -> game_state_finished (logged but does NOT trigger lock — could be leg finish)
+  - gameWinner removed from match-end signals (leg winner != match winner)
+  - Chrome profile path unified: data/chrome_profile/BOARD-1 everywhere (no more kiosk_chrome_profile)
+  - Profile diagnostics: logs Default_exists, Cookies_exists, Extensions_exists on browser launch
+  - All tests passing: 19/19 (iteration_34)
 
 ## Remaining Backlog
 ### P1
