@@ -244,6 +244,19 @@ autostart.bat:
   - FIX: post-launch health checks null-safe
   - FIX: _closing reset in open_session for re-opens
   - All tests passing: 33/33 (iteration_40)
+- v2.1.0: Central finalize_match Path (2026-03-11)
+  - ROOT CAUSE: Duplicated logic between _on_game_ended and manual end-game
+  - Observer close_session mixed Playwright and WindowManager, credits not deducted
+  - NEW: finalize_match(board_id, trigger) — single function for ALL end scenarios
+  - Steps: credit deduction → board lock → observer close (Playwright) → kiosk restore (WindowManager)
+  - Credit logic INDEPENDENT of browser close success (DB first, then browser)
+  - Triggers: finished (credit deducted), manual (credit deducted), aborted (free)
+  - _finalizing set prevents concurrent finalize calls for same board
+  - _on_game_ended: thin wrapper, schedules finalize_match via create_task
+  - Observer close_session: ONLY Playwright (no window_manager calls)
+  - _safe_close_observer: REMOVED (replaced by finalize_match)
+  - Manual end-game endpoint: uses finalize_match("manual") directly
+  - All tests passing: 42/42 (iteration_41)
 
 ## Remaining Backlog
 ### P1
