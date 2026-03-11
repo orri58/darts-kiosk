@@ -60,7 +60,7 @@ if not exist "logs" mkdir "logs"
 if not exist "data\db" mkdir "data\db"
 if not exist "data\downloads" mkdir "data\downloads"
 if not exist "data\app_backups" mkdir "data\app_backups"
-if not exist "data\kiosk_chrome_profile" mkdir "data\kiosk_chrome_profile"
+if not exist "data\chrome_profile\!BOARD_ID!" mkdir "data\chrome_profile\!BOARD_ID!"
 
 REM === Kill old processes ===
 echo [1/4] Alte Prozesse beenden...
@@ -140,7 +140,7 @@ if exist "%~dp0credits_overlay.py" (
 REM Launch Kiosk in Chrome kiosk mode
 if defined CHROME_PATH (
     echo   [OK] Starte Kiosk im Chrome-Vollbild-Modus...
-    start "" "!CHROME_PATH!" --kiosk --user-data-dir="%~dp0data\kiosk_chrome_profile" --no-first-run --no-default-browser-check --disable-translate --disable-infobars --autoplay-policy=no-user-gesture-required "http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!"
+    start "" "!CHROME_PATH!" --kiosk --user-data-dir="%~dp0data\chrome_profile\!BOARD_ID!" --no-first-run --no-default-browser-check --disable-translate --disable-infobars --autoplay-policy=no-user-gesture-required "http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!"
 ) else (
     start "" "http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!"
 )

@@ -269,11 +269,18 @@ class AutodartsObserver:
         os.makedirs(profile_dir, exist_ok=True)
         self.status.chrome_profile = profile_dir_abs
 
+        # ── Profile diagnostics ──
+        cookies_exist = os.path.isfile(os.path.join(profile_default, 'Cookies'))
+        extensions_exist = os.path.isdir(os.path.join(profile_dir, 'Default', 'Extensions'))
         logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH START ===")
         logger.info(f"[Observer:{self.board_id}]   URL: {url}")
         logger.info(f"[Observer:{self.board_id}]   headless: {headless}")
         logger.info(f"[Observer:{self.board_id}]   platform: {sys.platform}")
-        logger.info(f"[Observer:{self.board_id}]   profile: {profile_dir_abs} (exists={profile_exists})")
+        logger.info(f"[Observer:{self.board_id}]   Using Chrome profile: {profile_dir_abs}")
+        logger.info(f"[Observer:{self.board_id}]   profile_exists: {os.path.isdir(profile_dir)}")
+        logger.info(f"[Observer:{self.board_id}]   Default_exists: {profile_exists}")
+        logger.info(f"[Observer:{self.board_id}]   Cookies_exists: {cookies_exist}")
+        logger.info(f"[Observer:{self.board_id}]   Extensions_exists: {extensions_exist}")
 
         try:
             from playwright.async_api import async_playwright
@@ -501,55 +508,66 @@ class AutodartsObserver:
 
     def _classify_frame(self, raw: str, channel: str, payload) -> str:
         """
-        Classify a WS frame into one of the diagnosis categories.
-        Returns one of: match_finished, match_started, turn_transition,
-        round_transition, game_event, board_state, match_state,
-        subscription, irrelevant, unknown
+        Classify a WS frame. CONSERVATIVE: only true match-level signals
+        trigger match_finished. Leg/round/turn signals are NEVER match_finished.
+
+        Match-finished (definitive):
+          - matchshot (only sent for the final winning double of the MATCH)
+          - matchWinner field explicitly set
+
+        NOT match-finished (must not trigger lock):
+          - gameshot (leg end, match continues)
+          - gameWinner (leg winner, match continues)
+          - state: finished (could be a leg, NOT necessarily the match)
+          - isFinished (ambiguous — could be leg-level)
+          - next / turn change / round transition
         """
         raw_lower = raw.lower()
         chan_lower = channel.lower()
 
-        # ── Definitive match end signals ──
-        if 'matchshot' in raw_lower:
+        # ── DEFINITIVE match end: only matchshot ──
+        # matchshot is ONLY sent when the entire match is won (not a leg)
+        if 'matchshot' in raw_lower and 'gameshot' not in raw_lower:
             return "match_finished_matchshot"
 
-        if 'winner' in raw_lower and ('animation' in raw_lower or 'detected' in raw_lower):
-            return "match_finished_winner"
-
-        # Check payload for state=finished
+        # ── Check payload for match-level winner ──
         if payload and isinstance(payload, dict):
+            # ONLY matchWinner counts as match end (NOT gameWinner)
+            match_winner = (
+                payload.get('matchWinner') or
+                (payload.get('data', {}) or {}).get('matchWinner')
+            )
+            if match_winner and match_winner is not False:
+                return "match_finished_winner_field"
+
+            # state field — log but do NOT treat as match_finished
+            # (state: finished can mean a leg/game finished, not the match)
             state = self._deep_get_state(payload)
-            if state in ('finished', 'completed', 'ended'):
-                return "match_finished_state"
             if state in ('active', 'running', 'started', 'playing'):
                 return "match_started"
+            if state in ('finished', 'completed', 'ended'):
+                # This might be a leg finish — classify as game_state_finished,
+                # NOT match_finished. The difference matters.
+                return "game_state_finished"
 
-            # Check for winner field
-            for key in ('winner', 'matchWinner', 'gameWinner', 'isFinished'):
-                val = payload.get(key) or (payload.get('data', {}) or {}).get(key)
-                if val and val is not False:
-                    return "match_finished_winner_field"
+        # ── Gameshot = leg end, NEVER match end ──
+        if 'gameshot' in raw_lower:
+            return "round_transition_gameshot"
 
         # ── Channel-based classification ──
-        if '.state' in chan_lower and 'autodarts.matches' in chan_lower:
+        if 'autodarts.matches' in chan_lower and '.state' in chan_lower:
             return "match_state"
         if '.game-events' in chan_lower or 'game-event' in chan_lower:
-            if 'gameshot' in raw_lower:
-                return "round_transition_gameshot"
             return "game_event"
-        if '.matches' in chan_lower and 'autodarts.boards' in chan_lower:
+        if 'autodarts.boards' in chan_lower and '.matches' in chan_lower:
             return "board_matches"
-        if '.state' in chan_lower and 'autodarts.boards' in chan_lower:
+        if 'autodarts.boards' in chan_lower and '.state' in chan_lower:
             return "board_state"
 
-        # ── Content-based classification ──
+        # ── Content-based classification (conservative) ──
         if 'autodarts' in raw_lower or 'match' in raw_lower:
-            if 'gameshot' in raw_lower:
-                return "round_transition_gameshot"
-            if any(kw in raw_lower for kw in ('throw', 'score', 'turn', 'dart')):
+            if any(kw in raw_lower for kw in ('throw', 'score', 'turn', 'dart', 'next')):
                 return "turn_transition"
-            if any(kw in raw_lower for kw in ('finish', 'ended', 'result')):
-                return "result_screen"
             return "match_related"
 
         if 'subscribe' in raw_lower or 'attach' in raw_lower:
@@ -587,16 +605,28 @@ class AutodartsObserver:
         return None
 
     def _update_ws_state(self, interpretation: str, channel: str, payload, raw: str):
-        """Update the accumulated WS event state based on frame classification."""
+        """
+        Update the accumulated WS event state based on frame classification.
+        CONSERVATIVE: only definitive match-level signals set match_finished.
+        """
         ws = self._ws_state
 
-        if interpretation.startswith("match_finished"):
+        if interpretation in ("match_finished_matchshot", "match_finished_winner_field"):
+            # TRUE match end signals — only these trigger finalization
             ws.match_finished = True
             ws.winner_detected = True
             ws.finish_trigger = f"{interpretation}:{channel}"
             logger.info(
-                f"[Observer:{self.board_id}] *** WS_EVENT: {interpretation} ***  "
+                f"[Observer:{self.board_id}] *** MATCH_END_SIGNAL: {interpretation} ***  "
                 f"channel={channel} | finish_trigger={ws.finish_trigger}"
+            )
+
+        elif interpretation == "game_state_finished":
+            # state: finished — could be leg OR match. Log but do NOT set match_finished.
+            # This prevents false locks on leg finishes.
+            logger.info(
+                f"[Observer:{self.board_id}] WS_EVENT: game_state_finished "
+                f"(leg or match — NOT triggering match_finished) channel={channel}"
             )
 
         elif interpretation == "match_started":
@@ -610,14 +640,14 @@ class AutodartsObserver:
             ws.last_game_event = "gameshot"
             logger.info(f"[Observer:{self.board_id}] WS_EVENT: gameshot (leg end, NOT match end)")
 
-        elif interpretation == "match_state":
+        elif interpretation == "turn_transition":
+            ws.last_game_event = "turn"
+
+        elif interpretation in ("game_event", "match_state", "board_state", "board_matches"):
             if payload and isinstance(payload, dict):
                 state = self._deep_get_state(payload)
                 if state:
                     ws.last_match_state = state
-
-        elif interpretation in ("game_event", "turn_transition"):
-            if payload and isinstance(payload, dict):
                 evt = (payload.get('type') or payload.get('event') or
                        (payload.get('data', {}) or {}).get('type') or '')
                 if evt:

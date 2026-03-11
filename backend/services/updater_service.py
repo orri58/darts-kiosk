@@ -14,7 +14,7 @@ A separate updater.py script handles: stop → replace → restart → health ch
 Protected directories (NEVER overwritten by the updater):
   - data/           (database, assets, downloads, backups)
   - logs/
-  - chrome_profile/ (or data/kiosk_chrome_profile/)
+  - chrome_profile/ (data/chrome_profile/BOARD-1)
   - backend/.env
   - frontend/.env
 """
@@ -172,7 +172,7 @@ class UpdaterService:
             logger.error(f"[Updater] {err}")
             return {"valid": False, "errors": [err]}
 
-        logger.info(f"[Updater] Extraction complete")
+        logger.info("[Updater] Extraction complete")
 
         # Find the root directory inside the zip
         staging_contents = list(STAGING_DIR.iterdir())
@@ -227,8 +227,8 @@ class UpdaterService:
             "version_check_url": "http://localhost:8001/api/system/version",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "protected_paths": [
-                "data", "logs", "chrome_profile",
-                "data/kiosk_chrome_profile",
+                "data", "logs",
+                "data/chrome_profile",
                 "backend/.env", "frontend/.env",
             ],
         }
@@ -251,8 +251,8 @@ class UpdaterService:
             "version_check_url": "http://localhost:8001/api/system/version",
             "created_at": datetime.now(timezone.utc).isoformat(),
             "protected_paths": [
-                "data", "logs", "chrome_profile",
-                "data/kiosk_chrome_profile",
+                "data", "logs",
+                "data/chrome_profile",
                 "backend/.env", "frontend/.env",
             ],
         }
@@ -275,7 +275,7 @@ class UpdaterService:
         updater_script = PROJECT_ROOT / 'updater.py'
         manifest_path = MANIFEST_PATH
 
-        logger.info(f"[Updater] === LAUNCH UPDATER ===")
+        logger.info("[Updater] === LAUNCH UPDATER ===")
         logger.info(f"[Updater]   updater_script: {updater_script}")
         logger.info(f"[Updater]   updater_exists: {updater_script.exists()}")
         logger.info(f"[Updater]   manifest_path: {manifest_path}")
