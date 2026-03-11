@@ -214,6 +214,7 @@ class AutodartsObserver:
         self._playwright = None
         self._observe_task: Optional[asyncio.Task] = None
         self._stopping = False
+        self._closing = False  # Guard against concurrent close_session calls
 
         # Stable confirmed state (only changes after debounce)
         self._stable_state: ObserverState = ObserverState.CLOSED
@@ -237,6 +238,15 @@ class AutodartsObserver:
     @property
     def is_open(self) -> bool:
         return self._context is not None and self.status.browser_open
+
+    def _page_alive(self) -> bool:
+        """Check if the page is still alive and usable. Null-safe."""
+        if self._page is None or self._context is None:
+            return False
+        try:
+            return not self._page.is_closed()
+        except Exception:
+            return False
 
     def _check_profile_locked(self, profile_dir: str) -> bool:
         """
@@ -344,6 +354,7 @@ class AutodartsObserver:
         self._on_game_started = on_game_started
         self._on_game_ended = on_game_ended
         self._stopping = False
+        self._closing = False  # Reset for re-open
         self._stable_state = ObserverState.CLOSED
         self._exit_polls = 0
         self._exit_saw_finished = False
@@ -523,9 +534,15 @@ class AutodartsObserver:
             # ── Post-launch health check: verify page is still alive ──
             for check_at in [3, 7, 12]:
                 await asyncio.sleep(check_at - (0 if check_at == 3 else (3 if check_at == 7 else 7)))
+                if not self._page_alive():
+                    logger.error(
+                        f"[Observer:{self.board_id}]   HEALTH@{check_at}s: "
+                        f"page_alive=False (page or context is None/closed)"
+                    )
+                    break
                 try:
                     alive_url = self._page.url
-                    page_count = len(self._context.pages)
+                    page_count = len(self._context.pages) if self._context else 0
                     logger.info(
                         f"[Observer:{self.board_id}]   HEALTH@{check_at}s: "
                         f"page_alive=True, url={alive_url}, pages={page_count}"
@@ -907,8 +924,12 @@ class AutodartsObserver:
     # ═══════════════════════════════════════════════════════════════
 
     async def close_session(self):
-        """Close Chrome and stop observing. Restore kiosk window."""
-        logger.info(f"[Observer:{self.board_id}] === CLOSE SESSION START ===")
+        """Close Chrome and stop observing. Restore kiosk window. Idempotent."""
+        if self._closing:
+            logger.info(f"[Observer:{self.board_id}] CLOSE_SESSION_SKIPPED (already closing)")
+            return
+        self._closing = True
+        logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_START ===")
         self._stopping = True
 
         if self._observe_task and not self._observe_task.done():
@@ -918,6 +939,7 @@ class AutodartsObserver:
                 await self._observe_task
             except asyncio.CancelledError:
                 pass
+        self._observe_task = None
 
         await self._cleanup()
         self._set_state(ObserverState.CLOSED)
@@ -932,22 +954,28 @@ class AutodartsObserver:
         except Exception as wm_err:
             logger.warning(f"[Observer:{self.board_id}]   kiosk window restore FAILED: {wm_err}")
 
-        logger.info(f"[Observer:{self.board_id}] === CLOSE SESSION COMPLETE ===")
+        logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_DONE ===")
 
     async def _cleanup(self):
         """Close context and playwright. Profile data is preserved on disk."""
+        logger.info(f"[Observer:{self.board_id}]   _cleanup: closing context...")
         try:
             if self._context:
                 await self._context.close()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[Observer:{self.board_id}]   _cleanup: context close error: {e}")
+
+        logger.info(f"[Observer:{self.board_id}]   _cleanup: stopping playwright...")
         try:
             if self._playwright:
                 await self._playwright.stop()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"[Observer:{self.board_id}]   _cleanup: playwright stop error: {e}")
+
         self._page = None
+        logger.info(f"[Observer:{self.board_id}]   PAGE_SET_NONE")
         self._context = None
+        logger.info(f"[Observer:{self.board_id}]   CONTEXT_SET_NONE")
         self._playwright = None
         self.status.browser_open = False
 
@@ -969,17 +997,30 @@ class AutodartsObserver:
         logger.info(f"[Observer:{self.board_id}]   poll_interval={OBSERVER_POLL_INTERVAL}s, "
                      f"debounce_polls={DEBOUNCE_EXIT_POLLS}, debounce_interval={DEBOUNCE_POLL_INTERVAL}s")
 
+        stop_reason = "unknown"
+
         while not self._stopping:
             try:
                 interval = DEBOUNCE_POLL_INTERVAL if self._exit_polls > 0 else OBSERVER_POLL_INTERVAL
                 await asyncio.sleep(interval)
-                if not self._page or self._stopping:
+
+                # ── Null-safe page check ──
+                if self._stopping:
+                    stop_reason = "stopping_flag"
+                    break
+                if not self._page_alive():
+                    stop_reason = "page_not_alive"
+                    logger.warning(
+                        f"[Observer:{self.board_id}] OBSERVE_LOOP_STOP_REASON: {stop_reason} "
+                        f"(page={self._page is not None}, context={self._context is not None})"
+                    )
                     break
 
                 # ── Browser health check ──
                 try:
                     _ = self._page.url
                 except Exception as health_err:
+                    stop_reason = f"browser_dead:{health_err}"
                     logger.error(
                         f"[Observer:{self.board_id}] *** BROWSER DEAD *** "
                         f"Page no longer accessible: {health_err}. "
@@ -1132,6 +1173,7 @@ class AutodartsObserver:
                         self._set_state(effective_raw)
 
             except asyncio.CancelledError:
+                stop_reason = "cancelled"
                 break
             except Exception as e:
                 logger.error(f"[Observer:{self.board_id}] Observe loop error: {e}")
@@ -1140,6 +1182,9 @@ class AutodartsObserver:
                 self._stable_state = ObserverState.ERROR
                 await asyncio.sleep(OBSERVER_POLL_INTERVAL * 2)
 
+        if self._stopping:
+            stop_reason = "stopping_flag"
+        logger.info(f"[Observer:{self.board_id}] OBSERVE_LOOP_STOP_REASON: {stop_reason}")
         logger.info(f"[Observer:{self.board_id}] Observe loop ended")
 
     # ═══════════════════════════════════════════════════════════════
@@ -1170,6 +1215,8 @@ class AutodartsObserver:
 
     async def _read_console_state(self) -> Optional[ObserverState]:
         """Read console capture data (injected via add_init_script)."""
+        if not self._page_alive():
+            return None
         try:
             data = await self._page.evaluate("""() => {
                 var c = window.__dartsKioskConsole;
@@ -1205,6 +1252,8 @@ class AutodartsObserver:
 
     async def _detect_state_dom(self) -> ObserverState:
         """DOM-based state detection (fallback). Three-tier detection."""
+        if not self._page_alive():
+            return ObserverState.UNKNOWN
         try:
             signals = await self._page.evaluate("""() => {
                 var inGame = !!(
