@@ -1147,17 +1147,13 @@ class AutodartsObserver:
                                              exc_info=True)
 
                     elif stable == ObserverState.FINISHED and effective_raw == ObserverState.IDLE:
+                        # Player dismissed results and returned to lobby.
+                        # Do NOT trigger finalize_match again — that was already done
+                        # when the match finished. Just transition the state.
                         logger.info(f"[Observer:{self.board_id}] === TRANSITION: "
-                                    f"finished -> idle (result dismissed) ===")
+                                    f"finished -> idle (result dismissed, NO re-finalize) ===")
                         self._stable_state = ObserverState.IDLE
                         self._set_state(ObserverState.IDLE)
-
-                        if self._on_game_ended:
-                            try:
-                                await self._on_game_ended(self.board_id, "post_finish_check")
-                            except Exception as e:
-                                logger.error(f"[Observer:{self.board_id}] "
-                                             f"on_game_ended(post_finish_check) ERROR: {e}", exc_info=True)
                     else:
                         logger.info(f"[Observer:{self.board_id}] === TRANSITION: "
                                     f"{stable.value} -> {effective_raw.value} ===")

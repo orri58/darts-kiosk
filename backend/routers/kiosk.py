@@ -1,11 +1,12 @@
 """
-Kiosk Action Routes — Observer MVP
+Kiosk Action Routes — Observer MVP (v2.2.0)
 
 Central finalization via finalize_match(board_id, trigger):
-  - Used by both WS match-end and manual staff action
-  - Steps: credit deduction → board lock → observer close → kiosk restore
-  - Credit logic does NOT depend on browser close succeeding
-  - Kiosk window (WindowManager) and Autodarts browser (Playwright) are separate
+  - Single entry point for ALL match-end scenarios (WS, manual, abort)
+  - Strict order: guard → credit → lock decision → close observer → restore kiosk
+  - Observer/kiosk cleanup ONLY when session ends (should_lock or manual)
+  - Credit deduction via _should_deduct_credit (centralized policy)
+  - Kiosk window (WindowManager) and Autodarts browser (Playwright) are SEPARATE
 """
 import asyncio
 import os
@@ -38,6 +39,23 @@ _finalizing: set = set()
 
 
 # =====================================================================
+# Centralized credit policy
+# =====================================================================
+
+def _should_deduct_credit(trigger: str) -> bool:
+    """
+    Central credit deduction policy.
+    Returns True if a credit should be consumed for this trigger.
+
+    - "finished": Game completed normally → deduct
+    - "manual":   Staff stopped the game  → deduct
+    - "aborted":  Game cancelled/left     → FREE (no deduction)
+    - anything else (e.g. stale triggers) → no deduction
+    """
+    return trigger in ("finished", "manual")
+
+
+# =====================================================================
 # Central finalization
 # =====================================================================
 
@@ -48,178 +66,218 @@ async def finalize_match(board_id: str, trigger: str,
 
     trigger: "finished" | "aborted" | "manual"
 
-    Steps (in order, credit logic independent of browser close):
-      1. [SESSION] Credit deducted (finished/manual only)
-      2. [SESSION] Board locked if credits exhausted
-      3. [AUTODARTS] Observer/browser closed (Playwright only)
-      4. [KIOSK] Window restored (WindowManager only)
+    Steps (strict order):
+      1. [GUARD]    Idempotency — skip if already finalizing this board
+      2. [CREDIT]   Deduct credit (only if _should_deduct_credit)
+      3. [LOCK]     Lock board if credits exhausted or time expired
+      4. [OBSERVER] Close Autodarts browser — ONLY if session ends (should_lock or manual)
+      5. [KIOSK]    Restore kiosk window  — ONLY if session ends (should_lock or manual)
+      6. [BROADCAST] Notify all clients
+      7. [CLEANUP]  Release finalizing guard
     """
-    # ── Idempotency guard ──
+    # ── Step 1: Idempotency guard ──
     if board_id in _finalizing:
-        logger.info(f"[SESSION] finalize SKIPPED (already in progress) board={board_id}")
+        logger.info(f"[FINALIZE] SKIPPED board={board_id} (already finalizing)")
         return {"should_lock": False, "credits_remaining": -1, "board_status": "unknown"}
     _finalizing.add(board_id)
 
-    logger.info(f"[SESSION] finalize start board={board_id} trigger={trigger}")
+    logger.info(f"[FINALIZE] ===== START board={board_id} trigger={trigger} =====")
 
     should_lock = False
     credits_remaining = 0
     board_status = "unlocked"
     match_token = None
+    # Whether to tear down the observer + kiosk (only on session end)
+    should_teardown = (trigger == "manual")
 
-    # ─── Steps 1-2: DB operations (independent of browser) ───
     try:
-        async with AsyncSessionLocal() as db:
-            async with db.begin():
-                result = await db.execute(select(Board).where(Board.board_id == board_id))
-                board = result.scalar_one_or_none()
-                if not board:
-                    logger.error(f"[SESSION] board_not_found: {board_id}")
-                    _finalizing.discard(board_id)
-                    return {"should_lock": False, "credits_remaining": 0, "board_status": "unknown"}
+        # ── Steps 2-3: DB operations (credit + lock decision) ──
+        try:
+            async with AsyncSessionLocal() as db:
+                async with db.begin():
+                    result = await db.execute(select(Board).where(Board.board_id == board_id))
+                    board = result.scalar_one_or_none()
+                    if not board:
+                        logger.error(f"[FINALIZE] board_not_found: {board_id}")
+                        return {"should_lock": False, "credits_remaining": 0, "board_status": "unknown"}
 
-                if board.status == BoardStatus.LOCKED.value:
-                    logger.info("[SESSION] board already locked, skipping DB work")
-                    _finalizing.discard(board_id)
-                    return {"should_lock": True, "credits_remaining": 0, "board_status": "locked"}
+                    if board.status == BoardStatus.LOCKED.value:
+                        logger.info(f"[FINALIZE] board already locked, nothing to do board={board_id}")
+                        return {"should_lock": True, "credits_remaining": 0, "board_status": "locked"}
 
-                session = await get_active_session_for_board(db, board.id)
-                if not session:
-                    logger.info("[SESSION] no active session, skipping")
-                    _finalizing.discard(board_id)
-                    return {"should_lock": False, "credits_remaining": 0, "board_status": board.status}
+                    session = await get_active_session_for_board(db, board.id)
+                    if not session:
+                        logger.info(f"[FINALIZE] no active session board={board_id}")
+                        return {"should_lock": False, "credits_remaining": 0, "board_status": board.status}
 
-                # ── Credit deduction (finished/manual only) ──
-                credits_before = session.credits_remaining
-                if trigger in ("finished", "manual"):
-                    if session.pricing_mode == PricingMode.PER_GAME.value:
-                        session.credits_remaining = max(0, session.credits_remaining - 1)
-                        logger.info(
-                            f"[SESSION] credit deducted: {credits_before} -> "
-                            f"{session.credits_remaining} (trigger={trigger})"
-                        )
-                credits_remaining = session.credits_remaining
-
-                # ── Lock decision ──
-                if session.pricing_mode == PricingMode.PER_GAME.value:
-                    should_lock = session.credits_remaining <= 0
-                if session.pricing_mode == PricingMode.PER_TIME.value:
-                    if session.expires_at and datetime.now(timezone.utc) >= session.expires_at:
-                        should_lock = True
-
-                logger.info(
-                    f"[SESSION] lock_decision: should_lock={should_lock}, "
-                    f"credits={credits_remaining}, trigger={trigger}"
-                )
-
-                # ── Match result (finished/manual only) ──
-                if trigger in ("finished", "manual"):
-                    match_sharing = await get_or_create_setting(db, "match_sharing", DEFAULT_MATCH_SHARING)
-                    if match_sharing.get("enabled", False):
-                        match_token = secrets.token_hex(16)
-                        duration = None
-                        if session.started_at:
-                            started = session.started_at
-                            if started.tzinfo is None:
-                                started = started.replace(tzinfo=timezone.utc)
-                            duration = int((datetime.now(timezone.utc) - started).total_seconds())
-                        match = MatchResult(
-                            public_token=match_token,
-                            board_id=board.board_id,
-                            board_name=board.name,
-                            game_type=session.game_type or "Dart",
-                            players=session.players or [],
-                            winner=winner or (session.players[0] if session.players else None),
-                            scores=scores,
-                            duration_seconds=duration,
-                            expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-                        )
-                        db.add(match)
-
-                    # Player stats
-                    for name in (session.players or []):
-                        result_p = await db.execute(
-                            select(Player).where(Player.nickname_lower == name.strip().lower())
-                        )
-                        player = result_p.scalar_one_or_none()
-                        if not player:
-                            player = Player(
-                                nickname=name.strip(),
-                                nickname_lower=name.strip().lower(),
-                                is_registered=False,
+                    # ── Step 2: Credit deduction ──
+                    credits_before = session.credits_remaining
+                    if _should_deduct_credit(trigger):
+                        if session.pricing_mode == PricingMode.PER_GAME.value:
+                            session.credits_remaining = max(0, session.credits_remaining - 1)
+                            logger.info(
+                                f"[FINALIZE] CREDIT_DEDUCTED: {credits_before} -> "
+                                f"{session.credits_remaining} (trigger={trigger}, mode=per_game)"
                             )
-                            db.add(player)
-                        player.games_played = (player.games_played or 0) + 1
-                        player.last_played_at = datetime.now(timezone.utc)
-
-                # ── Apply lock or return to unlocked ──
-                if should_lock:
-                    session.status = SessionStatus.FINISHED.value
-                    session.ended_at = datetime.now(timezone.utc)
-                    if trigger == "aborted":
-                        session.ended_reason = "last_game_aborted"
-                    elif trigger == "manual":
-                        session.ended_reason = "manual_stop"
-                    elif session.pricing_mode == PricingMode.PER_TIME.value:
-                        session.ended_reason = "time_expired"
+                        else:
+                            logger.info(
+                                f"[FINALIZE] CREDIT_SKIP: mode={session.pricing_mode} "
+                                f"(only per_game deducts on match end)"
+                            )
                     else:
-                        session.ended_reason = "credits_exhausted"
-                    board.status = BoardStatus.LOCKED.value
-                    board_status = "locked"
-                    logger.info(f"[SESSION] board locked: reason={session.ended_reason}")
-                else:
-                    board.status = BoardStatus.UNLOCKED.value
-                    board_status = "unlocked"
-                    logger.info(f"[SESSION] board stays unlocked: credits={credits_remaining}")
+                        logger.info(
+                            f"[FINALIZE] CREDIT_FREE: trigger={trigger} "
+                            f"(no deduction for this trigger)"
+                        )
+                    credits_remaining = session.credits_remaining
 
-                await db.flush()
+                    # ── Step 3: Lock decision ──
+                    if session.pricing_mode == PricingMode.PER_GAME.value:
+                        should_lock = session.credits_remaining <= 0
+                    if session.pricing_mode == PricingMode.PER_TIME.value:
+                        if session.expires_at and datetime.now(timezone.utc) >= session.expires_at:
+                            should_lock = True
 
-    except Exception as e:
-        logger.error(f"[SESSION] DB error during finalize: {e}", exc_info=True)
+                    # Manual stop always tears down, lock additionally if no credits
+                    if should_lock:
+                        should_teardown = True
 
-    # ─── Step 3: Close Autodarts browser (Playwright only) ───
-    try:
-        logger.info(f"[AUTODARTS] closing observer for {board_id}...")
-        await observer_manager.close(board_id)
-        logger.info("[AUTODARTS] observer closed OK")
-    except Exception as e:
-        logger.error(f"[AUTODARTS] close failed: {e}")
+                    logger.info(
+                        f"[FINALIZE] LOCK_DECISION: should_lock={should_lock}, "
+                        f"should_teardown={should_teardown}, "
+                        f"credits={credits_remaining}, trigger={trigger}"
+                    )
 
-    # ─── Step 4: Window management (kiosk only) ───
-    if should_lock:
-        try:
-            from backend.services.window_manager import kill_overlay_process
-            await kill_overlay_process()
-            logger.info("[KIOSK] overlay killed")
+                    # ── Match result (finished/manual only) ──
+                    if _should_deduct_credit(trigger):
+                        match_sharing = await get_or_create_setting(db, "match_sharing", DEFAULT_MATCH_SHARING)
+                        if match_sharing.get("enabled", False):
+                            match_token = secrets.token_hex(16)
+                            duration = None
+                            if session.started_at:
+                                started = session.started_at
+                                if started.tzinfo is None:
+                                    started = started.replace(tzinfo=timezone.utc)
+                                duration = int((datetime.now(timezone.utc) - started).total_seconds())
+                            match = MatchResult(
+                                public_token=match_token,
+                                board_id=board.board_id,
+                                board_name=board.name,
+                                game_type=session.game_type or "Dart",
+                                players=session.players or [],
+                                winner=winner or (session.players[0] if session.players else None),
+                                scores=scores,
+                                duration_seconds=duration,
+                                expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+                            )
+                            db.add(match)
+
+                        # Player stats
+                        for name in (session.players or []):
+                            result_p = await db.execute(
+                                select(Player).where(Player.nickname_lower == name.strip().lower())
+                            )
+                            player = result_p.scalar_one_or_none()
+                            if not player:
+                                player = Player(
+                                    nickname=name.strip(),
+                                    nickname_lower=name.strip().lower(),
+                                    is_registered=False,
+                                )
+                                db.add(player)
+                            player.games_played = (player.games_played or 0) + 1
+                            player.last_played_at = datetime.now(timezone.utc)
+
+                    # ── Apply lock or return to unlocked ──
+                    if should_lock:
+                        session.status = SessionStatus.FINISHED.value
+                        session.ended_at = datetime.now(timezone.utc)
+                        if trigger == "aborted":
+                            session.ended_reason = "last_game_aborted"
+                        elif trigger == "manual":
+                            session.ended_reason = "manual_stop"
+                        elif session.pricing_mode == PricingMode.PER_TIME.value:
+                            session.ended_reason = "time_expired"
+                        else:
+                            session.ended_reason = "credits_exhausted"
+                        board.status = BoardStatus.LOCKED.value
+                        board_status = "locked"
+                        logger.info(f"[FINALIZE] SESSION_CLOSED: reason={session.ended_reason}")
+                    elif trigger == "manual":
+                        # Manual stop without lock: end session but keep board unlocked
+                        session.status = SessionStatus.FINISHED.value
+                        session.ended_at = datetime.now(timezone.utc)
+                        session.ended_reason = "manual_stop"
+                        board.status = BoardStatus.LOCKED.value
+                        board_status = "locked"
+                        should_lock = True
+                        logger.info(f"[FINALIZE] SESSION_CLOSED: manual stop (board locked)")
+                    else:
+                        board.status = BoardStatus.UNLOCKED.value
+                        board_status = "unlocked"
+                        logger.info(f"[FINALIZE] BOARD_STAYS_UNLOCKED: credits={credits_remaining}")
+
+                    await db.flush()
+
         except Exception as e:
-            logger.warning(f"[KIOSK] overlay kill failed: {e}")
+            logger.error(f"[FINALIZE] DB_ERROR: {e}", exc_info=True)
 
+        # ── Step 4: Close Autodarts observer (ONLY on session teardown) ──
+        if should_teardown:
+            try:
+                logger.info(f"[FINALIZE] OBSERVER_CLOSE: board={board_id} (teardown=True)")
+                await observer_manager.close(board_id)
+                logger.info(f"[FINALIZE] OBSERVER_CLOSED_OK: board={board_id}")
+            except Exception as e:
+                logger.error(f"[FINALIZE] OBSERVER_CLOSE_FAILED: {e}")
+        else:
+            logger.info(
+                f"[FINALIZE] OBSERVER_KEPT_ALIVE: board={board_id} "
+                f"(credits={credits_remaining}, awaiting next game)"
+            )
+
+        # ── Step 5: Restore kiosk window (ONLY on session teardown) ──
+        if should_teardown:
+            try:
+                from backend.services.window_manager import kill_overlay_process
+                await kill_overlay_process()
+                logger.info(f"[FINALIZE] OVERLAY_KILLED: board={board_id}")
+            except Exception as e:
+                logger.warning(f"[FINALIZE] OVERLAY_KILL_FAILED: {e}")
+
+            try:
+                from backend.services.window_manager import restore_kiosk_window
+                await asyncio.sleep(0.5)
+                await restore_kiosk_window()
+                logger.info(f"[FINALIZE] KIOSK_RESTORED: board={board_id}")
+            except Exception as e:
+                logger.warning(f"[FINALIZE] KIOSK_RESTORE_FAILED: {e}")
+
+        # ── Step 6: Broadcasts ──
         try:
-            from backend.services.window_manager import restore_kiosk_window
-            await asyncio.sleep(0.5)
-            await restore_kiosk_window()
-            logger.info("[KIOSK] restored")
+            if _should_deduct_credit(trigger):
+                await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "checkout"})
+
+            await board_ws.broadcast("board_status", {"board_id": board_id, "status": board_status})
+
+            if not should_lock:
+                await board_ws.broadcast("credit_update", {
+                    "board_id": board_id,
+                    "credits_remaining": credits_remaining,
+                    "is_last_game": credits_remaining <= 1,
+                })
         except Exception as e:
-            logger.warning(f"[KIOSK] restore failed: {e}")
+            logger.warning(f"[FINALIZE] BROADCAST_ERROR: {e}")
 
-    # ─── Broadcasts ───
-    try:
-        if trigger in ("finished", "manual"):
-            await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "checkout"})
+    finally:
+        # ── Step 7: ALWAYS release the guard ──
+        _finalizing.discard(board_id)
 
-        await board_ws.broadcast("board_status", {"board_id": board_id, "status": board_status})
-
-        if not should_lock:
-            await board_ws.broadcast("credit_update", {
-                "board_id": board_id,
-                "credits_remaining": credits_remaining,
-                "is_last_game": False,
-            })
-    except Exception as e:
-        logger.warning(f"[SESSION] broadcast error: {e}")
-
-    _finalizing.discard(board_id)
-    logger.info(f"[SESSION] finalize end board={board_id} should_lock={should_lock} credits={credits_remaining}")
+    logger.info(
+        f"[FINALIZE] ===== END board={board_id} trigger={trigger} "
+        f"should_lock={should_lock} should_teardown={should_teardown} "
+        f"credits={credits_remaining} ====="
+    )
 
     return {
         "should_lock": should_lock,
