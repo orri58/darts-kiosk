@@ -221,6 +221,17 @@ autostart.bat:
   - FIX 6: --disable-session-crashed-bubble added to Chrome args
   - WSEventState.reset() now also clears last_match_id
   - All tests passing: 35/35 (iteration_38)
+- v2.0.0: Complete State Machine Rewrite (2026-03-11)
+  - Entire _classify_frame and _update_ws_state rewritten based on real board PC WS diagnostics
+  - Match START: event=turn_start or event=throw → match_active=True
+  - Match END: game_shot+body.type=match OR finished=true OR gameFinished=true → match_finished=True
+  - Post-match: event=delete → full reset (match removed from server, return to lobby)
+  - REMOVED old classifications: match_deleted, board_match_deleted, match_not_found, match_started, game_state_finished, turn_transition, game_event, match_state, match_related
+  - Credit deduction moved from game START to game END (only on reason=finished, aborted games free)
+  - Fast-track debounce: authoritative finish triggers skip normal 3-poll debounce (1 poll)
+  - Helpers: _extract_event, _extract_body_type, _extract_bool_field for robust payload parsing
+  - _merge_detection simplified (no more ROUND_TRANSITION from WS)
+  - All tests passing: 55/55 (iteration_39)
 
 ## Remaining Backlog
 ### P1

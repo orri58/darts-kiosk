@@ -1,14 +1,16 @@
 """
 Kiosk Action Routes — Observer MVP
 
-Credit logic: credits decrement on game START (idle->in_game), not on finish.
+Credit logic: credits decrement on game END (only when reason="finished").
+Aborted games do NOT consume credits.
 Match sharing: conditional based on admin setting match_sharing.enabled.
 
 Session-end chain (triggered by observer detecting game end or abort):
-  1. Check credits/time → decide should_lock
-  2. If should_lock: finalize session in DB, set board to LOCKED
-  3. Schedule observer close (closes browser, restores kiosk window)
-  4. Broadcast status updates
+  1. Deduct credit (only on "finished")
+  2. Check remaining credits/time → decide should_lock
+  3. If should_lock: finalize session in DB, set board to LOCKED
+  4. Schedule observer close (closes browser, restores kiosk window)
+  5. Broadcast status updates
   All steps logged explicitly for debugging.
 """
 import asyncio
