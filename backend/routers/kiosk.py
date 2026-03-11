@@ -462,6 +462,50 @@ async def get_all_observer_statuses():
     }
 
 
+@router.get("/kiosk/{board_id}/ws-diagnostic")
+async def get_ws_diagnostic(board_id: str):
+    """
+    Diagnostic endpoint: returns captured WebSocket frames and event state
+    for debugging match-end detection. Shows the raw event stream that
+    the observer uses to determine game state.
+    """
+    obs = observer_manager.get(board_id)
+    if not obs:
+        return {
+            "board_id": board_id,
+            "observer_active": False,
+            "ws_state": None,
+            "captured_frames": [],
+            "note": "No active observer for this board",
+        }
+
+    ws = obs._ws_state
+    frames = list(obs._ws_frames)
+
+    return {
+        "board_id": board_id,
+        "observer_active": obs.is_open,
+        "stable_state": obs._stable_state.value,
+        "debounce": {
+            "exit_polls": obs._exit_polls,
+            "saw_finished": obs._exit_saw_finished,
+        },
+        "ws_state": {
+            "match_active": ws.match_active,
+            "match_finished": ws.match_finished,
+            "winner_detected": ws.winner_detected,
+            "last_match_state": ws.last_match_state,
+            "last_game_event": ws.last_game_event,
+            "last_match_id": ws.last_match_id,
+            "frames_received": ws.frames_received,
+            "match_relevant_frames": ws.match_relevant_frames,
+            "finish_trigger": ws.finish_trigger,
+        },
+        "captured_frames_count": len(frames),
+        "captured_frames": [f.to_dict() for f in frames[-30:]],  # Last 30 frames
+    }
+
+
 @router.post("/kiosk/{board_id}/observer-reset")
 async def reset_observer(board_id: str):
     logger.info(f"[Observer] Reset: {board_id}")

@@ -2,32 +2,42 @@
 Autodarts Observer Service — Event-Driven Match Detection
 ==========================================================
 
-PRIMARY detection: WebSocket/console event capture (injected JS intercepts
-Autodarts' own real-time messages and console output).
+Detection architecture (priority order):
+  1. Playwright WebSocket frame observation (network-level, most reliable)
+  2. Console.log capture via add_init_script (catches Winner Animation, matchshot logs)
+  3. DOM/UI polling (button text, CSS classes) — fallback only
 
-FALLBACK detection: DOM/UI polling (button text, CSS classes).
+The WebSocket observation uses Playwright's page.on('websocket') API which
+intercepts ALL frames at the network level, regardless of when the connection
+was created. This solves the fundamental flaw of the previous JS-injection
+approach where the interceptor ran AFTER the WS connection was already open.
 
-Key signals captured from Autodarts:
-  - WebSocket messages on autodarts.matches channels (state, game-events)
-  - Console output: "Winner Animation", "gameshot", "matchshot"
-  - Match state transitions: active -> finished
+Autodarts messaging patterns observed:
+  - autodarts.matches.{id}.state      → match lifecycle (active, finished)
+  - autodarts.matches.{id}.game-events → throw, gameshot, matchshot
+  - autodarts.boards.{id}.matches     → board-level match events
+  - autodarts.boards.{id}.state       → board state changes
 
 Credit logic:
   Credits are decremented on game START (idle -> in_game), not on finish.
 
 Session-end logic:
   Triggered ONLY by confirmed exit from in_game:
-    - Event-driven: WebSocket match_state="finished" + matchshot event
+    - Event-driven: WS match finished / matchshot / winner
     - DOM fallback: strong match-end markers (Rematch/Share buttons)
     - Abort: return to lobby (idle)
-  On confirmed exit: check credits. If exhausted -> lock board, close browser, restore kiosk.
+  On confirmed exit: check credits → lock board, close browser, restore kiosk.
 """
 import asyncio
+import json
 import os
+import re
 import sys
 import logging
+import threading
+from collections import deque
 from typing import Optional, Dict, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -45,203 +55,63 @@ DEBOUNCE_POLL_INTERVAL = int(os.environ.get('OBSERVER_DEBOUNCE_INTERVAL', '2'))
 _default_profile = str(Path(os.environ.get('DATA_DIR', './data')) / 'chrome_profile')
 CHROME_PROFILE_DIR = os.environ.get('CHROME_PROFILE_DIR', _default_profile)
 
-# ── JavaScript injected into the Autodarts page ──
-# Intercepts WebSocket messages and console.log output to capture
-# match state changes, game events, and winner signals.
-WS_INTERCEPT_SCRIPT = """
+
+# ── Console capture script (injected BEFORE page loads) ──
+# add_init_script ensures this runs before any Autodarts JS.
+CONSOLE_CAPTURE_SCRIPT = """
 (() => {
-    if (window.__dartsKioskCapture) return; // Already injected
-
-    window.__dartsKioskCapture = {
-        matchState: null,          // Latest match state string
-        matchFinished: false,      // Definitive match-end detected
-        matchStarted: false,       // Match currently active
-        winnerDetected: false,     // Winner animation / matchshot
-        lastGameEvent: null,       // Last game event type
-        lastMatchId: null,         // Last seen match ID
-        events: [],                // Ring buffer of last 50 events
-        wsMessageCount: 0,         // Total WS messages captured
-        consoleCaptures: 0,        // Total console captures
-        lastUpdate: null,          // ISO timestamp of last event
-
-        _pushEvent: function(type, data) {
-            var entry = {
-                type: type,
-                data: data,
-                ts: new Date().toISOString()
-            };
-            this.events.push(entry);
-            if (this.events.length > 50) this.events.shift();
-            this.lastUpdate = entry.ts;
-        },
-
-        reset: function() {
-            this.matchState = null;
-            this.matchFinished = false;
-            this.matchStarted = false;
-            this.winnerDetected = false;
-            this.lastGameEvent = null;
-            this.events = [];
+    if (window.__dartsKioskConsole) return;
+    window.__dartsKioskConsole = {
+        entries: [],
+        matchFinished: false,
+        winnerDetected: false,
+        _push: function(msg) {
+            this.entries.push({ msg: msg.substring(0, 500), ts: new Date().toISOString() });
+            if (this.entries.length > 30) this.entries.shift();
         }
     };
 
-    // ── 1. WebSocket message interception ──
-    var OrigWebSocket = window.WebSocket;
-    var origSend = OrigWebSocket.prototype.send;
-
-    // Patch each new WebSocket instance
-    var origAddEventListener = OrigWebSocket.prototype.addEventListener;
-    var patchWs = function(ws) {
-        if (ws.__dartsPatched) return;
-        ws.__dartsPatched = true;
-
-        var origOnMessage = null;
-        var descriptor = Object.getOwnPropertyDescriptor(ws, 'onmessage') ||
-                         Object.getOwnPropertyDescriptor(OrigWebSocket.prototype, 'onmessage');
-
-        ws.addEventListener('message', function(evt) {
-            try {
-                var raw = typeof evt.data === 'string' ? evt.data : '';
-                if (!raw) return;
-
-                window.__dartsKioskCapture.wsMessageCount++;
-
-                // Autodarts uses patterns like:
-                //   autodarts.matches.{id}.state
-                //   autodarts.matches.{id}.game-events
-                var isMatchMsg = raw.indexOf('autodarts.matches') !== -1 ||
-                                 raw.indexOf('match') !== -1;
-                if (!isMatchMsg) return;
-
-                // Try to extract JSON payload
-                var payload = null;
-                try {
-                    // Messages may be JSON or JSON inside a wrapper
-                    payload = JSON.parse(raw);
-                } catch(e) {
-                    // Try extracting JSON from mixed format (e.g. "42[event,{...}]")
-                    var jsonStart = raw.indexOf('{');
-                    var jsonEnd = raw.lastIndexOf('}');
-                    if (jsonStart !== -1 && jsonEnd > jsonStart) {
-                        try {
-                            payload = JSON.parse(raw.substring(jsonStart, jsonEnd + 1));
-                        } catch(e2) {}
-                    }
-                }
-
-                // ── Match state messages ──
-                if (raw.indexOf('.state') !== -1 || raw.indexOf('state') !== -1) {
-                    var state = null;
-                    if (payload) {
-                        state = payload.state || payload.matchState ||
-                                (payload.data && payload.data.state) ||
-                                (payload.match && payload.match.state);
-                    }
-                    if (state) {
-                        window.__dartsKioskCapture.matchState = state;
-                        window.__dartsKioskCapture._pushEvent('ws_match_state', { state: state, raw_length: raw.length });
-
-                        if (state === 'finished' || state === 'completed' || state === 'ended') {
-                            window.__dartsKioskCapture.matchFinished = true;
-                        }
-                        if (state === 'active' || state === 'running' || state === 'started') {
-                            window.__dartsKioskCapture.matchStarted = true;
-                            window.__dartsKioskCapture.matchFinished = false;
-                            window.__dartsKioskCapture.winnerDetected = false;
-                        }
-                    }
-                }
-
-                // ── Game event messages ──
-                if (raw.indexOf('game-event') !== -1 || raw.indexOf('gameEvent') !== -1 ||
-                    raw.indexOf('matchshot') !== -1 || raw.indexOf('gameshot') !== -1) {
-                    var eventType = null;
-                    if (payload) {
-                        eventType = payload.type || payload.event || payload.eventType ||
-                                    (payload.data && (payload.data.type || payload.data.event));
-                    }
-                    // Also check raw string for key signals
-                    if (!eventType) {
-                        if (raw.indexOf('matchshot') !== -1) eventType = 'matchshot';
-                        else if (raw.indexOf('gameshot') !== -1) eventType = 'gameshot';
-                    }
-                    if (eventType) {
-                        window.__dartsKioskCapture.lastGameEvent = eventType;
-                        window.__dartsKioskCapture._pushEvent('ws_game_event', { event: eventType });
-
-                        var lower = eventType.toLowerCase();
-                        if (lower === 'matchshot' || lower === 'match_won' || lower === 'match_finished') {
-                            window.__dartsKioskCapture.matchFinished = true;
-                            window.__dartsKioskCapture.winnerDetected = true;
-                        }
-                    }
-                }
-
-                // ── Match ID tracking ──
-                if (payload) {
-                    var matchId = payload.matchId || payload.match_id ||
-                                  (payload.data && (payload.data.matchId || payload.data.match_id)) ||
-                                  (payload.match && payload.match.id);
-                    if (matchId) {
-                        window.__dartsKioskCapture.lastMatchId = matchId;
-                    }
-                }
-
-            } catch(err) {
-                // Silent - don't break Autodarts
-            }
-        });
-    };
-
-    // Patch existing WebSocket instances and new ones
-    var OrigWsConstruct = window.WebSocket;
-    window.WebSocket = function(url, protocols) {
-        var ws = protocols ? new OrigWsConstruct(url, protocols) : new OrigWsConstruct(url);
-        setTimeout(function() { patchWs(ws); }, 0);
-        return ws;
-    };
-    window.WebSocket.prototype = OrigWsConstruct.prototype;
-    window.WebSocket.CONNECTING = OrigWsConstruct.CONNECTING;
-    window.WebSocket.OPEN = OrigWsConstruct.OPEN;
-    window.WebSocket.CLOSING = OrigWsConstruct.CLOSING;
-    window.WebSocket.CLOSED = OrigWsConstruct.CLOSED;
-
-    // ── 2. Console.log interception ──
-    // Autodarts logs "Winner Animation - Initializing", "gameshot", "matchshot"
     var origLog = console.log;
-    console.log = function() {
-        origLog.apply(console, arguments);
+    var origWarn = console.warn;
+    var origInfo = console.info;
+
+    function capture(args) {
         try {
-            var msg = Array.prototype.join.call(arguments, ' ');
-            var cap = window.__dartsKioskCapture;
+            var msg = Array.prototype.join.call(args, ' ');
+            var cap = window.__dartsKioskConsole;
+            var dominated = false;
 
             if (/winner.?animation/i.test(msg)) {
                 cap.winnerDetected = true;
                 cap.matchFinished = true;
-                cap._pushEvent('console_winner_animation', { msg: msg.substring(0, 200) });
-                cap.consoleCaptures++;
+                cap._push('[WINNER_ANIM] ' + msg);
+                dominated = true;
             }
-            else if (/matchshot/i.test(msg)) {
+            if (/matchshot/i.test(msg)) {
                 cap.matchFinished = true;
                 cap.winnerDetected = true;
-                cap.lastGameEvent = 'matchshot';
-                cap._pushEvent('console_matchshot', { msg: msg.substring(0, 200) });
-                cap.consoleCaptures++;
+                cap._push('[MATCHSHOT] ' + msg);
+                dominated = true;
             }
-            else if (/gameshot/i.test(msg)) {
-                cap.lastGameEvent = 'gameshot';
-                cap._pushEvent('console_gameshot', { msg: msg.substring(0, 200) });
-                cap.consoleCaptures++;
+            if (/gameshot/i.test(msg)) {
+                cap._push('[GAMESHOT] ' + msg);
+                dominated = true;
             }
-            else if (/match.*finish|match.*end|match.*complet/i.test(msg)) {
+            if (/match.*finish|match.*end|match.*complet/i.test(msg)) {
                 cap.matchFinished = true;
-                cap._pushEvent('console_match_end', { msg: msg.substring(0, 200) });
-                cap.consoleCaptures++;
+                cap._push('[MATCH_END] ' + msg);
+                dominated = true;
+            }
+            // Log any autodarts-related console output
+            if (!dominated && /autodarts|match|game|dart|score|winner|finish|throw/i.test(msg)) {
+                cap._push('[AUTODARTS] ' + msg);
             }
         } catch(e) {}
-    };
+    }
 
-    console.log('[DartsKiosk] WebSocket + console capture injected');
+    console.log = function() { origLog.apply(console, arguments); capture(arguments); };
+    console.warn = function() { origWarn.apply(console, arguments); capture(arguments); };
+    console.info = function() { origInfo.apply(console, arguments); capture(arguments); };
 })();
 """
 
@@ -254,6 +124,51 @@ class ObserverState(str, Enum):
     FINISHED = "finished"
     UNKNOWN = "unknown"
     ERROR = "error"
+
+
+@dataclass
+class CapturedWSFrame:
+    """A single captured WebSocket frame with classification."""
+    timestamp: str
+    url: str
+    direction: str  # 'received' or 'sent'
+    raw_preview: str  # First 500 chars of raw data
+    channel: str  # Extracted channel/topic (e.g. autodarts.matches.{id}.state)
+    payload_type: str  # 'json', 'text', 'binary'
+    interpretation: str  # Our classification of this frame
+    payload_data: dict  # Parsed payload (if JSON)
+
+    def to_dict(self):
+        return {
+            "ts": self.timestamp,
+            "dir": self.direction,
+            "channel": self.channel,
+            "interp": self.interpretation,
+            "raw": self.raw_preview[:200],
+            "payload": self.payload_data,
+        }
+
+
+@dataclass
+class WSEventState:
+    """Accumulated state from WebSocket events."""
+    match_active: bool = False
+    match_finished: bool = False
+    winner_detected: bool = False
+    last_match_state: Optional[str] = None
+    last_game_event: Optional[str] = None
+    last_match_id: Optional[str] = None
+    frames_received: int = 0
+    match_relevant_frames: int = 0
+    finish_trigger: Optional[str] = None  # What triggered the finish detection
+
+    def reset(self):
+        self.match_active = False
+        self.match_finished = False
+        self.winner_detected = False
+        self.last_match_state = None
+        self.last_game_event = None
+        self.finish_trigger = None
 
 
 @dataclass
@@ -284,9 +199,9 @@ class ObserverStatus:
 
 class AutodartsObserver:
     """
-    Per-board observer. Opens Chrome to Autodarts using a persistent profile,
-    injects WebSocket/console interceptors, and detects match state primarily
-    from captured events with DOM polling as fallback.
+    Per-board observer. Opens Chrome to Autodarts, observes WebSocket frames
+    at network level via Playwright, and detects match state primarily from
+    captured events with DOM polling as fallback.
     """
 
     def __init__(self, board_id: str):
@@ -312,8 +227,10 @@ class AutodartsObserver:
         # Per-game tracking
         self._credit_consumed = False
 
-        # Event-driven tracking
-        self._ws_interceptor_injected = False
+        # ── WebSocket event capture (network-level) ──
+        self._ws_state = WSEventState()
+        self._ws_frames: deque = deque(maxlen=100)  # Ring buffer of captured frames
+        self._ws_lock = threading.Lock()
 
     @property
     def is_open(self) -> bool:
@@ -338,7 +255,8 @@ class AutodartsObserver:
         self._exit_polls = 0
         self._exit_saw_finished = False
         self._credit_consumed = False
-        self._ws_interceptor_injected = False
+        self._ws_state = WSEventState()
+        self._ws_frames.clear()
 
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
@@ -398,11 +316,16 @@ class AutodartsObserver:
             else:
                 self._page = await self._context.new_page()
 
+            # ── Inject console capture BEFORE page loads ──
+            await self._page.add_init_script(CONSOLE_CAPTURE_SCRIPT)
+            logger.info(f"[Observer:{self.board_id}]   Console capture script registered (add_init_script)")
+
+            # ── Register WebSocket frame observer (network-level) ──
+            self._page.on("websocket", self._on_ws_created)
+            logger.info(f"[Observer:{self.board_id}]   WebSocket frame observer registered")
+
             logger.info(f"[Observer:{self.board_id}]   Navigating to {url}...")
             await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
-
-            # Inject WebSocket/console interceptor BEFORE any match events
-            await self._inject_ws_interceptor()
 
             self.status.browser_open = True
             self._set_state(ObserverState.IDLE)
@@ -426,16 +349,283 @@ class AutodartsObserver:
             self._set_state(ObserverState.ERROR)
             await self._cleanup()
 
-    async def _inject_ws_interceptor(self):
-        """Inject the WebSocket/console capture script into the Autodarts page."""
-        if self._ws_interceptor_injected or not self._page:
-            return
+    # ═══════════════════════════════════════════════════════════════
+    # PLAYWRIGHT WEBSOCKET OBSERVATION (NETWORK-LEVEL)
+    # ═══════════════════════════════════════════════════════════════
+
+    def _on_ws_created(self, ws):
+        """Called when a new WebSocket connection is detected by Playwright."""
+        ws_url = ws.url
+        logger.info(f"[Observer:{self.board_id}] WS_CONNECTION_OPENED: {ws_url}")
+
+        ws.on("framereceived", lambda payload: self._on_ws_frame_received(ws_url, payload))
+        ws.on("framesent", lambda payload: self._on_ws_frame_sent(ws_url, payload))
+        ws.on("close", lambda: logger.info(f"[Observer:{self.board_id}] WS_CONNECTION_CLOSED: {ws_url}"))
+
+    def _on_ws_frame_received(self, ws_url: str, payload: str):
+        """Process a received WebSocket frame at network level."""
+        self._process_ws_frame(ws_url, payload, "received")
+
+    def _on_ws_frame_sent(self, ws_url: str, payload: str):
+        """Process a sent WebSocket frame (for subscribe/unsubscribe tracking)."""
+        # Only log sent frames if they contain match-related subscriptions
+        if isinstance(payload, str) and ('autodarts' in payload or 'subscribe' in payload.lower()):
+            self._process_ws_frame(ws_url, payload, "sent")
+
+    def _process_ws_frame(self, ws_url: str, raw_data, direction: str):
+        """Parse, classify, and log a WebSocket frame."""
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Convert to string for analysis
+        if isinstance(raw_data, bytes):
+            try:
+                raw_str = raw_data.decode('utf-8', errors='replace')
+            except Exception:
+                raw_str = f"<binary {len(raw_data)} bytes>"
+        else:
+            raw_str = str(raw_data)
+
+        # ── Extract channel/topic ──
+        channel = self._extract_channel(raw_str)
+
+        # ── Parse payload ──
+        payload_data, payload_type = self._parse_payload(raw_str)
+
+        # ── Classify the frame ──
+        interpretation = self._classify_frame(raw_str, channel, payload_data)
+
+        frame = CapturedWSFrame(
+            timestamp=now,
+            url=ws_url,
+            direction=direction,
+            raw_preview=raw_str[:500],
+            channel=channel,
+            payload_type=payload_type,
+            interpretation=interpretation,
+            payload_data=payload_data if payload_data else {},
+        )
+
+        with self._ws_lock:
+            self._ws_frames.append(frame)
+            self._ws_state.frames_received += 1
+
+        # ── Update event state based on classification ──
+        self._update_ws_state(interpretation, channel, payload_data, raw_str)
+
+        # ── LOG: Every match-relevant frame ──
+        if interpretation != "irrelevant":
+            self._ws_state.match_relevant_frames += 1
+            logger.info(
+                f"[Observer:{self.board_id}] WS_FRAME_{direction.upper()}: "
+                f"channel={channel} | interp={interpretation} | "
+                f"payload_type={payload_type} | "
+                f"raw_preview={raw_str[:300]}"
+            )
+            if payload_data:
+                # Log key fields from payload
+                interesting = {k: v for k, v in payload_data.items()
+                               if k in ('state', 'type', 'event', 'matchState', 'winner',
+                                        'finished', 'variant', 'gameWinner', 'matchWinner',
+                                        'legs', 'sets', 'status', 'isFinished', 'data')}
+                if interesting:
+                    logger.info(f"[Observer:{self.board_id}]   payload_fields: {interesting}")
+
+    def _extract_channel(self, raw: str) -> str:
+        """Extract the Autodarts channel/topic from a raw WS message."""
+        # Pattern 1: autodarts.matches.{uuid}.{subtopic}
+        m = re.search(r'(autodarts\.\w+\.[a-f0-9-]+\.\S+)', raw, re.IGNORECASE)
+        if m:
+            return m.group(1)
+
+        # Pattern 2: autodarts.boards.{id}.{subtopic}
+        m = re.search(r'(autodarts\.boards\.\S+)', raw, re.IGNORECASE)
+        if m:
+            return m.group(1)
+
+        # Pattern 3: Just look for known channel prefixes
+        m = re.search(r'(autodarts\.\S+)', raw, re.IGNORECASE)
+        if m:
+            return m.group(1)
+
+        # Pattern 4: Ably/Centrifugo/Pusher channel format [channel, data]
+        if raw.startswith('[') or raw.startswith('42['):
+            try:
+                arr_str = raw.lstrip('0123456789')
+                arr = json.loads(arr_str)
+                if isinstance(arr, list) and len(arr) >= 1 and isinstance(arr[0], str):
+                    return arr[0]
+            except Exception:
+                pass
+
+        return "unknown"
+
+    def _parse_payload(self, raw: str):
+        """Try to parse the payload as JSON."""
+        # Direct JSON
         try:
-            await self._page.evaluate(WS_INTERCEPT_SCRIPT)
-            self._ws_interceptor_injected = True
-            logger.info(f"[Observer:{self.board_id}] WebSocket/console interceptor injected")
-        except Exception as e:
-            logger.warning(f"[Observer:{self.board_id}] Interceptor injection failed: {e}")
+            data = json.loads(raw)
+            return data, "json"
+        except Exception:
+            pass
+
+        # Socket.IO format: "42[event_name, {...}]"
+        m = re.match(r'^\d+(.+)$', raw)
+        if m:
+            try:
+                data = json.loads(m.group(1))
+                return data, "socketio"
+            except Exception:
+                pass
+
+        # Extract embedded JSON
+        start = raw.find('{')
+        end = raw.rfind('}')
+        if start != -1 and end > start:
+            try:
+                data = json.loads(raw[start:end + 1])
+                return data, "embedded_json"
+            except Exception:
+                pass
+
+        # Look for JSON array
+        start = raw.find('[')
+        end = raw.rfind(']')
+        if start != -1 and end > start:
+            try:
+                data = json.loads(raw[start:end + 1])
+                return data, "json_array"
+            except Exception:
+                pass
+
+        return None, "text"
+
+    def _classify_frame(self, raw: str, channel: str, payload) -> str:
+        """
+        Classify a WS frame into one of the diagnosis categories.
+        Returns one of: match_finished, match_started, turn_transition,
+        round_transition, game_event, board_state, match_state,
+        subscription, irrelevant, unknown
+        """
+        raw_lower = raw.lower()
+        chan_lower = channel.lower()
+
+        # ── Definitive match end signals ──
+        if 'matchshot' in raw_lower:
+            return "match_finished_matchshot"
+
+        if 'winner' in raw_lower and ('animation' in raw_lower or 'detected' in raw_lower):
+            return "match_finished_winner"
+
+        # Check payload for state=finished
+        if payload and isinstance(payload, dict):
+            state = self._deep_get_state(payload)
+            if state in ('finished', 'completed', 'ended'):
+                return "match_finished_state"
+            if state in ('active', 'running', 'started', 'playing'):
+                return "match_started"
+
+            # Check for winner field
+            for key in ('winner', 'matchWinner', 'gameWinner', 'isFinished'):
+                val = payload.get(key) or (payload.get('data', {}) or {}).get(key)
+                if val and val is not False:
+                    return "match_finished_winner_field"
+
+        # ── Channel-based classification ──
+        if '.state' in chan_lower and 'autodarts.matches' in chan_lower:
+            return "match_state"
+        if '.game-events' in chan_lower or 'game-event' in chan_lower:
+            if 'gameshot' in raw_lower:
+                return "round_transition_gameshot"
+            return "game_event"
+        if '.matches' in chan_lower and 'autodarts.boards' in chan_lower:
+            return "board_matches"
+        if '.state' in chan_lower and 'autodarts.boards' in chan_lower:
+            return "board_state"
+
+        # ── Content-based classification ──
+        if 'autodarts' in raw_lower or 'match' in raw_lower:
+            if 'gameshot' in raw_lower:
+                return "round_transition_gameshot"
+            if any(kw in raw_lower for kw in ('throw', 'score', 'turn', 'dart')):
+                return "turn_transition"
+            if any(kw in raw_lower for kw in ('finish', 'ended', 'result')):
+                return "result_screen"
+            return "match_related"
+
+        if 'subscribe' in raw_lower or 'attach' in raw_lower:
+            return "subscription"
+
+        return "irrelevant"
+
+    def _deep_get_state(self, payload) -> Optional[str]:
+        """Recursively look for a 'state' field in a payload dict."""
+        if not isinstance(payload, dict):
+            return None
+
+        # Direct fields
+        for key in ('state', 'matchState', 'status'):
+            val = payload.get(key)
+            if isinstance(val, str):
+                return val.lower()
+
+        # Nested data
+        data = payload.get('data')
+        if isinstance(data, dict):
+            for key in ('state', 'matchState', 'status'):
+                val = data.get(key)
+                if isinstance(val, str):
+                    return val.lower()
+
+        # Nested match
+        match = payload.get('match')
+        if isinstance(match, dict):
+            for key in ('state', 'status'):
+                val = match.get(key)
+                if isinstance(val, str):
+                    return val.lower()
+
+        return None
+
+    def _update_ws_state(self, interpretation: str, channel: str, payload, raw: str):
+        """Update the accumulated WS event state based on frame classification."""
+        ws = self._ws_state
+
+        if interpretation.startswith("match_finished"):
+            ws.match_finished = True
+            ws.winner_detected = True
+            ws.finish_trigger = f"{interpretation}:{channel}"
+            logger.info(
+                f"[Observer:{self.board_id}] *** WS_EVENT: {interpretation} ***  "
+                f"channel={channel} | finish_trigger={ws.finish_trigger}"
+            )
+
+        elif interpretation == "match_started":
+            ws.match_active = True
+            ws.match_finished = False
+            ws.winner_detected = False
+            ws.finish_trigger = None
+            logger.info(f"[Observer:{self.board_id}] WS_EVENT: match_started channel={channel}")
+
+        elif interpretation == "round_transition_gameshot":
+            ws.last_game_event = "gameshot"
+            logger.info(f"[Observer:{self.board_id}] WS_EVENT: gameshot (leg end, NOT match end)")
+
+        elif interpretation == "match_state":
+            if payload and isinstance(payload, dict):
+                state = self._deep_get_state(payload)
+                if state:
+                    ws.last_match_state = state
+
+        elif interpretation in ("game_event", "turn_transition"):
+            if payload and isinstance(payload, dict):
+                evt = (payload.get('type') or payload.get('event') or
+                       (payload.get('data', {}) or {}).get('type') or '')
+                if evt:
+                    ws.last_game_event = str(evt)
+
+    # ═══════════════════════════════════════════════════════════════
+    # SESSION LIFECYCLE
+    # ═══════════════════════════════════════════════════════════════
 
     async def close_session(self):
         """Close Chrome and stop observing. Restore kiosk window."""
@@ -481,7 +671,6 @@ class AutodartsObserver:
         self._context = None
         self._playwright = None
         self.status.browser_open = False
-        self._ws_interceptor_injected = False
 
     # ═══════════════════════════════════════════════════════════════
     # OBSERVE LOOP
@@ -490,13 +679,14 @@ class AutodartsObserver:
     async def _observe_loop(self):
         """
         Main observation loop. Each cycle:
-          1. Read captured WebSocket/console events (primary source)
-          2. Fall back to DOM detection if no event data
-          3. Apply debounce logic for state transitions
+          1. Read WS event state (accumulated from network-level capture)
+          2. Read console capture state (from injected script)
+          3. Fall back to DOM detection if no event data
+          4. Apply debounce logic for state transitions
 
-        Priority: WS events > DOM signals > fallback
+        Priority: WS events > console signals > DOM signals > fallback
         """
-        logger.info(f"[Observer:{self.board_id}] Observe loop started (event-driven + DOM fallback)")
+        logger.info(f"[Observer:{self.board_id}] Observe loop started")
         logger.info(f"[Observer:{self.board_id}]   poll_interval={OBSERVER_POLL_INTERVAL}s, "
                      f"debounce_polls={DEBOUNCE_EXIT_POLLS}, debounce_interval={DEBOUNCE_POLL_INTERVAL}s")
 
@@ -507,22 +697,31 @@ class AutodartsObserver:
                 if not self._page or self._stopping:
                     break
 
-                # Re-inject interceptor if page navigated
-                if not self._ws_interceptor_injected:
-                    await self._inject_ws_interceptor()
+                # ── PRIMARY: WS event state (already accumulated) ──
+                event_state = self._read_ws_event_state()
 
-                # ── PRIMARY: Read captured events ──
-                event_state = await self._read_captured_events()
+                # ── SECONDARY: Console capture ──
+                console_state = await self._read_console_state()
 
-                # ── FALLBACK: DOM detection ──
+                # ── TERTIARY: DOM detection ──
                 dom_state = await self._detect_state_dom()
 
-                # ── MERGE: Events take priority ──
-                raw = self._merge_detection(event_state, dom_state)
+                # ── MERGE: Events > Console > DOM ──
+                raw = self._merge_detection(event_state, console_state, dom_state)
 
                 now = datetime.now(timezone.utc).isoformat()
                 self.status.last_poll = now
                 stable = self._stable_state
+
+                # Log poll summary
+                ws = self._ws_state
+                logger.info(
+                    f"[Observer:{self.board_id}] POLL: stable={stable.value} | merged={raw.value} | "
+                    f"ws_finished={ws.match_finished} ws_winner={ws.winner_detected} "
+                    f"ws_trigger={ws.finish_trigger} | "
+                    f"ws_frames={ws.frames_received} ws_match_frames={ws.match_relevant_frames} | "
+                    f"dom={dom_state.value}"
+                )
 
                 # ═══════════════════════════════════════════
                 # CASE A: Currently IN_GAME
@@ -551,7 +750,8 @@ class AutodartsObserver:
 
                     logger.info(f"[Observer:{self.board_id}] debounce: exit poll "
                                 f"{self._exit_polls}/{DEBOUNCE_EXIT_POLLS} "
-                                f"(raw={raw.value}, saw_finished={self._exit_saw_finished})")
+                                f"(merged={raw.value}, saw_finished={self._exit_saw_finished}, "
+                                f"ws_trigger={ws.finish_trigger})")
 
                     if self._exit_polls < DEBOUNCE_EXIT_POLLS:
                         continue
@@ -560,8 +760,11 @@ class AutodartsObserver:
                     reason = "finished" if self._exit_saw_finished else "aborted"
                     confirmed_state = ObserverState.FINISHED if self._exit_saw_finished else raw
 
-                    logger.info(f"[Observer:{self.board_id}] === DEBOUNCE CONFIRMED: "
-                                f"in_game -> {confirmed_state.value} (reason={reason}) ===")
+                    logger.info(
+                        f"[Observer:{self.board_id}] === DEBOUNCE CONFIRMED: "
+                        f"in_game -> {confirmed_state.value} (reason={reason}, "
+                        f"trigger={ws.finish_trigger}) ==="
+                    )
 
                     self._stable_state = confirmed_state
                     self._set_state(confirmed_state)
@@ -576,8 +779,8 @@ class AutodartsObserver:
                                          exc_info=True)
                     self._credit_consumed = False
 
-                    # Reset captured events for next game
-                    await self._reset_captured_events()
+                    # Reset WS state for next game
+                    self._ws_state.reset()
 
                 # ═══════════════════════════════════════════
                 # CASE B: NOT in_game
@@ -604,8 +807,8 @@ class AutodartsObserver:
                         self._exit_saw_finished = False
                         self.status.games_observed += 1
 
-                        # Reset captured events for fresh game tracking
-                        await self._reset_captured_events()
+                        # Reset WS state for fresh game tracking
+                        self._ws_state.reset()
 
                         logger.info(f"[Observer:{self.board_id}] GAME STARTED — "
                                     f"games_observed={self.status.games_observed}")
@@ -646,113 +849,71 @@ class AutodartsObserver:
         logger.info(f"[Observer:{self.board_id}] Observe loop ended")
 
     # ═══════════════════════════════════════════════════════════════
-    # EVENT CAPTURE (PRIMARY)
+    # STATE READERS
     # ═══════════════════════════════════════════════════════════════
 
-    async def _read_captured_events(self) -> Optional[ObserverState]:
+    def _read_ws_event_state(self) -> Optional[ObserverState]:
         """
-        Read the captured WebSocket/console data from the injected script.
-        Returns a definitive ObserverState if event data is available,
-        or None if no event data captured.
+        Read the accumulated WS event state. This data is populated in real-time
+        by the _on_ws_frame_received callback (network-level Playwright hook).
         """
+        ws = self._ws_state
+
+        if ws.match_finished and ws.winner_detected:
+            logger.info(f"[Observer:{self.board_id}] WS_STATE: final_match_end_detected "
+                        f"(trigger={ws.finish_trigger})")
+            return ObserverState.FINISHED
+
+        if ws.match_finished:
+            logger.info(f"[Observer:{self.board_id}] WS_STATE: match_finished_detected "
+                        f"(no explicit winner yet, trigger={ws.finish_trigger})")
+            return ObserverState.FINISHED
+
+        if ws.match_active and not ws.match_finished:
+            return ObserverState.IN_GAME
+
+        if ws.last_game_event == "gameshot" and not ws.match_finished:
+            return ObserverState.ROUND_TRANSITION
+
+        return None  # No definitive WS data
+
+    async def _read_console_state(self) -> Optional[ObserverState]:
+        """Read console capture data (injected via add_init_script)."""
         try:
             data = await self._page.evaluate("""() => {
-                var cap = window.__dartsKioskCapture;
-                if (!cap) return null;
+                var c = window.__dartsKioskConsole;
+                if (!c) return null;
                 return {
-                    matchState: cap.matchState,
-                    matchFinished: cap.matchFinished,
-                    matchStarted: cap.matchStarted,
-                    winnerDetected: cap.winnerDetected,
-                    lastGameEvent: cap.lastGameEvent,
-                    lastMatchId: cap.lastMatchId,
-                    wsMessageCount: cap.wsMessageCount,
-                    consoleCaptures: cap.consoleCaptures,
-                    recentEvents: cap.events.slice(-5)
+                    matchFinished: c.matchFinished,
+                    winnerDetected: c.winnerDetected,
+                    recent: c.entries.slice(-5)
                 };
             }""")
-        except Exception as e:
-            logger.warning(f"[Observer:{self.board_id}] event_capture_read_error: {e}")
-            self._ws_interceptor_injected = False
+        except Exception:
             return None
 
         if not data:
             return None
 
-        match_state = data.get('matchState')
-        match_finished = data.get('matchFinished', False)
-        winner_detected = data.get('winnerDetected', False)
-        match_started = data.get('matchStarted', False)
-        last_game_event = data.get('lastGameEvent')
-        ws_count = data.get('wsMessageCount', 0)
-        console_count = data.get('consoleCaptures', 0)
-        recent = data.get('recentEvents', [])
+        if data.get('winnerDetected') or data.get('matchFinished'):
+            recent = data.get('recent', [])
+            for entry in recent:
+                logger.info(f"[Observer:{self.board_id}] CONSOLE_CAPTURE: {entry.get('msg', '')[:200]}")
+            if data.get('winnerDetected'):
+                logger.info(f"[Observer:{self.board_id}] CONSOLE_STATE: winner_detected")
+                return ObserverState.FINISHED
+            if data.get('matchFinished'):
+                logger.info(f"[Observer:{self.board_id}] CONSOLE_STATE: match_finished")
+                return ObserverState.FINISHED
 
-        # Log captured data
-        if ws_count > 0 or console_count > 0:
-            logger.info(
-                f"[Observer:{self.board_id}] event_capture: "
-                f"match_state={match_state}, finished={match_finished}, "
-                f"winner={winner_detected}, started={match_started}, "
-                f"last_event={last_game_event}, ws_msgs={ws_count}, "
-                f"console_caps={console_count}"
-            )
-            if recent:
-                for ev in recent:
-                    logger.info(f"[Observer:{self.board_id}]   recent_event: "
-                                f"type={ev.get('type')}, data={ev.get('data')}, ts={ev.get('ts')}")
-
-        # ── Definitive match end from events ──
-        if match_finished and winner_detected:
-            logger.info(f"[Observer:{self.board_id}] EVENT_SIGNAL: final_match_end_detected "
-                        f"(matchFinished=True, winnerDetected=True, event={last_game_event})")
-            return ObserverState.FINISHED
-
-        if match_finished and last_game_event and 'matchshot' in str(last_game_event).lower():
-            logger.info(f"[Observer:{self.board_id}] EVENT_SIGNAL: matchshot_detected "
-                        f"(matchFinished=True, lastGameEvent={last_game_event})")
-            return ObserverState.FINISHED
-
-        if match_state in ('finished', 'completed', 'ended'):
-            logger.info(f"[Observer:{self.board_id}] EVENT_SIGNAL: ws_match_state_finished "
-                        f"(matchState={match_state})")
-            return ObserverState.FINISHED
-
-        # ── Match active from events ──
-        if match_started and not match_finished:
-            if match_state in ('active', 'running', 'started', None):
-                # Only return IN_GAME from events if we also have WS data
-                if ws_count > 0:
-                    return ObserverState.IN_GAME
-
-        # ── Gameshot (leg won, NOT match won) — NOT a match end ──
-        if last_game_event and 'gameshot' in str(last_game_event).lower() and not match_finished:
-            # Gameshot = leg end, match continues. This is a round transition.
-            logger.info(f"[Observer:{self.board_id}] EVENT_SIGNAL: gameshot_only (leg end, match continues)")
-            return ObserverState.ROUND_TRANSITION
-
-        return None  # No definitive event data — fall back to DOM
-
-    async def _reset_captured_events(self):
-        """Reset the captured event data for a new game."""
-        try:
-            await self._page.evaluate("""() => {
-                if (window.__dartsKioskCapture) {
-                    window.__dartsKioskCapture.reset();
-                }
-            }""")
-        except Exception:
-            pass
+        return None
 
     # ═══════════════════════════════════════════════════════════════
     # DOM DETECTION (FALLBACK)
     # ═══════════════════════════════════════════════════════════════
 
     async def _detect_state_dom(self) -> ObserverState:
-        """
-        DOM-based state detection (fallback).
-        Three-tier: in_game > match_finished > round_transition > idle.
-        """
+        """DOM-based state detection (fallback). Three-tier detection."""
         try:
             signals = await self._page.evaluate("""() => {
                 var inGame = !!(
@@ -812,12 +973,7 @@ class AutodartsObserver:
             strong_match_end = signals.get('strongMatchEnd', False)
             has_generic_result = signals.get('hasGenericResult', False)
 
-            logger.info(f"[Observer:{self.board_id}] dom_fallback: "
-                        f"in_game={in_game}, strong_end={strong_match_end}, "
-                        f"generic_result={has_generic_result}")
-
             if strong_match_end:
-                logger.info(f"[Observer:{self.board_id}] DOM_SIGNAL: FINISHED (strong end markers)")
                 return ObserverState.FINISHED
             if in_game:
                 return ObserverState.IN_GAME
@@ -831,37 +987,46 @@ class AutodartsObserver:
             return ObserverState.UNKNOWN
 
     # ═══════════════════════════════════════════════════════════════
-    # MERGE: Events > DOM
+    # MERGE: WS Events > Console > DOM
     # ═══════════════════════════════════════════════════════════════
 
-    def _merge_detection(self, event_state: Optional[ObserverState], dom_state: ObserverState) -> ObserverState:
+    def _merge_detection(
+        self,
+        ws_state: Optional[ObserverState],
+        console_state: Optional[ObserverState],
+        dom_state: ObserverState,
+    ) -> ObserverState:
         """
-        Merge event-based and DOM-based detection.
-        Events take priority when they provide a definitive signal.
-        DOM is used as fallback.
-
-        Priority:
-          1. Event says FINISHED → FINISHED (strongest signal)
-          2. Event says IN_GAME  → IN_GAME
-          3. Event says ROUND_TRANSITION → DOM decides between ROUND_TRANSITION and IN_GAME
-          4. No event data       → DOM result
+        Merge three detection sources. Priority:
+          1. WS FINISHED → always trust (strongest signal)
+          2. Console FINISHED → trust (Winner Animation, matchshot logs)
+          3. WS IN_GAME → trust
+          4. WS ROUND_TRANSITION → if DOM says IN_GAME, keep IN_GAME (leg change)
+          5. DOM result → fallback
         """
-        if event_state == ObserverState.FINISHED:
-            # Events say match is over — always trust this
+        # WS says finished → done
+        if ws_state == ObserverState.FINISHED:
             if dom_state != ObserverState.FINISHED:
-                logger.info(f"[Observer:{self.board_id}] merge: EVENT=FINISHED overrides DOM={dom_state.value}")
+                logger.info(f"[Observer:{self.board_id}] merge: WS=FINISHED overrides DOM={dom_state.value}")
             return ObserverState.FINISHED
 
-        if event_state == ObserverState.IN_GAME:
+        # Console says finished → done
+        if console_state == ObserverState.FINISHED:
+            if dom_state != ObserverState.FINISHED:
+                logger.info(f"[Observer:{self.board_id}] merge: CONSOLE=FINISHED overrides DOM={dom_state.value}")
+            return ObserverState.FINISHED
+
+        # WS says in_game → trust
+        if ws_state == ObserverState.IN_GAME:
             return ObserverState.IN_GAME
 
-        if event_state == ObserverState.ROUND_TRANSITION:
-            # Gameshot detected — if DOM still shows in_game, keep it (leg change during match)
+        # WS says round transition → check DOM
+        if ws_state == ObserverState.ROUND_TRANSITION:
             if dom_state == ObserverState.IN_GAME:
                 return ObserverState.IN_GAME
             return ObserverState.ROUND_TRANSITION
 
-        # No event data — use DOM
+        # No WS/console data → DOM fallback
         return dom_state
 
     def _set_state(self, state: ObserverState):
