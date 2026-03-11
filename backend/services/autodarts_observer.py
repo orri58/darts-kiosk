@@ -400,6 +400,7 @@ class AutodartsObserver:
                 '--no-first-run',
                 '--no-default-browser-check',
                 '--autoplay-policy=no-user-gesture-required',
+                '--disable-session-crashed-bubble',
             ]
             if not headless:
                 # NOTE: Do NOT use --kiosk here. Kiosk mode is only for the
@@ -428,12 +429,23 @@ class AutodartsObserver:
                 accept_downloads=False,
             )
             logger.info(f"[Observer:{self.board_id}]   Chrome launched OK")
-            logger.info(f"[Observer:{self.board_id}]   Pages in context: {len(self._context.pages)}")
 
-            if self._context.pages:
-                self._page = self._context.pages[0]
-            else:
-                self._page = await self._context.new_page()
+            # ── Log ALL existing pages (restored tabs, extensions, about:blank) ──
+            existing_pages = list(self._context.pages)
+            logger.info(f"[Observer:{self.board_id}]   Pages after launch: {len(existing_pages)}")
+            for i, p in enumerate(existing_pages):
+                try:
+                    p_url = p.url
+                except Exception:
+                    p_url = "<inaccessible>"
+                logger.info(f"[Observer:{self.board_id}]     page[{i}]: {p_url}")
+
+            # ── Create a FRESH page (never reuse restored/blank pages) ──
+            # Persistent contexts may restore previous session tabs, extension
+            # popups, or have stale about:blank pages. Using pages[0] is unreliable.
+            logger.info(f"[Observer:{self.board_id}]   Creating fresh page for observation...")
+            self._page = await self._context.new_page()
+            logger.info(f"[Observer:{self.board_id}]   Fresh page created. Total pages: {len(self._context.pages)}")
 
             # ── Lifecycle event handlers (detect premature close/crash) ──
             self._page.on("close", lambda: logger.error(
@@ -457,12 +469,43 @@ class AutodartsObserver:
             self._page.on("websocket", self._on_ws_created)
             logger.info(f"[Observer:{self.board_id}]   WebSocket frame observer registered")
 
+            # ── Navigate our fresh page to Autodarts ──
             logger.info(f"[Observer:{self.board_id}]   Navigating to {url}...")
             response = await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
             nav_status = response.status if response else "no_response"
             current_url = self._page.url
             logger.info(f"[Observer:{self.board_id}]   Navigation complete: status={nav_status}, url={current_url}")
-            logger.info(f"[Observer:{self.board_id}]   Pages after nav: {len(self._context.pages)}")
+
+            # ── Close old/stale pages (about:blank, restored tabs) ──
+            # Keep ONLY our Autodarts page. Old pages waste resources and can
+            # confuse Chrome's tab focus on Windows.
+            for old_page in existing_pages:
+                try:
+                    if not old_page.is_closed():
+                        old_url = old_page.url
+                        logger.info(f"[Observer:{self.board_id}]   Closing old page: {old_url}")
+                        await old_page.close()
+                except Exception as close_err:
+                    logger.debug(f"[Observer:{self.board_id}]   Old page close skipped: {close_err}")
+
+            # ── Final page inventory ──
+            final_pages = self._context.pages
+            logger.info(f"[Observer:{self.board_id}]   Final page count: {len(final_pages)}")
+            for i, p in enumerate(final_pages):
+                try:
+                    p_url = p.url
+                except Exception:
+                    p_url = "<inaccessible>"
+                is_ours = " (OBSERVED)" if p == self._page else ""
+                logger.info(f"[Observer:{self.board_id}]     page[{i}]: {p_url}{is_ours}")
+
+            # ── Verify we're on Autodarts, not about:blank ──
+            if 'about:blank' in self._page.url:
+                logger.error(
+                    f"[Observer:{self.board_id}] *** NAVIGATION FAILED *** "
+                    f"Page is still on about:blank after goto({url}). "
+                    f"Autodarts may be unreachable."
+                )
 
             self.status.browser_open = True
             self._set_state(ObserverState.IDLE)
@@ -478,18 +521,18 @@ class AutodartsObserver:
                 logger.warning(f"[Observer:{self.board_id}]   Window management skipped: {wm_err}")
 
             # ── Post-launch health check: verify page is still alive ──
-            for delay in [3, 5, 10]:
-                await asyncio.sleep(delay - (3 if delay == 3 else delay - 2))
+            for check_at in [3, 7, 12]:
+                await asyncio.sleep(check_at - (0 if check_at == 3 else (3 if check_at == 7 else 7)))
                 try:
                     alive_url = self._page.url
                     page_count = len(self._context.pages)
                     logger.info(
-                        f"[Observer:{self.board_id}]   HEALTH@{delay}s: "
+                        f"[Observer:{self.board_id}]   HEALTH@{check_at}s: "
                         f"page_alive=True, url={alive_url}, pages={page_count}"
                     )
                 except Exception as health_err:
                     logger.error(
-                        f"[Observer:{self.board_id}]   HEALTH@{delay}s: "
+                        f"[Observer:{self.board_id}]   HEALTH@{check_at}s: "
                         f"page_alive=False, error={health_err}"
                     )
                     break
