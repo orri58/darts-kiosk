@@ -215,6 +215,7 @@ class AutodartsObserver:
         self._observe_task: Optional[asyncio.Task] = None
         self._stopping = False
         self._closing = False  # Guard against concurrent close_session calls
+        self._finalized = False  # True after finalize_match completed for this game
 
         # Stable confirmed state (only changes after debounce)
         self._stable_state: ObserverState = ObserverState.CLOSED
@@ -353,14 +354,20 @@ class AutodartsObserver:
 
         self._on_game_started = on_game_started
         self._on_game_ended = on_game_ended
+
+        # ── HARD RESET of all runtime flags for clean start ──
         self._stopping = False
-        self._closing = False  # Reset for re-open
+        self._closing = False
+        self._finalized = False
         self._stable_state = ObserverState.CLOSED
         self._exit_polls = 0
         self._exit_saw_finished = False
         self._credit_consumed = False
         self._ws_state = WSEventState()
         self._ws_frames.clear()
+
+        logger.info(f"[Observer:{self.board_id}] ALL_FLAGS_RESET: "
+                    f"stopping=False closing=False finalized=False")
 
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
@@ -926,22 +933,32 @@ class AutodartsObserver:
     async def close_session(self):
         """
         Close Playwright browser ONLY. Idempotent.
+        Detects self-call (from within observe_task) to avoid deadlock.
         Does NOT handle kiosk window management — that is finalize_match's job.
         """
         if self._closing:
             logger.info(f"[Observer:{self.board_id}] CLOSE_SESSION_SKIPPED (already closing)")
             return
         self._closing = True
-        logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_START ===")
         self._stopping = True
+        logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_START ===")
 
-        if self._observe_task and not self._observe_task.done():
-            logger.info(f"[Observer:{self.board_id}]   cancelling observe_task...")
-            self._observe_task.cancel()
-            try:
-                await self._observe_task
-            except asyncio.CancelledError:
-                pass
+        # Detect self-call: if we're being called from within the observe_task,
+        # do NOT cancel/await ourselves (would deadlock).
+        current_task = asyncio.current_task()
+        is_self_call = (self._observe_task is not None
+                        and self._observe_task is current_task)
+
+        if is_self_call:
+            logger.info(f"[Observer:{self.board_id}]   self-call detected, skipping task cancel")
+        else:
+            if self._observe_task and not self._observe_task.done():
+                logger.info(f"[Observer:{self.board_id}]   cancelling observe_task (external call)...")
+                self._observe_task.cancel()
+                try:
+                    await self._observe_task
+                except asyncio.CancelledError:
+                    pass
         self._observe_task = None
 
         await self._cleanup()
@@ -949,27 +966,36 @@ class AutodartsObserver:
         logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_DONE ===")
 
     async def _cleanup(self):
-        """Close context and playwright. Profile data is preserved on disk."""
-        logger.info(f"[Observer:{self.board_id}]   _cleanup: closing context...")
-        try:
-            if self._context:
-                await self._context.close()
-        except Exception as e:
-            logger.debug(f"[Observer:{self.board_id}]   _cleanup: context close error: {e}")
-
-        logger.info(f"[Observer:{self.board_id}]   _cleanup: stopping playwright...")
-        try:
-            if self._playwright:
-                await self._playwright.stop()
-        except Exception as e:
-            logger.debug(f"[Observer:{self.board_id}]   _cleanup: playwright stop error: {e}")
-
+        """Close Playwright objects step-by-step with detailed logging."""
+        # Step 1: Close page
+        if self._page:
+            try:
+                await self._page.close()
+                logger.info(f"[AUTODARTS] PAGE_CLOSE_DONE board={self.board_id}")
+            except Exception as e:
+                logger.debug(f"[AUTODARTS] page close error: {e}")
         self._page = None
-        logger.info(f"[Observer:{self.board_id}]   PAGE_SET_NONE")
+
+        # Step 2: Close context
+        if self._context:
+            try:
+                await self._context.close()
+                logger.info(f"[AUTODARTS] CONTEXT_CLOSE_DONE board={self.board_id}")
+            except Exception as e:
+                logger.debug(f"[AUTODARTS] context close error: {e}")
         self._context = None
-        logger.info(f"[Observer:{self.board_id}]   CONTEXT_SET_NONE")
+
+        # Step 3: Stop Playwright
+        if self._playwright:
+            try:
+                await self._playwright.stop()
+                logger.info(f"[AUTODARTS] PLAYWRIGHT_STOP_DONE board={self.board_id}")
+            except Exception as e:
+                logger.debug(f"[AUTODARTS] playwright stop error: {e}")
         self._playwright = None
+
         self.status.browser_open = False
+        logger.info(f"[AUTODARTS] CLEANUP_COMPLETE board={self.board_id}")
 
     # ═══════════════════════════════════════════════════════════════
     # OBSERVE LOOP
@@ -1084,7 +1110,13 @@ class AutodartsObserver:
                         continue
 
                     # ─── CONFIRMED: match is really over ──────────
-                    reason = "finished" if self._exit_saw_finished else "aborted"
+                    # Use WS finish_trigger as specific reason when available
+                    if self._exit_saw_finished and ws.finish_trigger:
+                        reason = ws.finish_trigger
+                    elif self._exit_saw_finished:
+                        reason = "finished"
+                    else:
+                        reason = "aborted"
                     confirmed_state = ObserverState.FINISHED if self._exit_saw_finished else raw
 
                     logger.info(
@@ -1098,16 +1130,31 @@ class AutodartsObserver:
                     self._exit_polls = 0
                     self._exit_saw_finished = False
 
-                    if self._on_game_ended:
+                    # ── Call finalize DIRECTLY (synchronous, no create_task) ──
+                    # _finalized guard prevents double finalization
+                    if self._on_game_ended and not self._finalized:
+                        self._finalized = True
                         try:
-                            await self._on_game_ended(self.board_id, reason)
+                            result = await self._on_game_ended(self.board_id, reason)
+                            logger.info(f"[Observer:{self.board_id}] finalize returned: "
+                                        f"teardown={result.get('should_teardown') if result else '?'}")
                         except Exception as e:
                             logger.error(f"[Observer:{self.board_id}] on_game_ended({reason}) ERROR: {e}",
                                          exc_info=True)
-                    self._credit_consumed = False
+                    elif self._finalized:
+                        logger.info(f"[Observer:{self.board_id}] FINALIZE_SKIPPED (already finalized)")
 
-                    # Reset WS state for next game
+                    # If finalize_match closed the observer (_stopping set by close_session),
+                    # break immediately — no more polls needed
+                    if self._stopping:
+                        logger.info(f"[Observer:{self.board_id}] _stopping=True after finalize, exiting loop")
+                        break
+
+                    # Credits remain — reset for next game
+                    self._finalized = False
+                    self._credit_consumed = False
                     self._ws_state.reset()
+                    logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME (observer stays alive)")
 
                 # ═══════════════════════════════════════════
                 # CASE B: NOT in_game
@@ -1130,6 +1177,7 @@ class AutodartsObserver:
                         self._stable_state = ObserverState.IN_GAME
                         self._set_state(ObserverState.IN_GAME)
                         self._credit_consumed = True
+                        self._finalized = False  # Reset for new game
                         self._exit_polls = 0
                         self._exit_saw_finished = False
                         self.status.games_observed += 1
@@ -1171,7 +1219,7 @@ class AutodartsObserver:
                 await asyncio.sleep(OBSERVER_POLL_INTERVAL * 2)
 
         if self._stopping:
-            stop_reason = "stopping_flag"
+            stop_reason = "finalize_teardown" if self._finalized else "stopping_flag"
         logger.info(f"[Observer:{self.board_id}] OBSERVE_LOOP_STOP_REASON: {stop_reason}")
         logger.info(f"[Observer:{self.board_id}] Observe loop ended")
 
