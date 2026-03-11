@@ -703,88 +703,114 @@ class AutodartsObserver:
         m = re.search(r'autodarts\.matches\.([a-f0-9-]+)', channel, re.IGNORECASE)
         return m.group(1) if m else None
 
+    def _extract_event(self, payload) -> str:
+        """Extract event name from payload (checks nested levels)."""
+        if not payload:
+            return ""
+        if isinstance(payload, dict):
+            for key in ('event', 'type'):
+                val = payload.get(key)
+                if isinstance(val, str):
+                    return val.lower()
+            data = payload.get('data')
+            if isinstance(data, dict):
+                for key in ('event', 'type'):
+                    val = data.get(key)
+                    if isinstance(val, str):
+                        return val.lower()
+        if isinstance(payload, list) and len(payload) >= 2:
+            if isinstance(payload[1], dict):
+                return self._extract_event(payload[1])
+        return ""
+
+    def _extract_body_type(self, payload) -> str:
+        """Extract body.type from payload (for game_shot match detection)."""
+        if not payload or not isinstance(payload, dict):
+            return ""
+        for container_key in ('body', 'data'):
+            container = payload.get(container_key)
+            if isinstance(container, dict):
+                t = container.get('type')
+                if isinstance(t, str):
+                    return t.lower()
+                if container_key == 'data':
+                    body = container.get('body')
+                    if isinstance(body, dict):
+                        t = body.get('type')
+                        if isinstance(t, str):
+                            return t.lower()
+        return ""
+
+    def _extract_bool_field(self, payload, field_name: str) -> bool:
+        """Check if a boolean field is True in payload (checks nested levels)."""
+        if not isinstance(payload, dict):
+            return False
+        if payload.get(field_name) is True:
+            return True
+        data = payload.get('data')
+        if isinstance(data, dict) and data.get(field_name) is True:
+            return True
+        match_data = payload.get('match')
+        if isinstance(match_data, dict) and match_data.get(field_name) is True:
+            return True
+        return False
+
     def _classify_frame(self, raw: str, channel: str, payload) -> str:
         """
-        Classify a WS frame.
+        Classify a WS frame based on Autodarts lifecycle signals.
 
-        Match-finished (definitive):
-          - matchshot (final winning double of the MATCH)
-          - matchWinner field explicitly set
-          - event=delete on match channel (match teardown — if match was active)
-          - "match not found" error (match removed from server)
+        Match START signals (authoritative):
+          - event = "turn_start"
+          - event = "throw"
 
-        Match-active (evidence of ongoing match):
-          - state: active/running/started/playing
-          - throw/score/turn data flowing
-          - game-events with turnScore/gameScores
+        Match END signals (authoritative):
+          - game-event: event = "game_shot" AND body.type = "match"
+          - state frame: finished = true  (boolean)
+          - state frame: gameFinished = true  (boolean)
+          - matchshot keyword (backward compat)
 
-        NOT match-finished:
-          - gameshot (leg end, match continues)
-          - gameWinner (leg winner, match continues)
-          - state: finished (could be a leg, NOT necessarily the match)
+        Post-match cleanup:
+          - event = "delete" → reset (match removed from server)
+
+        IGNORED for lifecycle: round changes, turn_end, score updates
         """
         raw_lower = raw.lower()
         chan_lower = channel.lower()
+        event = self._extract_event(payload)
 
-        # ── DEFINITIVE match end: only matchshot ──
+        # ── MATCH START ──
+        if event == 'turn_start':
+            return "match_start_turn_start"
+        if event == 'throw':
+            return "match_start_throw"
+
+        # ── MATCH END: game_shot + body.type = "match" ──
+        if event in ('game_shot', 'gameshot', 'game-shot'):
+            body_type = self._extract_body_type(payload)
+            if body_type == 'match':
+                return "match_end_gameshot_match"
+            return "round_transition_gameshot"
+
+        # ── MATCH END: finished=true or gameFinished=true (state frames) ──
+        if payload and isinstance(payload, dict):
+            if self._extract_bool_field(payload, 'finished'):
+                return "match_end_state_finished"
+            if self._extract_bool_field(payload, 'gameFinished'):
+                return "match_end_game_finished"
+
+        # ── MATCH END: matchshot keyword (backward compat) ──
         if 'matchshot' in raw_lower and 'gameshot' not in raw_lower:
             return "match_finished_matchshot"
 
-        # ── Check payload for match-level winner ──
-        if payload and isinstance(payload, dict):
-            # ONLY matchWinner counts as match end (NOT gameWinner)
-            match_winner = (
-                payload.get('matchWinner') or
-                (payload.get('data', {}) or {}).get('matchWinner')
-            )
-            if match_winner and match_winner is not False:
-                return "match_finished_winner_field"
+        # ── POST-MATCH: delete event ──
+        if event == 'delete':
+            return "match_reset_delete"
 
-            # state field — log but do NOT treat as match_finished
-            state = self._deep_get_state(payload)
-            if state in ('active', 'running', 'started', 'playing'):
-                return "match_started"
-            if state in ('finished', 'completed', 'ended'):
-                return "game_state_finished"
-
-            # ── Delete event = match teardown ──
-            evt_val = (
-                payload.get('event') or
-                (payload.get('data', {}) or {}).get('event') or
-                ''
-            )
-            if isinstance(evt_val, str) and evt_val.lower() == 'delete':
-                if 'autodarts.boards' in chan_lower and 'matches' in chan_lower:
-                    return "board_match_deleted"
-                if 'autodarts.matches' in chan_lower:
-                    return "match_deleted"
-
-        # ── "match not found" error ──
-        if 'not found' in raw_lower and 'match' in raw_lower:
-            return "match_not_found"
-
-        # ── Gameshot = leg end, NEVER match end ──
-        if 'gameshot' in raw_lower:
-            return "round_transition_gameshot"
-
-        # ── Channel-based classification ──
-        if 'autodarts.matches' in chan_lower and '.state' in chan_lower:
-            return "match_state"
-        if '.game-events' in chan_lower or 'game-event' in chan_lower:
-            return "game_event"
-        if 'autodarts.boards' in chan_lower and '.matches' in chan_lower:
-            return "board_matches"
-        if 'autodarts.boards' in chan_lower and '.state' in chan_lower:
-            return "board_state"
-
-        # ── Content-based classification (conservative) ──
-        if 'autodarts' in raw_lower or 'match' in raw_lower:
-            if any(kw in raw_lower for kw in ('throw', 'score', 'turn', 'dart', 'next')):
-                return "turn_transition"
-            return "match_related"
-
-        if 'subscribe' in raw_lower or 'attach' in raw_lower:
-            return "subscription"
+        # ── NON-LIFECYCLE (diagnostic only) ──
+        if 'autodarts' in chan_lower or 'autodarts' in raw_lower:
+            if 'subscribe' in raw_lower or 'attach' in raw_lower:
+                return "subscription"
+            return "match_other"
 
         return "irrelevant"
 
@@ -819,15 +845,14 @@ class AutodartsObserver:
 
     def _update_ws_state(self, interpretation: str, channel: str, payload, raw: str):
         """
-        Update the accumulated WS event state based on frame classification.
+        Update ws_state based on the Autodarts lifecycle state machine.
 
-        Match-active logic: set match_active=True when we see robust evidence
-        of an ongoing match (throw data, game events, turn transitions, scores).
+        State machine:
+          turn_start / throw           → match_active = True
+          game_shot+match / finished   → match_finished = True, match_active = False
+          delete                       → full reset
 
-        Match-finished logic:
-          - Classic: matchshot, matchWinner
-          - Teardown: match_deleted, board_match_deleted, match_not_found
-            (only IF a match was active beforehand)
+        Ignored: round changes, turn_end, score updates, generic match events
         """
         ws = self._ws_state
 
@@ -836,112 +861,46 @@ class AutodartsObserver:
         if match_id:
             ws.last_match_id = match_id
 
-        # ═══ MATCH END: classic signals ═══
-        if interpretation in ("match_finished_matchshot", "match_finished_winner_field"):
-            ws.match_finished = True
-            ws.winner_detected = True
-            ws.finish_trigger = f"{interpretation}:{channel}"
-            logger.info(
-                f"[Observer:{self.board_id}] *** MATCH_END_SIGNAL: {interpretation} ***  "
-                f"channel={channel} | finish_trigger={ws.finish_trigger}"
-            )
-
-        # ═══ MATCH END: teardown via delete / not-found ═══
-        elif interpretation in ("match_deleted", "board_match_deleted", "match_not_found"):
-            if ws.match_active or ws.last_match_id:
-                ws.match_finished = True
-                ws.winner_detected = True
-                ws.finish_trigger = f"{interpretation}:{channel}:match_id={ws.last_match_id}"
-                logger.info(
-                    f"[Observer:{self.board_id}] *** MATCH_TEARDOWN_SIGNAL: {interpretation} ***  "
-                    f"channel={channel} | match_id={ws.last_match_id} | "
-                    f"match_was_active={ws.match_active} | finish_trigger={ws.finish_trigger}"
-                )
-            else:
-                logger.info(
-                    f"[Observer:{self.board_id}] WS_EVENT: {interpretation} "
-                    f"but no active match — ignored (match_id={ws.last_match_id})"
-                )
-
-        elif interpretation == "game_state_finished":
-            # state: finished — could be leg OR match. Log but do NOT set match_finished.
-            logger.info(
-                f"[Observer:{self.board_id}] WS_EVENT: game_state_finished "
-                f"(leg or match — NOT triggering match_finished) channel={channel}"
-            )
-
-        # ═══ MATCH START: explicit state ═══
-        elif interpretation == "match_started":
-            ws.match_active = True
-            ws.match_finished = False
-            ws.winner_detected = False
-            ws.finish_trigger = None
-            logger.info(
-                f"[Observer:{self.board_id}] WS_EVENT: match_started "
-                f"channel={channel} | match_id={ws.last_match_id}"
-            )
-
-        elif interpretation == "round_transition_gameshot":
-            ws.last_game_event = "gameshot"
-            logger.info(f"[Observer:{self.board_id}] WS_EVENT: gameshot (leg end, NOT match end)")
-
-        # ═══ MATCH ACTIVITY: turn/throw data ═══
-        elif interpretation == "turn_transition":
-            ws.last_game_event = "turn"
-            if not ws.match_finished and not ws.match_active:
+        # ═══ MATCH START ═══
+        if interpretation in ("match_start_turn_start", "match_start_throw"):
+            if not ws.match_active and not ws.match_finished:
                 ws.match_active = True
                 logger.info(
-                    f"[Observer:{self.board_id}] WS_EVENT: match_active=True "
-                    f"(reason=turn_transition, match_id={ws.last_match_id})"
+                    f"[Observer:{self.board_id}] *** MATCH START DETECTED *** "
+                    f"reason={interpretation} | match_id={ws.last_match_id}"
                 )
 
-        # ═══ MATCH ACTIVITY: game events, state updates ═══
-        elif interpretation in ("game_event", "match_state", "board_state", "board_matches"):
-            evt_name = ""
-            if payload and isinstance(payload, dict):
-                state = self._deep_get_state(payload)
-                if state:
-                    ws.last_match_state = state
-                evt_name = str(
-                    payload.get('type') or payload.get('event') or
-                    (payload.get('data', {}) or {}).get('type') or
-                    (payload.get('data', {}) or {}).get('event') or ''
-                )
-                if evt_name:
-                    ws.last_game_event = evt_name
+        # ═══ MATCH END (authoritative) ═══
+        elif interpretation in ("match_end_gameshot_match", "match_end_state_finished",
+                                "match_end_game_finished", "match_finished_matchshot"):
+            ws.match_finished = True
+            ws.match_active = False
+            ws.winner_detected = True
+            ws.finish_trigger = interpretation
+            logger.info(
+                f"[Observer:{self.board_id}] *** MATCH FINISH DETECTED *** "
+                f"trigger={interpretation} | match_id={ws.last_match_id}"
+            )
 
-                # ── Detect match activity from payload content ──
-                if not ws.match_finished and not ws.match_active:
-                    data = payload.get('data', {}) or {}
-                    has_activity = (
-                        state in ('active', 'running', 'playing') or
-                        payload.get('throwNumber') is not None or
-                        payload.get('turnScore') is not None or
-                        payload.get('gameScores') is not None or
-                        data.get('throwNumber') is not None or
-                        data.get('turnScore') is not None or
-                        data.get('gameScores') is not None or
-                        evt_name.lower() in ('throw', 'turn_end', 'round_end',
-                                             'turn-end', 'round-end')
-                    )
-                    if has_activity:
-                        ws.match_active = True
-                        logger.info(
-                            f"[Observer:{self.board_id}] WS_EVENT: match_active=True "
-                            f"(reason={interpretation}:{evt_name or state}, "
-                            f"match_id={ws.last_match_id})"
-                        )
+        # ═══ POST-MATCH RESET (delete = match removed) ═══
+        elif interpretation == "match_reset_delete":
+            was_active = ws.match_active
+            was_finished = ws.match_finished
+            old_match_id = ws.last_match_id
+            ws.reset()
+            logger.info(
+                f"[Observer:{self.board_id}] *** MATCH RESET DETECTED *** "
+                f"(delete event) | was_active={was_active} | was_finished={was_finished} "
+                f"| match_id={old_match_id}"
+            )
 
-        elif interpretation == "match_related":
-            # Generic match content — set active if not yet and not finished
-            if not ws.match_finished and not ws.match_active:
-                # Only promote to active if we have a tracked match_id
-                if ws.last_match_id:
-                    ws.match_active = True
-                    logger.info(
-                        f"[Observer:{self.board_id}] WS_EVENT: match_active=True "
-                        f"(reason=match_related, match_id={ws.last_match_id})"
-                    )
+        # ═══ LEG-LEVEL gameshot (ignored for lifecycle) ═══
+        elif interpretation == "round_transition_gameshot":
+            ws.last_game_event = "gameshot"
+            logger.info(
+                f"[Observer:{self.board_id}] WS_EVENT: gameshot "
+                f"(leg-level, ignored for match lifecycle)"
+            )
 
     # ═══════════════════════════════════════════════════════════════
     # SESSION LIFECYCLE
@@ -1086,7 +1045,9 @@ class AutodartsObserver:
                                 f"(merged={raw.value}, saw_finished={self._exit_saw_finished}, "
                                 f"ws_trigger={ws.finish_trigger})")
 
-                    if self._exit_polls < DEBOUNCE_EXIT_POLLS:
+                    # Fast-track: authoritative finish trigger skips debounce
+                    debounce_needed = 1 if ws.finish_trigger else DEBOUNCE_EXIT_POLLS
+                    if self._exit_polls < debounce_needed:
                         continue
 
                     # ─── CONFIRMED: match is really over ──────────
@@ -1189,24 +1150,21 @@ class AutodartsObserver:
         """
         Read the accumulated WS event state. This data is populated in real-time
         by the _on_ws_frame_received callback (network-level Playwright hook).
+
+        Returns:
+          FINISHED  — if match_finished is True
+          IN_GAME   — if match_active is True (and not finished)
+          None      — no definitive WS data
         """
         ws = self._ws_state
 
-        if ws.match_finished and ws.winner_detected:
-            logger.info(f"[Observer:{self.board_id}] WS_STATE: final_match_end_detected "
+        if ws.match_finished:
+            logger.info(f"[Observer:{self.board_id}] WS_STATE: FINISHED "
                         f"(trigger={ws.finish_trigger})")
             return ObserverState.FINISHED
 
-        if ws.match_finished:
-            logger.info(f"[Observer:{self.board_id}] WS_STATE: match_finished_detected "
-                        f"(no explicit winner yet, trigger={ws.finish_trigger})")
-            return ObserverState.FINISHED
-
-        if ws.match_active and not ws.match_finished:
+        if ws.match_active:
             return ObserverState.IN_GAME
-
-        if ws.last_game_event == "gameshot" and not ws.match_finished:
-            return ObserverState.ROUND_TRANSITION
 
         return None  # No definitive WS data
 
@@ -1334,8 +1292,7 @@ class AutodartsObserver:
           1. WS FINISHED → always trust (strongest signal)
           2. Console FINISHED → trust (Winner Animation, matchshot logs)
           3. WS IN_GAME → trust
-          4. WS ROUND_TRANSITION → if DOM says IN_GAME, keep IN_GAME (leg change)
-          5. DOM result → fallback
+          4. DOM result → fallback
         """
         # WS says finished → done
         if ws_state == ObserverState.FINISHED:
@@ -1352,12 +1309,6 @@ class AutodartsObserver:
         # WS says in_game → trust
         if ws_state == ObserverState.IN_GAME:
             return ObserverState.IN_GAME
-
-        # WS says round transition → check DOM
-        if ws_state == ObserverState.ROUND_TRANSITION:
-            if dom_state == ObserverState.IN_GAME:
-                return ObserverState.IN_GAME
-            return ObserverState.ROUND_TRANSITION
 
         # No WS/console data → DOM fallback
         return dom_state

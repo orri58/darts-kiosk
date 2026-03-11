@@ -64,36 +64,15 @@ async def _on_game_started(board_id: str):
                     return
 
                 board.status = BoardStatus.IN_GAME.value
-                is_last_game = False
-                credits_before = session.credits_remaining
-
-                if session.pricing_mode == PricingMode.PER_GAME.value:
-                    session.credits_remaining = max(0, session.credits_remaining - 1)
-                    if session.credits_remaining <= 0:
-                        is_last_game = True
-
-                if session.pricing_mode == PricingMode.PER_TIME.value:
-                    if session.expires_at and datetime.now(timezone.utc) >= session.expires_at:
-                        is_last_game = True
-
-                logger.info(f"[Observer->Kiosk]   credit_consumed: {credits_before} -> {session.credits_remaining}")
-                logger.info(f"[Observer->Kiosk]   is_last_game: {is_last_game}")
+                logger.info("[Observer->Kiosk]   board set to IN_GAME (credit deduction deferred to match end)")
 
                 await db.flush()
-
-                # Store for broadcast outside transaction
-                credits_remaining = session.credits_remaining
 
         # Broadcast updates
         await board_ws.broadcast("board_status", {
             "board_id": board_id,
             "status": "in_game",
             "source": "observer",
-        })
-        await board_ws.broadcast("credit_update", {
-            "board_id": board_id,
-            "credits_remaining": credits_remaining,
-            "is_last_game": is_last_game,
         })
         await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "start"})
 
@@ -130,6 +109,15 @@ async def _on_game_ended(board_id: str, reason: str):
                 if not session:
                     logger.info(f"[Observer->Kiosk]   no_active_session: skipping (reason={reason})")
                     return
+
+                # ─── Credit deduction (only on finished matches) ────
+                credits_before = session.credits_remaining
+                if reason == "finished" and session.pricing_mode == PricingMode.PER_GAME.value:
+                    session.credits_remaining = max(0, session.credits_remaining - 1)
+                    logger.info(
+                        f"[Observer->Kiosk]   credit_deducted: {credits_before} -> "
+                        f"{session.credits_remaining} (reason={reason})"
+                    )
 
                 # ─── Decide: should we lock? ────────────────────
                 should_lock = False
