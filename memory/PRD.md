@@ -270,6 +270,22 @@ autostart.bat:
   - FIX 7: Detailed [FINALIZE] logging: START/END, CREDIT_DEDUCTED/FREE, LOCK_DECISION, OBSERVER_CLOSE/KEPT_ALIVE
   - Verified full 3-game loop: 3→2→1→0 with correct deduction, lock, and teardown at each step
   - All tests passing: 47/47 (iteration_42)
+- v2.3.0: Finalize Match — Synchronous + Self-Call Deadlock Fix (2026-03-11)
+  - ROOT CAUSE 1: create_task race condition — finalize ran async, old finalize could close NEW observer after re-unlock
+  - ROOT CAUSE 2: close_session deadlock — called from within observe_task tried to cancel/await itself
+  - ROOT CAUSE 3: No _finalized guard — duplicate WS finish signals triggered multiple finalizations
+  - ROOT CAUSE 4: Observe loop continued polling after finalize, causing ~20s delay until stopping_flag
+  - FIX 1: _on_game_ended directly AWAITS finalize_match (no asyncio.create_task)
+  - FIX 2: close_session detects self-call via asyncio.current_task(), skips cancel on self-call
+  - FIX 3: _finalized[board_id] dict blocks duplicate WS signals, manual trigger bypasses it
+  - FIX 4: Observer _finalized flag on instance, reset on open_session and IN_GAME transition
+  - FIX 5: Observe loop breaks IMMEDIATELY after finalize sets _stopping (no extra polls)
+  - FIX 6: _cleanup logs PAGE_CLOSE_DONE, CONTEXT_CLOSE_DONE, PLAYWRIGHT_STOP_DONE
+  - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)
+  - FIX 8: Stop reason is "finalize_teardown" (not generic "stopping_flag") when finalize caused stop
+  - FIX 9: FINISHED→IDLE does NOT re-trigger finalization
+  - FIX 10: Observe loop logs READY_FOR_NEXT_GAME when credits remain (observer stays alive)
+  - All tests passing: 58/58 (iteration_43)
 
 ## Remaining Backlog
 ### P1
