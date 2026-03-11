@@ -169,6 +169,7 @@ class WSEventState:
         self.winner_detected = False
         self.last_match_state = None
         self.last_game_event = None
+        self.last_match_id = None
         self.finish_trigger = None
 
 
@@ -405,10 +406,9 @@ class AutodartsObserver:
             if not headless:
                 # NOTE: Do NOT use --kiosk here. Kiosk mode is only for the
                 # user-facing kiosk UI Chrome (start.bat). The observer Chrome
-                # must be a normal/maximized window — kiosk mode causes Chrome
-                # to exit immediately if the page closes or crashes, and
-                # conflicts with another kiosk-mode Chrome instance.
-                chrome_args.append('--start-maximized')
+                # uses --start-fullscreen (F11-style) which fills the screen
+                # but does NOT auto-exit on tab close like --kiosk does.
+                chrome_args.append('--start-fullscreen')
 
             ignore_args = [
                 "--enable-automation",
@@ -623,7 +623,9 @@ class AutodartsObserver:
                 interesting = {k: v for k, v in payload_data.items()
                                if k in ('state', 'type', 'event', 'matchState', 'winner',
                                         'finished', 'variant', 'gameWinner', 'matchWinner',
-                                        'legs', 'sets', 'status', 'isFinished', 'data')}
+                                        'legs', 'sets', 'status', 'isFinished', 'data',
+                                        'throwNumber', 'turnScore', 'gameScores', 'error',
+                                        'message')}
                 if interesting:
                     logger.info(f"[Observer:{self.board_id}]   payload_fields: {interesting}")
 
@@ -696,27 +698,35 @@ class AutodartsObserver:
 
         return None, "text"
 
+    def _extract_match_id(self, channel: str) -> Optional[str]:
+        """Extract match UUID from an Autodarts channel name."""
+        m = re.search(r'autodarts\.matches\.([a-f0-9-]+)', channel, re.IGNORECASE)
+        return m.group(1) if m else None
+
     def _classify_frame(self, raw: str, channel: str, payload) -> str:
         """
-        Classify a WS frame. CONSERVATIVE: only true match-level signals
-        trigger match_finished. Leg/round/turn signals are NEVER match_finished.
+        Classify a WS frame.
 
         Match-finished (definitive):
-          - matchshot (only sent for the final winning double of the MATCH)
+          - matchshot (final winning double of the MATCH)
           - matchWinner field explicitly set
+          - event=delete on match channel (match teardown — if match was active)
+          - "match not found" error (match removed from server)
 
-        NOT match-finished (must not trigger lock):
+        Match-active (evidence of ongoing match):
+          - state: active/running/started/playing
+          - throw/score/turn data flowing
+          - game-events with turnScore/gameScores
+
+        NOT match-finished:
           - gameshot (leg end, match continues)
           - gameWinner (leg winner, match continues)
           - state: finished (could be a leg, NOT necessarily the match)
-          - isFinished (ambiguous — could be leg-level)
-          - next / turn change / round transition
         """
         raw_lower = raw.lower()
         chan_lower = channel.lower()
 
         # ── DEFINITIVE match end: only matchshot ──
-        # matchshot is ONLY sent when the entire match is won (not a leg)
         if 'matchshot' in raw_lower and 'gameshot' not in raw_lower:
             return "match_finished_matchshot"
 
@@ -731,14 +741,27 @@ class AutodartsObserver:
                 return "match_finished_winner_field"
 
             # state field — log but do NOT treat as match_finished
-            # (state: finished can mean a leg/game finished, not the match)
             state = self._deep_get_state(payload)
             if state in ('active', 'running', 'started', 'playing'):
                 return "match_started"
             if state in ('finished', 'completed', 'ended'):
-                # This might be a leg finish — classify as game_state_finished,
-                # NOT match_finished. The difference matters.
                 return "game_state_finished"
+
+            # ── Delete event = match teardown ──
+            evt_val = (
+                payload.get('event') or
+                (payload.get('data', {}) or {}).get('event') or
+                ''
+            )
+            if isinstance(evt_val, str) and evt_val.lower() == 'delete':
+                if 'autodarts.boards' in chan_lower and 'matches' in chan_lower:
+                    return "board_match_deleted"
+                if 'autodarts.matches' in chan_lower:
+                    return "match_deleted"
+
+        # ── "match not found" error ──
+        if 'not found' in raw_lower and 'match' in raw_lower:
+            return "match_not_found"
 
         # ── Gameshot = leg end, NEVER match end ──
         if 'gameshot' in raw_lower:
@@ -797,12 +820,24 @@ class AutodartsObserver:
     def _update_ws_state(self, interpretation: str, channel: str, payload, raw: str):
         """
         Update the accumulated WS event state based on frame classification.
-        CONSERVATIVE: only definitive match-level signals set match_finished.
+
+        Match-active logic: set match_active=True when we see robust evidence
+        of an ongoing match (throw data, game events, turn transitions, scores).
+
+        Match-finished logic:
+          - Classic: matchshot, matchWinner
+          - Teardown: match_deleted, board_match_deleted, match_not_found
+            (only IF a match was active beforehand)
         """
         ws = self._ws_state
 
+        # ── Track match ID from channel ──
+        match_id = self._extract_match_id(channel)
+        if match_id:
+            ws.last_match_id = match_id
+
+        # ═══ MATCH END: classic signals ═══
         if interpretation in ("match_finished_matchshot", "match_finished_winner_field"):
-            # TRUE match end signals — only these trigger finalization
             ws.match_finished = True
             ws.winner_detected = True
             ws.finish_trigger = f"{interpretation}:{channel}"
@@ -811,37 +846,102 @@ class AutodartsObserver:
                 f"channel={channel} | finish_trigger={ws.finish_trigger}"
             )
 
+        # ═══ MATCH END: teardown via delete / not-found ═══
+        elif interpretation in ("match_deleted", "board_match_deleted", "match_not_found"):
+            if ws.match_active or ws.last_match_id:
+                ws.match_finished = True
+                ws.winner_detected = True
+                ws.finish_trigger = f"{interpretation}:{channel}:match_id={ws.last_match_id}"
+                logger.info(
+                    f"[Observer:{self.board_id}] *** MATCH_TEARDOWN_SIGNAL: {interpretation} ***  "
+                    f"channel={channel} | match_id={ws.last_match_id} | "
+                    f"match_was_active={ws.match_active} | finish_trigger={ws.finish_trigger}"
+                )
+            else:
+                logger.info(
+                    f"[Observer:{self.board_id}] WS_EVENT: {interpretation} "
+                    f"but no active match — ignored (match_id={ws.last_match_id})"
+                )
+
         elif interpretation == "game_state_finished":
             # state: finished — could be leg OR match. Log but do NOT set match_finished.
-            # This prevents false locks on leg finishes.
             logger.info(
                 f"[Observer:{self.board_id}] WS_EVENT: game_state_finished "
                 f"(leg or match — NOT triggering match_finished) channel={channel}"
             )
 
+        # ═══ MATCH START: explicit state ═══
         elif interpretation == "match_started":
             ws.match_active = True
             ws.match_finished = False
             ws.winner_detected = False
             ws.finish_trigger = None
-            logger.info(f"[Observer:{self.board_id}] WS_EVENT: match_started channel={channel}")
+            logger.info(
+                f"[Observer:{self.board_id}] WS_EVENT: match_started "
+                f"channel={channel} | match_id={ws.last_match_id}"
+            )
 
         elif interpretation == "round_transition_gameshot":
             ws.last_game_event = "gameshot"
             logger.info(f"[Observer:{self.board_id}] WS_EVENT: gameshot (leg end, NOT match end)")
 
+        # ═══ MATCH ACTIVITY: turn/throw data ═══
         elif interpretation == "turn_transition":
             ws.last_game_event = "turn"
+            if not ws.match_finished and not ws.match_active:
+                ws.match_active = True
+                logger.info(
+                    f"[Observer:{self.board_id}] WS_EVENT: match_active=True "
+                    f"(reason=turn_transition, match_id={ws.last_match_id})"
+                )
 
+        # ═══ MATCH ACTIVITY: game events, state updates ═══
         elif interpretation in ("game_event", "match_state", "board_state", "board_matches"):
+            evt_name = ""
             if payload and isinstance(payload, dict):
                 state = self._deep_get_state(payload)
                 if state:
                     ws.last_match_state = state
-                evt = (payload.get('type') or payload.get('event') or
-                       (payload.get('data', {}) or {}).get('type') or '')
-                if evt:
-                    ws.last_game_event = str(evt)
+                evt_name = str(
+                    payload.get('type') or payload.get('event') or
+                    (payload.get('data', {}) or {}).get('type') or
+                    (payload.get('data', {}) or {}).get('event') or ''
+                )
+                if evt_name:
+                    ws.last_game_event = evt_name
+
+                # ── Detect match activity from payload content ──
+                if not ws.match_finished and not ws.match_active:
+                    data = payload.get('data', {}) or {}
+                    has_activity = (
+                        state in ('active', 'running', 'playing') or
+                        payload.get('throwNumber') is not None or
+                        payload.get('turnScore') is not None or
+                        payload.get('gameScores') is not None or
+                        data.get('throwNumber') is not None or
+                        data.get('turnScore') is not None or
+                        data.get('gameScores') is not None or
+                        evt_name.lower() in ('throw', 'turn_end', 'round_end',
+                                             'turn-end', 'round-end')
+                    )
+                    if has_activity:
+                        ws.match_active = True
+                        logger.info(
+                            f"[Observer:{self.board_id}] WS_EVENT: match_active=True "
+                            f"(reason={interpretation}:{evt_name or state}, "
+                            f"match_id={ws.last_match_id})"
+                        )
+
+        elif interpretation == "match_related":
+            # Generic match content — set active if not yet and not finished
+            if not ws.match_finished and not ws.match_active:
+                # Only promote to active if we have a tracked match_id
+                if ws.last_match_id:
+                    ws.match_active = True
+                    logger.info(
+                        f"[Observer:{self.board_id}] WS_EVENT: match_active=True "
+                        f"(reason=match_related, match_id={ws.last_match_id})"
+                    )
 
     # ═══════════════════════════════════════════════════════════════
     # SESSION LIFECYCLE
