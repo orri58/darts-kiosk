@@ -924,7 +924,10 @@ class AutodartsObserver:
     # ═══════════════════════════════════════════════════════════════
 
     async def close_session(self):
-        """Close Chrome and stop observing. Restore kiosk window. Idempotent."""
+        """
+        Close Playwright browser ONLY. Idempotent.
+        Does NOT handle kiosk window management — that is finalize_match's job.
+        """
         if self._closing:
             logger.info(f"[Observer:{self.board_id}] CLOSE_SESSION_SKIPPED (already closing)")
             return
@@ -943,17 +946,6 @@ class AutodartsObserver:
 
         await self._cleanup()
         self._set_state(ObserverState.CLOSED)
-
-        # Restore kiosk window
-        try:
-            from backend.services.window_manager import restore_kiosk_window
-            logger.info(f"[Observer:{self.board_id}]   restoring kiosk window...")
-            await asyncio.sleep(0.5)
-            await restore_kiosk_window()
-            logger.info(f"[Observer:{self.board_id}]   kiosk window restored OK")
-        except Exception as wm_err:
-            logger.warning(f"[Observer:{self.board_id}]   kiosk window restore FAILED: {wm_err}")
-
         logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_DONE ===")
 
     async def _cleanup(self):
