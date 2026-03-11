@@ -137,10 +137,13 @@ if exist "%~dp0credits_overlay.py" (
     echo   [WARN] credits_overlay.py nicht gefunden - Overlay uebersprungen
 )
 
-REM Launch Kiosk in Chrome kiosk mode
+REM Launch Kiosk UI in Chrome kiosk mode
+REM NOTE: Uses a SEPARATE profile (kiosk_ui_profile) so the Autodarts profile
+REM (data\chrome_profile\BOARD-1) stays exclusively owned by the Playwright observer.
+if not exist "data\kiosk_ui_profile" mkdir "data\kiosk_ui_profile"
 if defined CHROME_PATH (
-    echo   [OK] Starte Kiosk im Chrome-Vollbild-Modus...
-    start "" "!CHROME_PATH!" --kiosk --user-data-dir="%~dp0data\chrome_profile\!BOARD_ID!" --no-first-run --no-default-browser-check --disable-translate --disable-infobars --autoplay-policy=no-user-gesture-required "http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!"
+    echo   [OK] Starte Kiosk-UI im Chrome-Vollbild-Modus...
+    start "" "!CHROME_PATH!" --kiosk --user-data-dir="%~dp0data\kiosk_ui_profile" --no-first-run --no-default-browser-check --disable-translate --disable-infobars --autoplay-policy=no-user-gesture-required "http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!"
 ) else (
     start "" "http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!"
 )

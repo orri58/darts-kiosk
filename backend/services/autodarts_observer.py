@@ -32,6 +32,7 @@ import asyncio
 import json
 import os
 import re
+import subprocess
 import sys
 import logging
 import threading
@@ -236,6 +237,97 @@ class AutodartsObserver:
     def is_open(self) -> bool:
         return self._context is not None and self.status.browser_open
 
+    def _check_profile_locked(self, profile_dir: str) -> bool:
+        """
+        Safety check: detect if another Chrome instance is already using this
+        user-data-dir. Returns True if locked (caller must abort), False if safe.
+        """
+        profile_abs = os.path.abspath(profile_dir)
+        profile_norm = os.path.normpath(profile_abs).lower()
+
+        # ── Check for Chrome lock files ──
+        lock_names = ['SingletonLock', 'lockfile']
+        found_locks = [
+            name for name in lock_names
+            if os.path.exists(os.path.join(profile_dir, name))
+        ]
+
+        if not found_locks:
+            return False
+
+        logger.warning(
+            f"[Observer:{self.board_id}] Chrome lock indicators found: {found_locks} "
+            f"in {profile_abs}"
+        )
+
+        # ── Verify Chrome is actually running with this profile ──
+        chrome_using_profile = False
+
+        if sys.platform == 'win32':
+            # Try PowerShell (precise: checks command-line args)
+            try:
+                ps_cmd = (
+                    "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" "
+                    "| Select-Object ProcessId,CommandLine "
+                    "| Format-List"
+                )
+                result = subprocess.run(
+                    ['powershell', '-NoProfile', '-Command', ps_cmd],
+                    capture_output=True, text=True, timeout=10,
+                )
+                for line in result.stdout.splitlines():
+                    if 'commandline' in line.lower():
+                        cmdline = line.split(':', 1)[1].strip().lower().replace('/', '\\')
+                        if profile_norm in cmdline:
+                            chrome_using_profile = True
+                            break
+            except Exception as e:
+                logger.debug(f"[Observer:{self.board_id}] PowerShell check failed: {e}")
+                # Fallback: any chrome.exe running + lock file = likely conflict
+                try:
+                    result = subprocess.run(
+                        ['tasklist', '/FI', 'IMAGENAME eq chrome.exe', '/NH'],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    if 'chrome.exe' in result.stdout.lower():
+                        chrome_using_profile = True
+                except Exception:
+                    pass
+        else:
+            # Linux/Mac: pgrep with full command line
+            try:
+                result = subprocess.run(
+                    ['pgrep', '-af', 'chrome'],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in result.stdout.splitlines():
+                    if profile_norm in line.lower():
+                        chrome_using_profile = True
+                        break
+            except Exception:
+                pass
+
+        if chrome_using_profile:
+            logger.error(
+                f"[Observer:{self.board_id}] *** PROFILE LOCKED *** "
+                f"Another Chrome instance is already using: {profile_abs}  "
+                f"Playwright cannot launch a second persistent context with the same "
+                f"user-data-dir. Aborting observer launch. "
+                f"Ensure start.bat does NOT use --user-data-dir pointing to this path."
+            )
+            return True
+
+        # Lock files exist but no Chrome process found → stale locks, clean up
+        for name in found_locks:
+            lock_path = os.path.join(profile_dir, name)
+            try:
+                os.remove(lock_path)
+                logger.info(f"[Observer:{self.board_id}] Removed stale lock: {lock_path}")
+            except Exception as e:
+                logger.warning(f"[Observer:{self.board_id}] Could not remove stale lock {lock_path}: {e}")
+
+        return False
+
     async def open_session(
         self,
         autodarts_url: str,
@@ -269,9 +361,23 @@ class AutodartsObserver:
         os.makedirs(profile_dir, exist_ok=True)
         self.status.chrome_profile = profile_dir_abs
 
+        # ── Safety check: abort if another Chrome already owns this profile ──
+        if self._check_profile_locked(profile_dir):
+            err_msg = (
+                f"Chrome profile is locked by another process: {profile_dir_abs}. "
+                f"Cannot launch observer. Ensure no other Chrome instance uses this "
+                f"user-data-dir (check start.bat)."
+            )
+            logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH ABORTED === {err_msg}")
+            self.status.last_error = err_msg
+            self._set_state(ObserverState.ERROR)
+            return
+
         # ── Profile diagnostics ──
-        cookies_exist = os.path.isfile(os.path.join(profile_default, 'Cookies'))
-        extensions_exist = os.path.isdir(os.path.join(profile_dir, 'Default', 'Extensions'))
+        cookies_classic = os.path.isfile(os.path.join(profile_default, 'Cookies'))
+        cookies_network = os.path.isfile(os.path.join(profile_default, 'Network', 'Cookies'))
+        cookies_exist = cookies_classic or cookies_network
+        extensions_exist = os.path.isdir(os.path.join(profile_default, 'Extensions'))
         logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH START ===")
         logger.info(f"[Observer:{self.board_id}]   URL: {url}")
         logger.info(f"[Observer:{self.board_id}]   headless: {headless}")
@@ -279,7 +385,7 @@ class AutodartsObserver:
         logger.info(f"[Observer:{self.board_id}]   Using Chrome profile: {profile_dir_abs}")
         logger.info(f"[Observer:{self.board_id}]   profile_exists: {os.path.isdir(profile_dir)}")
         logger.info(f"[Observer:{self.board_id}]   Default_exists: {profile_exists}")
-        logger.info(f"[Observer:{self.board_id}]   Cookies_exists: {cookies_exist}")
+        logger.info(f"[Observer:{self.board_id}]   Cookies_exists: {cookies_exist} (classic={cookies_classic}, network={cookies_network})")
         logger.info(f"[Observer:{self.board_id}]   Extensions_exists: {extensions_exist}")
 
         try:
