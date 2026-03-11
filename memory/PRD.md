@@ -22,30 +22,46 @@ No Node.js required at runtime. No dev server.
 Backend is the ONLY process (+ Chrome overlay).
 ```
 
-## Observer State Machine (v1.8.0 — Event-Driven)
+## Observer State Machine (v1.9.0 — Playwright Native WS + Console + DOM)
 ```
-Detection Priority:
-  1. WebSocket/console event capture (PRIMARY — injected JS)
-     - WS messages on autodarts.matches channels (state, game-events)
-     - Console: "Winner Animation", "matchshot", "gameshot"
-     - matchFinished + winnerDetected → FINISHED (strongest signal)
-     - matchState="finished"/"completed" → FINISHED
-     - gameshot without matchFinished → ROUND_TRANSITION (leg end, match continues)
-  2. DOM/UI polling (FALLBACK only)
-     - Strong match-end buttons (Rematch/Share/NewGame TEXT) → FINISHED
-     - in_game markers without end markers → IN_GAME
-     - Generic result CSS → ROUND_TRANSITION
-     - Nothing → IDLE
-  3. Merge: _merge_detection(event_state, dom_state)
-     - Event FINISHED always wins over DOM
-     - Event IN_GAME takes priority
-     - No event data → use DOM result
+Detection architecture (priority order):
+  1. Playwright page.on('websocket') — network-level frame capture
+     - Captures ALL WS frames regardless of when connection was created
+     - Parses channels: autodarts.matches.{id}.state, .game-events
+     - Parses channels: autodarts.boards.{id}.matches, .state
+     - Classifications: match_finished_matchshot, match_finished_winner,
+       match_finished_state, match_finished_winner_field, match_started,
+       round_transition_gameshot, turn_transition, game_event, etc.
+     - matchshot / winner / state=finished -> match_finished=True
+     - gameshot (without matchFinished) -> ROUND_TRANSITION (leg end only)
 
-Debounce (exit from IN_GAME):
-  ROUND_TRANSITION → resets exit counter (turn change, match active)
-  FINISHED → increments exit counter (saw_finished=True)
-  IDLE → increments exit counter (abort scenario)
-  3 consecutive exit polls confirm → callback fired
+  2. Console capture via add_init_script (runs BEFORE page JS loads)
+     - "Winner Animation - Initializing" -> winnerDetected + matchFinished
+     - "matchshot" -> matchFinished + winnerDetected
+     - "gameshot" -> logged only (not match end)
+     - Any match/finish/end console output captured
+
+  3. DOM/UI polling (FALLBACK only)
+     - Strong match-end buttons (Rematch/Share/NewGame) -> FINISHED
+     - in_game markers -> IN_GAME
+     - Generic result CSS -> ROUND_TRANSITION
+     - Nothing -> IDLE
+
+  Merge: _merge_detection(ws_state, console_state, dom_state)
+    - WS FINISHED always wins
+    - Console FINISHED overrides DOM
+    - WS IN_GAME takes priority
+    - No event data -> DOM fallback
+
+Diagnostic endpoint:
+  GET /api/kiosk/{board_id}/ws-diagnostic
+  Returns: ws_state, captured_frames (last 30), debounce state
+  Use this on the real board PC to see exactly what events Autodarts sends.
+
+Previous approach (BROKEN, replaced):
+  JS injection via page.evaluate() AFTER page.goto() completed.
+  This never captured WS frames because Autodarts' WebSocket connection
+  was already established before the injection script ran.
 ```
 
 ## Finalization Chain (v1.7.2)
@@ -152,6 +168,16 @@ autostart.bat:
   - Fix 3: Safe-area inset support (env(safe-area-inset-top)) on mobile header, sidebar, main content
   - iOS standalone/PWA mode: header buttons now tappable below notch/status bar
   - Desktop layout unaffected (safe-area evaluates to 0px)
+  - ZIP rebuilt: darts-kiosk-v1.7.3-windows.zip (1.6 MB)
+- v1.9.0: Playwright Native WS Observer (2026-03-11)
+  - CRITICAL FIX: Replaced JS injection (page.evaluate) with Playwright page.on('websocket')
+  - Old approach was fundamentally broken: WS connections existed BEFORE JS injection ran
+  - New approach captures ALL WS frames at network level regardless of connection timing
+  - Console capture now uses add_init_script (runs BEFORE page JS loads)
+  - Frame classifier: match_finished_matchshot, match_finished_winner, match_finished_state, etc.
+  - New /api/kiosk/{board_id}/ws-diagnostic endpoint for real-time event stream debugging
+  - Logging: every match-relevant WS frame logged with channel, interpretation, payload fields
+  - All tests passing: 12/12 (iteration_33)
   - ZIP rebuilt: darts-kiosk-v1.7.3-windows.zip (1.6 MB)
 
 ## Remaining Backlog
