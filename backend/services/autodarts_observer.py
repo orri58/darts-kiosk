@@ -402,7 +402,12 @@ class AutodartsObserver:
                 '--autoplay-policy=no-user-gesture-required',
             ]
             if not headless:
-                chrome_args.extend(['--start-fullscreen', '--kiosk'])
+                # NOTE: Do NOT use --kiosk here. Kiosk mode is only for the
+                # user-facing kiosk UI Chrome (start.bat). The observer Chrome
+                # must be a normal/maximized window — kiosk mode causes Chrome
+                # to exit immediately if the page closes or crashes, and
+                # conflicts with another kiosk-mode Chrome instance.
+                chrome_args.append('--start-maximized')
 
             ignore_args = [
                 "--enable-automation",
@@ -423,11 +428,26 @@ class AutodartsObserver:
                 accept_downloads=False,
             )
             logger.info(f"[Observer:{self.board_id}]   Chrome launched OK")
+            logger.info(f"[Observer:{self.board_id}]   Pages in context: {len(self._context.pages)}")
 
             if self._context.pages:
                 self._page = self._context.pages[0]
             else:
                 self._page = await self._context.new_page()
+
+            # ── Lifecycle event handlers (detect premature close/crash) ──
+            self._page.on("close", lambda: logger.error(
+                f"[Observer:{self.board_id}] *** PAGE CLOSED *** "
+                f"The observer page was closed unexpectedly!"
+            ))
+            self._page.on("crash", lambda: logger.error(
+                f"[Observer:{self.board_id}] *** PAGE CRASHED *** "
+                f"The observer page has crashed!"
+            ))
+            self._context.on("close", lambda: logger.error(
+                f"[Observer:{self.board_id}] *** CONTEXT CLOSED *** "
+                f"The browser context was closed unexpectedly!"
+            ))
 
             # ── Inject console capture BEFORE page loads ──
             await self._page.add_init_script(CONSOLE_CAPTURE_SCRIPT)
@@ -438,7 +458,11 @@ class AutodartsObserver:
             logger.info(f"[Observer:{self.board_id}]   WebSocket frame observer registered")
 
             logger.info(f"[Observer:{self.board_id}]   Navigating to {url}...")
-            await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            response = await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            nav_status = response.status if response else "no_response"
+            current_url = self._page.url
+            logger.info(f"[Observer:{self.board_id}]   Navigation complete: status={nav_status}, url={current_url}")
+            logger.info(f"[Observer:{self.board_id}]   Pages after nav: {len(self._context.pages)}")
 
             self.status.browser_open = True
             self._set_state(ObserverState.IDLE)
@@ -452,6 +476,23 @@ class AutodartsObserver:
                 logger.info(f"[Observer:{self.board_id}]   Kiosk window hidden")
             except Exception as wm_err:
                 logger.warning(f"[Observer:{self.board_id}]   Window management skipped: {wm_err}")
+
+            # ── Post-launch health check: verify page is still alive ──
+            for delay in [3, 5, 10]:
+                await asyncio.sleep(delay - (3 if delay == 3 else delay - 2))
+                try:
+                    alive_url = self._page.url
+                    page_count = len(self._context.pages)
+                    logger.info(
+                        f"[Observer:{self.board_id}]   HEALTH@{delay}s: "
+                        f"page_alive=True, url={alive_url}, pages={page_count}"
+                    )
+                except Exception as health_err:
+                    logger.error(
+                        f"[Observer:{self.board_id}]   HEALTH@{delay}s: "
+                        f"page_alive=False, error={health_err}"
+                    )
+                    break
 
             logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH SUCCESS ===")
             self._observe_task = asyncio.create_task(self._observe_loop())
@@ -831,6 +872,19 @@ class AutodartsObserver:
                 interval = DEBOUNCE_POLL_INTERVAL if self._exit_polls > 0 else OBSERVER_POLL_INTERVAL
                 await asyncio.sleep(interval)
                 if not self._page or self._stopping:
+                    break
+
+                # ── Browser health check ──
+                try:
+                    _ = self._page.url
+                except Exception as health_err:
+                    logger.error(
+                        f"[Observer:{self.board_id}] *** BROWSER DEAD *** "
+                        f"Page no longer accessible: {health_err}. "
+                        f"Breaking observe loop."
+                    )
+                    self.status.last_error = f"Browser died: {str(health_err)[:200]}"
+                    self._set_state(ObserverState.ERROR)
                     break
 
                 # ── PRIMARY: WS event state (already accumulated) ──

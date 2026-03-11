@@ -80,6 +80,7 @@ def _win32_hide_by_title(pattern):
         )
 
         found = False
+        all_chrome_titles = []
 
         def callback(hwnd, _lparam):
             nonlocal found
@@ -91,8 +92,12 @@ def _win32_hide_by_title(pattern):
             buf = ctypes.create_unicode_buffer(length + 1)
             user32.GetWindowTextW(hwnd, buf, length + 1)
             title = buf.value
+            # Log all Chrome-related windows for diagnostics
+            if 'chrome' in title.lower() or 'autodarts' in title.lower() or pattern.lower() in title.lower():
+                all_chrome_titles.append(title)
             if pattern.lower() in title.lower():
                 if 'autodarts' in title.lower():
+                    logger.info(f"[WindowMgr] SKIP (autodarts): '{title}'")
                     return True
                 logger.info(f"[WindowMgr] SW_HIDE: '{title}'")
                 user32.ShowWindow(hwnd, SW_HIDE)
@@ -100,6 +105,7 @@ def _win32_hide_by_title(pattern):
             return True
 
         user32.EnumWindows(WNDENUMPROC(callback), 0)
+        logger.info(f"[WindowMgr] hide_by_title('{pattern}'): found={found}, chrome_windows={all_chrome_titles}")
         return found
 
     except Exception as e:
@@ -122,6 +128,7 @@ def _win32_restore_by_title(pattern):
         )
 
         targets = []
+        all_chrome_titles = []
 
         def callback(hwnd, _lparam):
             length = user32.GetWindowTextLengthW(hwnd)
@@ -130,12 +137,16 @@ def _win32_restore_by_title(pattern):
             buf = ctypes.create_unicode_buffer(length + 1)
             user32.GetWindowTextW(hwnd, buf, length + 1)
             title = buf.value
+            # Log all Chrome-related windows for diagnostics
+            if 'chrome' in title.lower() or 'autodarts' in title.lower() or pattern.lower() in title.lower():
+                all_chrome_titles.append(title)
             if pattern.lower() in title.lower():
                 if 'autodarts' not in title.lower():
                     targets.append((hwnd, title))
             return True
 
         user32.EnumWindows(WNDENUMPROC(callback), 0)
+        logger.info(f"[WindowMgr] restore_by_title('{pattern}'): targets={len(targets)}, chrome_windows={all_chrome_titles}")
 
         for hwnd, title in targets:
             logger.info(f"[WindowMgr] Restoring: '{title}'")
