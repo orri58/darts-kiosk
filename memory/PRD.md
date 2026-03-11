@@ -210,6 +210,17 @@ autostart.bat:
   - FIX: about:blank detection — logs NAVIGATION FAILED if still on blank after goto
   - FIX: --disable-session-crashed-bubble added to Chrome args
   - All tests passing: 25/25 (iteration_37)
+- v1.10.0: Gotcha Mode Support + Match Activity Detection (2026-03-11)
+  - ROOT CAUSE: Real Autodarts Gotcha matches end via delete/not-found, not matchshot/matchWinner
+  - ROOT CAUSE: match_active was never set — observer only recognized explicit "state: active"
+  - FIX 1: match_active now detected from throw/turn/score data (turn_transition, game_event)
+  - FIX 2: New classifications: match_deleted, board_match_deleted, match_not_found
+  - FIX 3: Teardown signals (delete/not-found) trigger match_finished ONLY if match was active
+  - FIX 4: _extract_match_id() tracks match UUID from channel names
+  - FIX 5: Observer Chrome uses --start-fullscreen (F11-style, not --kiosk or --start-maximized)
+  - FIX 6: --disable-session-crashed-bubble added to Chrome args
+  - WSEventState.reset() now also clears last_match_id
+  - All tests passing: 35/35 (iteration_38)
 
 ## Remaining Backlog
 ### P1
