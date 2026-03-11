@@ -232,6 +232,18 @@ autostart.bat:
   - Helpers: _extract_event, _extract_body_type, _extract_bool_field for robust payload parsing
   - _merge_detection simplified (no more ROUND_TRANSITION from WS)
   - All tests passing: 55/55 (iteration_39)
+- v2.0.1: Observer Lifecycle Null-Safety (2026-03-11)
+  - ROOT CAUSE: close_session() runs via create_task concurrent with observe loop
+  - _page set to None while loop/health checks still accessing it → NoneType errors
+  - FIX: _page_alive() null-safe helper (checks page and context not None and not closed)
+  - FIX: close_session() idempotent via _closing guard (prevents double close)
+  - FIX: _cleanup() logs PAGE_SET_NONE, CONTEXT_SET_NONE for full traceability
+  - FIX: observe loop stops cleanly with stop_reason (page_not_alive, stopping_flag, cancelled)
+  - FIX: _read_console_state returns None when page not alive (no evaluate on dead page)
+  - FIX: _detect_state_dom returns UNKNOWN when page not alive
+  - FIX: post-launch health checks null-safe
+  - FIX: _closing reset in open_session for re-opens
+  - All tests passing: 33/33 (iteration_40)
 
 ## Remaining Backlog
 ### P1
