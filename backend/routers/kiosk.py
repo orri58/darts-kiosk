@@ -98,7 +98,7 @@ async def finalize_match(board_id: str, trigger: str,
     credits_remaining = 0
     board_status = "unlocked"
     match_token = None
-    should_teardown = (trigger == "manual")
+    should_teardown = trigger in ("manual", "aborted")
 
     try:
         # ── Steps 2-3: DB operations ──

@@ -911,12 +911,26 @@ class AutodartsObserver:
             was_active = ws.match_active
             was_finished = ws.match_finished
             old_match_id = ws.last_match_id
-            ws.reset()
-            logger.info(
-                f"[Observer:{self.board_id}] *** MATCH RESET DETECTED *** "
-                f"(delete event) | was_active={was_active} | was_finished={was_finished} "
-                f"| match_id={old_match_id}"
-            )
+
+            if was_active and not was_finished:
+                # ── DELETE during active match = ABORT ──
+                # Match was manually cancelled in Autodarts UI.
+                # Do NOT set match_finished (that would trigger credit deduction).
+                # Set finish_trigger to fast-track debounce (1 poll instead of N).
+                ws.match_active = False
+                ws.finish_trigger = "match_abort_delete"
+                logger.info(
+                    f"[Observer:{self.board_id}] *** MATCH ABORT DETECTED *** "
+                    f"(delete event during active match) | match_id={old_match_id}"
+                )
+            else:
+                # Post-match cleanup or delete without active game → full reset
+                ws.reset()
+                logger.info(
+                    f"[Observer:{self.board_id}] *** MATCH RESET DETECTED *** "
+                    f"(delete event) | was_active={was_active} | was_finished={was_finished} "
+                    f"| match_id={old_match_id}"
+                )
 
         # ═══ LEG-LEVEL gameshot (ignored for lifecycle) ═══
         elif interpretation == "round_transition_gameshot":
