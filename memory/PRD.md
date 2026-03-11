@@ -257,6 +257,19 @@ autostart.bat:
   - _safe_close_observer: REMOVED (replaced by finalize_match)
   - Manual end-game endpoint: uses finalize_match("manual") directly
   - All tests passing: 42/42 (iteration_41)
+- v2.2.0: Finalize Match Refactor — Conditional Teardown (2026-03-11)
+  - ROOT CAUSE 1: Observer was ALWAYS closed after game end, even with credits remaining
+  - ROOT CAUSE 2: FINISHED→IDLE triggered second finalize_match via "post_finish_check"
+  - ROOT CAUSE 3: No centralized credit policy function
+  - FIX 1: _should_deduct_credit(trigger) — centralized policy (finished/manual=deduct, aborted=free)
+  - FIX 2: should_teardown flag — observer ONLY closed when credits=0 or trigger=manual
+  - FIX 3: OBSERVER_KEPT_ALIVE when credits remain (observer stays for next game)
+  - FIX 4: Removed post_finish_check from observer (FINISHED→IDLE = no re-finalize)
+  - FIX 5: try/finally ensures _finalizing guard is always released (even on exception)
+  - FIX 6: Manual stop always locks board and tears down (session ends)
+  - FIX 7: Detailed [FINALIZE] logging: START/END, CREDIT_DEDUCTED/FREE, LOCK_DECISION, OBSERVER_CLOSE/KEPT_ALIVE
+  - Verified full 3-game loop: 3→2→1→0 with correct deduction, lock, and teardown at each step
+  - All tests passing: 47/47 (iteration_42)
 
 ## Remaining Backlog
 ### P1
