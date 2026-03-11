@@ -286,6 +286,14 @@ autostart.bat:
   - FIX 9: FINISHED→IDLE does NOT re-trigger finalization
   - FIX 10: Observe loop logs READY_FOR_NEXT_GAME when credits remain (observer stays alive)
   - All tests passing: 58/58 (iteration_43)
+- v2.3.1: Delete Event = Aborted Match End (2026-03-11)
+  - PROBLEM: Autodarts sendet bei Spiel-Abbruch nur event="delete", kein finished/gameFinished
+  - Observer behandelte delete nur als Reset → Browser blieb offen, UI hing, Session nicht finalisiert
+  - FIX 1: _update_ws_state: delete während match_active=True → finish_trigger="match_abort_delete" (fast-track Debounce)
+  - FIX 2: finalize_match: trigger="aborted" setzt should_teardown=True (Observer schließen, UI reset)
+  - FIX 3: Bei abort: KEIN Credit-Abzug, Board bleibt unlocked, Session bleibt aktiv
+  - 3 Spielende-Typen: finished (credit-=1), manual (credit-=1, lock), aborted (kein Abzug, teardown)
+  - All tests passing: 18/18 (iteration_44)
 
 ## Remaining Backlog
 ### P1
