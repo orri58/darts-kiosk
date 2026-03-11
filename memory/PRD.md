@@ -200,6 +200,16 @@ autostart.bat:
   - FIX: Window manager logs ALL Chrome window titles during enumeration (diagnostics)
   - FIX: Window manager explicitly skips windows with 'autodarts' in title (SKIP log)
   - All tests passing: 26/26 (iteration_36)
+- v1.9.3: Observer Page Management Fix (2026-03-11)
+  - ROOT CAUSE: launch_persistent_context() restores previous session tabs; pages[0] is unreliable
+  - Observed: Chrome window showed about:blank while Playwright thought it navigated to Autodarts
+  - FIX: Always create FRESH page via context.new_page() — never reuse pages[0]
+  - FIX: Log all existing pages + URLs after context launch (diagnostic)
+  - FIX: Close all old/stale pages (about:blank, restored tabs) after navigation
+  - FIX: Final page inventory logged with (OBSERVED) marker
+  - FIX: about:blank detection — logs NAVIGATION FAILED if still on blank after goto
+  - FIX: --disable-session-crashed-bubble added to Chrome args
+  - All tests passing: 25/25 (iteration_37)
 
 ## Remaining Backlog
 ### P1
