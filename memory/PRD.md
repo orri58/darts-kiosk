@@ -423,6 +423,38 @@ autostart.bat:
     - boards.py: set_desired_state bei lock/unlock
     - kiosk.py: stop_observer_for_board(reason=...), set_desired_state=stopped bei session_end
   - ZIP: darts-kiosk-v2.9.0-windows.zip (2.1 MB)
+- v2.9.1: Lifecycle Stability Patch — Final (2026-03-12)
+  TASK 1 — WATCHDOG RECOVERY RULES:
+    - _should_attempt_recovery() als single decision point (9 explizite Regeln)
+    - CLOSED wird NIEMALS recovered (immer intentional)
+    - Nur ERROR+desired=running+unhealthy → Recovery
+    - Jede Entscheidung geloggt: [WATCHDOG] evaluate board=... + skip reason=...
+  TASK 2 — LIFECYCLE SEMANTICS:
+    - Profile-Lock-Failure → lifecycle=ERROR (nicht undefiniert)
+    - Auth-Redirect → close_reason="auth_required" (zusätzlich zu lifecycle)
+    - Generation-Guard im Health-Check (stale gen → abort)
+  TASK 3 — PAGE/CONTEXT CLOSE CALLBACKS:
+    - PAGE_CLOSED_EXPECTED vs PAGE_CLOSED_UNEXPECTED (lifecycle-aware)
+    - CONTEXT_CLOSED_EXPECTED vs CONTEXT_CLOSED_UNEXPECTED
+    - Stopping/Closing/Closed → EXPECTED, Running → UNEXPECTED
+  TASK 4 — MULTI-CREDIT FINALIZE LOGS:
+    - [SESSION] finalize decision board=X credit_before=N credit_after=M should_lock=F should_teardown=F desired_state=running lifecycle=running
+    - [RETURN_HOME] start board=X lifecycle=running desired=running page_closed=False context_closed=False
+    - [RETURN_HOME] success board=X url=https://play.autodarts.io/ lifecycle=running
+  TASK 5 — AUTH REDIRECT:
+    - close_reason="auth_required" gesetzt bei Auth-Erkennung
+    - Watchdog: skip reason=auth_required
+  TASK 6 — WINDOW MANAGER ISOLATION:
+    - Verifiziert: Window-Failures escalieren NICHT zu Lifecycle-Failures
+  TASK 7 — CRASH ESCALATION:
+    - 3 Failures in 5 Minuten → Block für 10 Minuten
+    - [WATCHDOG] recovery blocked BOARD-1 failures=3 window=300s blocked_until=...
+    - Exponential backoff bei wiederholten Failures
+  Geänderte Dateien:
+    - autodarts_observer.py: Page/Context-Close callbacks, Auth close_reason, Profile-Lock lifecycle
+    - kiosk.py: finalize decision log, RETURN_HOME logs
+    - watchdog_service.py: komplett neu (_should_attempt_recovery, escalation, blocking)
+  ZIP: darts-kiosk-v2.9.1-windows.zip (2.1 MB)
 
 ## Remaining Backlog
   - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)

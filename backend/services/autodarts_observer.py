@@ -504,6 +504,7 @@ class AutodartsObserver:
             logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH ABORTED === {err_msg}")
             self.status.last_error = err_msg
             self._set_state(ObserverState.ERROR)
+            self._set_lifecycle(LifecycleState.ERROR)
             return
 
         # ── Profile diagnostics ──
@@ -580,18 +581,51 @@ class AutodartsObserver:
             logger.info(f"[Observer:{self.board_id}]   Fresh page created. Total pages: {len(self._context.pages)}")
 
             # ── Lifecycle event handlers (detect premature close/crash) ──
-            self._page.on("close", lambda: logger.error(
-                f"[Observer:{self.board_id}] *** PAGE CLOSED *** "
-                f"The observer page was closed unexpectedly!"
-            ))
-            self._page.on("crash", lambda: logger.error(
-                f"[Observer:{self.board_id}] *** PAGE CRASHED *** "
-                f"The observer page has crashed!"
-            ))
-            self._context.on("close", lambda: logger.error(
-                f"[Observer:{self.board_id}] *** CONTEXT CLOSED *** "
-                f"The browser context was closed unexpectedly!"
-            ))
+            def _make_page_close_handler(obs_ref):
+                def handler():
+                    lc = obs_ref._lifecycle_state.value
+                    gen = obs_ref._session_generation
+                    if obs_ref._stopping or obs_ref._closing or lc in ("stopping", "closed"):
+                        logger.info(
+                            f"[Observer:{obs_ref.board_id}] PAGE_CLOSED_EXPECTED "
+                            f"lifecycle={lc} gen={gen}"
+                        )
+                    else:
+                        logger.error(
+                            f"[Observer:{obs_ref.board_id}] PAGE_CLOSED_UNEXPECTED "
+                            f"lifecycle={lc} gen={gen}"
+                        )
+                return handler
+
+            def _make_page_crash_handler(obs_ref):
+                def handler():
+                    lc = obs_ref._lifecycle_state.value
+                    gen = obs_ref._session_generation
+                    logger.error(
+                        f"[Observer:{obs_ref.board_id}] *** PAGE_CRASHED *** "
+                        f"lifecycle={lc} gen={gen}"
+                    )
+                return handler
+
+            def _make_context_close_handler(obs_ref):
+                def handler():
+                    lc = obs_ref._lifecycle_state.value
+                    gen = obs_ref._session_generation
+                    if obs_ref._stopping or obs_ref._closing or lc in ("stopping", "closed"):
+                        logger.info(
+                            f"[Observer:{obs_ref.board_id}] CONTEXT_CLOSED_EXPECTED "
+                            f"lifecycle={lc} gen={gen}"
+                        )
+                    else:
+                        logger.error(
+                            f"[Observer:{obs_ref.board_id}] CONTEXT_CLOSED_UNEXPECTED "
+                            f"lifecycle={lc} gen={gen}"
+                        )
+                return handler
+
+            self._page.on("close", _make_page_close_handler(self))
+            self._page.on("crash", _make_page_crash_handler(self))
+            self._context.on("close", _make_context_close_handler(self))
 
             # ── Inject console capture BEFORE page loads ──
             await self._page.add_init_script(CONSOLE_CAPTURE_SCRIPT)
@@ -655,6 +689,7 @@ class AutodartsObserver:
                     f"Please log in manually once, then restart the observer."
                 )
                 self.status.last_error = f"auth_required: {self._page.url}"
+                self._close_reason = "auth_required"
                 self._set_state(ObserverState.ERROR)
                 self._set_lifecycle(LifecycleState.AUTH_REQUIRED)
                 self.status.browser_open = True
@@ -705,6 +740,7 @@ class AutodartsObserver:
                         )
                         health_ok = False
                         self.status.last_error = f"auth_required: {alive_url}"
+                        self._close_reason = "auth_required"
                         self._set_lifecycle(LifecycleState.AUTH_REQUIRED)
                         break
                     logger.info(

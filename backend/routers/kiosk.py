@@ -227,7 +227,15 @@ async def _finalize_match_inner(board_id: str, trigger: str,
 
                     # ── Teardown decision: ONLY close observer when locking ──
                     should_teardown = should_lock
-                    logger.info(f"[SESSION] should_teardown={should_teardown} (=should_lock)")
+                    obs_for_log = observer_manager.get(board_id)
+                    lc_log = obs_for_log.lifecycle_state.value if obs_for_log else "none"
+                    desired_log = observer_manager.get_desired_state(board_id)
+                    logger.info(
+                        f"[SESSION] finalize decision board={board_id} "
+                        f"trigger={trigger} credit_before={credits_before} credit_after={credits_remaining} "
+                        f"should_lock={should_lock} should_teardown={should_teardown} "
+                        f"desired_state={desired_log} lifecycle={lc_log}"
+                    )
 
                     # ── Match result + player stats ──
                     if _should_deduct_credit(trigger):
@@ -319,7 +327,26 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                     match_id = obs._ws_state.last_match_id if hasattr(obs, '_ws_state') else None
                     obs._last_finalized_match_id = match_id
                     logger.info(f"[SESSION] MATCH_FINALIZED_ONCE match_id={match_id}")
-                    await obs._navigate_to_home()
+                    page_closed = not obs._page_alive()
+                    ctx_closed = obs._context is None
+                    lc_val = obs.lifecycle_state.value
+                    desired_val = observer_manager.get_desired_state(board_id)
+                    logger.info(
+                        f"[RETURN_HOME] start board={board_id} lifecycle={lc_val} "
+                        f"desired={desired_val} page_closed={page_closed} context_closed={ctx_closed}"
+                    )
+                    nav_ok = await obs._navigate_to_home()
+                    if nav_ok:
+                        try:
+                            final_url = obs._page.url if obs._page_alive() else "page_dead"
+                        except Exception:
+                            final_url = "url_error"
+                        logger.info(
+                            f"[RETURN_HOME] success board={board_id} url={final_url} "
+                            f"lifecycle={obs.lifecycle_state.value}"
+                        )
+                    else:
+                        logger.warning(f"[RETURN_HOME] failed board={board_id} lifecycle={lc_val}")
                 except Exception as e:
                     logger.warning(f"[AUTODARTS] navigate_to_home failed: {e}")
             # Minimize the observer/chrome window so it doesn't cover the kiosk
