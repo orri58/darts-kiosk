@@ -294,6 +294,17 @@ autostart.bat:
     - Prüft alle 5 Sekunden: page alive, observer open, session consistent
   - ObserverManager.open: Dead Observer werden vor neuem Start bereinigt
   - Alle Tests passing: 16/16 (iteration_45)
+- v2.5.0: Abort Sofort, Finish mit Delay, Kiosk-Maske zurück (2026-03-12)
+  - PROBLEM 1: Abort/Delete ging durch Debounce-Polls statt sofort
+  - PROBLEM 2: Kiosk-UI kam nach Finalize nicht zurück
+  - PROBLEM 3: Delay auch für Abort (falsch)
+  - FIX 1: _abort_detected Flag im Observer → Sofort-Finalize ohne Debounce (471ms statt ~20s)
+  - FIX 2: Delay NUR für trigger="finished" (4s), nicht für abort/crashed (0s)
+  - FIX 3: Neue return_to_kiosk_ui(board_id, should_lock) — IMMER nach Finalize aufgerufen
+  - FIX 4: Detailliertes Credit-Log: credit_before, consume_credit, credit_after
+  - FIX 5: Debounce-Skip wenn _finalized oder _abort_detected (keine Doppel-Finalisierung)
+  - Timing verifiziert: Abort=471ms, Finished=4440ms
+  - Alle Tests passing: 15/15 (iteration_46)
 
 ## Remaining Backlog
   - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)
