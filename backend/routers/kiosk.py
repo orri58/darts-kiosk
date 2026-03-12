@@ -1,17 +1,19 @@
 """
-Kiosk Action Routes — Observer MVP (v2.3.0)
+Kiosk Action Routes — Observer MVP (v2.4.0)
 
 Central finalization via finalize_match(board_id, trigger):
-  - Single entry point for ALL match-end scenarios (WS, manual, abort)
-  - Called SYNCHRONOUSLY from observe loop (no create_task race)
-  - Strict order: guard → credit → lock → observer close → kiosk restore
-  - close_session() detects self-call to avoid deadlock
-  - _finalized[board_id] prevents double finalization across multiple signals
-  - _should_deduct_credit() centralized policy (accepts WS trigger names)
+  - Single entry point for ALL match-end scenarios
+  - ALWAYS tears down observer after every game (one observer per game)
+  - Credit deduction for finished, aborted, manual (not for crashed/unknown)
+  - Lock ONLY when credits <= 0 after deduction
+  - 4-second delay so player sees result before close
+  - Timeout protection (15s) prevents hanging finalize
+  - _finalized[board_id] prevents double finalization
 """
 import asyncio
 import os
 import secrets
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
@@ -30,6 +32,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 AUTODARTS_MODE = os.environ.get('AUTODARTS_MODE', 'observer')
+FINALIZE_DELAY = int(os.environ.get('FINALIZE_DELAY_SECONDS', '4'))
+FINALIZE_TIMEOUT = int(os.environ.get('FINALIZE_TIMEOUT_SECONDS', '15'))
 
 DEFAULT_MATCH_SHARING = {"enabled": False, "qr_timeout": 60}
 
@@ -49,121 +53,119 @@ def _should_deduct_credit(trigger: str) -> bool:
     Central credit deduction policy.
 
     Deduct for:
-      - "finished", "manual"
-      - Any WS-specific match_end_* trigger (e.g. match_end_gameshot_match)
+      - "finished", "manual", "aborted"
+      - Any WS-specific match_end_* or match_abort_* trigger
     Do NOT deduct for:
-      - "aborted" or unknown triggers
+      - "crashed" (system failure, not player action)
+      - unknown triggers
+      - no active game (handled by caller)
     """
-    if trigger in ("finished", "manual"):
+    if trigger in ("finished", "manual", "aborted"):
         return True
-    if trigger.startswith("match_end_"):
+    if trigger.startswith("match_end_") or trigger.startswith("match_abort_"):
         return True
     return False
 
 
 # =====================================================================
-# Central finalization (v2.3.0)
+# Central finalization (v2.4.0)
 # =====================================================================
 
-async def finalize_match(board_id: str, trigger: str,
-                         winner: str = None, scores: dict = None) -> dict:
+async def _finalize_match_inner(board_id: str, trigger: str,
+                                winner: str = None, scores: dict = None) -> dict:
     """
-    Central match finalization. Called for ALL end scenarios.
-    Called SYNCHRONOUSLY from observe loop — no create_task.
+    Inner finalize logic. Called via timeout wrapper.
 
-    Steps (strict order):
-      1. [GUARD]     Idempotency — skip if already finalizing or already finalized
-      2. [CREDIT]    Deduct credit (only if _should_deduct_credit)
-      3. [LOCK]      Lock board if credits exhausted or time expired
-      4. [OBSERVER]  Close Autodarts browser via Playwright (only on teardown)
-      5. [KIOSK]     Restore kiosk window via WindowManager (only on teardown)
-      6. [BROADCAST] Notify all clients
-      7. [CLEANUP]   Release guards, mark finalized
+    Steps (strict order per user spec):
+      1.  [GUARD]     Idempotency check
+      2.  [FINALIZE]  Mark as finalizing
+      3.  [CREDIT]    Deduct credit exactly once
+      4.  [DELAY]     Wait 4 seconds (player sees result)
+      5.  [OBSERVER]  Stop observer
+      6.  [PLAYWRIGHT] Page close → context close → playwright stop
+      7.  [SESSION]   Reset session state
+      8.  [KIOSK]     Reset UI/overlay
+      9.  [LOCK]      Lock board if remaining_credits <= 0
+      10. [UNLOCK]    Keep board unlocked if credits > 0
+      11. [BROADCAST] Notify clients
+      12. [CLEANUP]   Set finalized status
     """
-    # ── Step 1: Idempotency guards ──
+    # ── Step 1-2: Idempotency guard ──
     if board_id in _finalizing:
-        logger.info(f"[FINALIZE] SKIPPED board={board_id} (finalize_in_progress=True)")
-        return {"should_lock": False, "should_teardown": False,
+        logger.info(f"[SESSION] finalize skipped (already running) board={board_id}")
+        return {"should_lock": False, "should_teardown": True,
                 "credits_remaining": -1, "board_status": "unknown"}
 
     if _finalized.get(board_id) and trigger != "manual":
-        logger.info(f"[FINALIZE] SKIPPED board={board_id} (already finalized=True, trigger={trigger})")
-        return {"should_lock": False, "should_teardown": False,
+        logger.info(f"[SESSION] finalize skipped (already finalized) board={board_id} trigger={trigger}")
+        return {"should_lock": False, "should_teardown": True,
                 "credits_remaining": -1, "board_status": "unknown"}
 
     _finalizing.add(board_id)
-    logger.info(f"[FINALIZE] ===== START board={board_id} trigger={trigger} =====")
+    logger.info(f"[SESSION] finalize start board={board_id} trigger={trigger}")
 
     should_lock = False
     credits_remaining = 0
     board_status = "unlocked"
     match_token = None
-    should_teardown = trigger in ("manual", "aborted")
 
     try:
-        # ── Steps 2-3: DB operations ──
+        # ── Step 3: DB operations (credit + lock decision) ──
         try:
             async with AsyncSessionLocal() as db:
                 async with db.begin():
                     result = await db.execute(select(Board).where(Board.board_id == board_id))
                     board = result.scalar_one_or_none()
                     if not board:
-                        logger.error(f"[FINALIZE] board_not_found: {board_id}")
-                        return {"should_lock": False, "should_teardown": False,
+                        logger.error(f"[SESSION] board_not_found: {board_id}")
+                        return {"should_lock": False, "should_teardown": True,
                                 "credits_remaining": 0, "board_status": "unknown"}
 
                     if board.status == BoardStatus.LOCKED.value:
-                        logger.info(f"[FINALIZE] board already locked board={board_id}")
+                        logger.info(f"[SESSION] board already locked board={board_id}")
                         return {"should_lock": True, "should_teardown": True,
                                 "credits_remaining": 0, "board_status": "locked"}
 
                     session = await get_active_session_for_board(db, board.id)
                     if not session:
-                        logger.info(f"[FINALIZE] no active session board={board_id}")
-                        return {"should_lock": False, "should_teardown": False,
+                        logger.info(f"[SESSION] no active session board={board_id}")
+                        return {"should_lock": False, "should_teardown": True,
                                 "credits_remaining": 0, "board_status": board.status}
 
-                    # ── Step 2: Credit deduction ──
+                    # ── Credit deduction ──
                     credits_before = session.credits_remaining
                     if _should_deduct_credit(trigger):
                         if session.pricing_mode == PricingMode.PER_GAME.value:
                             session.credits_remaining = max(0, session.credits_remaining - 1)
                             logger.info(
-                                f"[FINALIZE] CREDIT_DEDUCTED: {credits_before} -> "
-                                f"{session.credits_remaining} (trigger={trigger}, mode=per_game)"
+                                f"[SESSION] credit_before={credits_before} "
+                                f"credit_after={session.credits_remaining}"
                             )
                         else:
                             logger.info(
-                                f"[FINALIZE] CREDIT_SKIP: mode={session.pricing_mode} "
+                                f"[SESSION] credit_skip: mode={session.pricing_mode} "
                                 f"(only per_game deducts)"
                             )
                     else:
                         logger.info(
-                            f"[FINALIZE] CREDIT_FREE: trigger={trigger} "
-                            f"(no deduction for this trigger type)"
+                            f"[SESSION] credit_unchanged: trigger={trigger} "
+                            f"(no deduction for this trigger)"
                         )
                     credits_remaining = session.credits_remaining
 
-                    # ── Step 3: Lock decision ──
+                    # ── Lock decision: ONLY when credits <= 0 ──
                     if session.pricing_mode == PricingMode.PER_GAME.value:
                         should_lock = session.credits_remaining <= 0
                     if session.pricing_mode == PricingMode.PER_TIME.value:
                         if session.expires_at and datetime.now(timezone.utc) >= session.expires_at:
                             should_lock = True
 
-                    if should_lock:
-                        should_teardown = True
-                    if trigger == "manual":
-                        should_teardown = True
-                        should_lock = True
-
                     logger.info(
-                        f"[FINALIZE] LOCK_DECISION: should_lock={should_lock}, "
-                        f"should_teardown={should_teardown}, "
-                        f"credits={credits_remaining}, trigger={trigger}"
+                        f"[SESSION] should_lock={should_lock} "
+                        f"remaining_credits={credits_remaining}"
                     )
 
-                    # ── Match result + player stats (deductible triggers only) ──
+                    # ── Match result + player stats ──
                     if _should_deduct_credit(trigger):
                         match_sharing = await get_or_create_setting(db, "match_sharing", DEFAULT_MATCH_SHARING)
                         if match_sharing.get("enabled", False):
@@ -202,7 +204,7 @@ async def finalize_match(board_id: str, trigger: str,
                             player.games_played = (player.games_played or 0) + 1
                             player.last_played_at = datetime.now(timezone.utc)
 
-                    # ── Apply lock or stay unlocked ──
+                    # ── Steps 9-10: Apply lock or stay unlocked ──
                     if should_lock:
                         session.status = SessionStatus.FINISHED.value
                         session.ended_at = datetime.now(timezone.utc)
@@ -210,56 +212,54 @@ async def finalize_match(board_id: str, trigger: str,
                             session.ended_reason = "last_game_aborted"
                         elif trigger == "manual":
                             session.ended_reason = "manual_stop"
+                        elif trigger == "crashed":
+                            session.ended_reason = "system_crash"
                         elif session.pricing_mode == PricingMode.PER_TIME.value:
                             session.ended_reason = "time_expired"
                         else:
                             session.ended_reason = "credits_exhausted"
                         board.status = BoardStatus.LOCKED.value
                         board_status = "locked"
-                        logger.info(f"[FINALIZE] SESSION_CLOSED: reason={session.ended_reason}")
-                        logger.info(f"[FINALIZE] BOARD_LOCKED: board={board_id}")
+                        logger.info(f"[SESSION] SESSION_CLOSED reason={session.ended_reason}")
+                        logger.info(f"[BOARD] locking board {board_id}")
                     else:
                         board.status = BoardStatus.UNLOCKED.value
                         board_status = "unlocked"
-                        logger.info(f"[FINALIZE] BOARD_STAYS_UNLOCKED: credits={credits_remaining}")
+                        logger.info(f"[SESSION] board stays unlocked credits={credits_remaining}")
 
                     await db.flush()
 
         except Exception as e:
-            logger.error(f"[FINALIZE] DB_ERROR: {e}", exc_info=True)
+            logger.error(f"[SESSION] DB_ERROR: {e}", exc_info=True)
 
-        # ── Step 4: Close Autodarts browser (ONLY on teardown) ──
-        if should_teardown:
-            try:
-                logger.info(f"[FINALIZE] OBSERVER_CLOSE_START: board={board_id}")
-                await observer_manager.close(board_id)
-                logger.info(f"[FINALIZE] OBSERVER_CLOSE_DONE: board={board_id}")
-            except Exception as e:
-                logger.error(f"[FINALIZE] OBSERVER_CLOSE_FAILED: {e}")
-        else:
-            logger.info(
-                f"[FINALIZE] OBSERVER_KEPT_ALIVE: board={board_id} "
-                f"(credits={credits_remaining}, awaiting next game)"
-            )
+        # ── Step 4: Delay (player sees result) ──
+        logger.info(f"[SESSION] delay_before_close={FINALIZE_DELAY}s")
+        await asyncio.sleep(FINALIZE_DELAY)
 
-        # ── Step 5: Restore kiosk window (ONLY on teardown) ──
-        if should_teardown:
-            try:
-                from backend.services.window_manager import kill_overlay_process
-                await kill_overlay_process()
-                logger.info(f"[FINALIZE] OVERLAY_KILLED: board={board_id}")
-            except Exception as e:
-                logger.warning(f"[FINALIZE] OVERLAY_KILL_FAILED: {e}")
+        # ── Steps 5-6: Close Autodarts observer (page → context → playwright) ──
+        try:
+            logger.info(f"[AUTODARTS] observer closing board={board_id}...")
+            await observer_manager.close(board_id)
+            logger.info(f"[AUTODARTS] observer closed board={board_id}")
+        except Exception as e:
+            logger.error(f"[AUTODARTS] observer close failed: {e}")
 
-            try:
-                from backend.services.window_manager import restore_kiosk_window
-                await asyncio.sleep(0.3)
-                await restore_kiosk_window()
-                logger.info(f"[FINALIZE] KIOSK_RESTORED: board={board_id}")
-            except Exception as e:
-                logger.warning(f"[FINALIZE] KIOSK_RESTORE_FAILED: {e}")
+        # ── Step 8: Restore kiosk window ──
+        try:
+            from backend.services.window_manager import kill_overlay_process
+            await kill_overlay_process()
+        except Exception as e:
+            logger.warning(f"[KIOSK] overlay kill failed: {e}")
 
-        # ── Step 6: Broadcasts ──
+        try:
+            from backend.services.window_manager import restore_kiosk_window
+            await asyncio.sleep(0.3)
+            await restore_kiosk_window()
+            logger.info(f"[KIOSK] restored board={board_id}")
+        except Exception as e:
+            logger.warning(f"[KIOSK] restore failed: {e}")
+
+        # ── Step 11: Broadcasts ──
         try:
             if _should_deduct_credit(trigger):
                 await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "checkout"})
@@ -271,28 +271,56 @@ async def finalize_match(board_id: str, trigger: str,
                     "is_last_game": credits_remaining <= 1,
                 })
         except Exception as e:
-            logger.warning(f"[FINALIZE] BROADCAST_ERROR: {e}")
+            logger.warning(f"[SESSION] broadcast error: {e}")
 
-        # ── Mark finalized (prevents further finish signals until next game start) ──
+        # ── Step 12: Mark finalized ──
         _finalized[board_id] = True
 
     finally:
-        # ── Step 7: ALWAYS release the in-progress guard ──
+        # ALWAYS release the in-progress guard
         _finalizing.discard(board_id)
 
     logger.info(
-        f"[FINALIZE] ===== DONE board={board_id} trigger={trigger} "
-        f"should_lock={should_lock} should_teardown={should_teardown} "
-        f"credits={credits_remaining} ====="
+        f"[SESSION] finalize end board={board_id} trigger={trigger} "
+        f"should_lock={should_lock} credits={credits_remaining}"
     )
 
     return {
         "should_lock": should_lock,
-        "should_teardown": should_teardown,
+        "should_teardown": True,
         "credits_remaining": credits_remaining,
         "board_status": board_status,
         "match_token": match_token,
     }
+
+
+async def finalize_match(board_id: str, trigger: str,
+                         winner: str = None, scores: dict = None) -> dict:
+    """
+    Timeout-protected wrapper around _finalize_match_inner.
+    If finalize hangs for >15s, force cleanup.
+    """
+    try:
+        return await asyncio.wait_for(
+            _finalize_match_inner(board_id, trigger, winner=winner, scores=scores),
+            timeout=FINALIZE_TIMEOUT
+        )
+    except asyncio.TimeoutError:
+        logger.error(f"[SESSION] FINALIZE_TIMEOUT board={board_id} trigger={trigger} (>{FINALIZE_TIMEOUT}s)")
+        # Force cleanup
+        _finalizing.discard(board_id)
+        _finalized[board_id] = True
+        try:
+            await observer_manager.close(board_id)
+        except Exception:
+            pass
+        return {
+            "should_lock": False,
+            "should_teardown": True,
+            "credits_remaining": -1,
+            "board_status": "unknown",
+            "error": "finalize_timeout",
+        }
 
 
 # =====================================================================
@@ -302,7 +330,6 @@ async def finalize_match(board_id: str, trigger: str,
 async def _on_game_started(board_id: str):
     """Observer detected match start. Set board to IN_GAME. Reset finalized flag."""
     logger.info(f"[Observer->Kiosk] === GAME STARTED === board={board_id}")
-    # Reset finalized flag for the new game
     _finalized.pop(board_id, None)
     try:
         async with AsyncSessionLocal() as db:
@@ -321,12 +348,11 @@ async def _on_game_ended(board_id: str, reason: str) -> dict:
     """
     Observer detected match end. Execute finalize DIRECTLY (synchronous).
     Returns finalize result so observer knows whether to exit or continue.
-    NO create_task — finalize runs inline, no race condition.
     """
     logger.info(f"[Observer->Kiosk] === GAME ENDED === board={board_id} trigger={reason}")
     result = await finalize_match(board_id, reason)
     logger.info(
-        f"[Observer->Kiosk] finalize result: should_teardown={result.get('should_teardown')}, "
+        f"[Observer->Kiosk] finalize result: should_lock={result.get('should_lock')}, "
         f"credits={result.get('credits_remaining')}"
     )
     return result
@@ -344,14 +370,10 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
         logger.warning(f"[Kiosk] No autodarts_url for {board_id}, skipping observer start")
         return
 
-    # Reset finalized flag for fresh start
     _finalized.pop(board_id, None)
 
     headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
-    logger.info("[Kiosk] === Observer Start Request ===")
-    logger.info(f"[Kiosk]   board_id: {board_id}")
-    logger.info(f"[Kiosk]   autodarts_url: {autodarts_url}")
-    logger.info(f"[Kiosk]   headless: {headless}")
+    logger.info(f"[Kiosk] === Observer Start === board={board_id} url={autodarts_url} headless={headless}")
 
     await observer_manager.open(
         board_id=board_id,
@@ -362,7 +384,7 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
     )
 
     status = observer_manager.get_status(board_id)
-    logger.info(f"[Kiosk] Observer post-start status: state={status['state']}, browser_open={status['browser_open']}")
+    logger.info(f"[Kiosk] Observer post-start: state={status['state']} browser_open={status['browser_open']}")
 
 
 async def stop_observer_for_board(board_id: str):

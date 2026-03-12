@@ -1444,10 +1444,18 @@ class ObserverManager:
         on_game_ended=None,
         headless: bool = False,
     ):
+        # ── Single observer per board: cleanup existing first ──
         existing = self._observers.get(board_id)
-        if existing and existing.is_open:
-            logger.info(f"[ObserverMgr] Board {board_id} already open")
-            return existing
+        if existing:
+            if existing.is_open:
+                logger.info(f"[ObserverMgr] Board {board_id} already open, returning existing")
+                return existing
+            # Dead/closed observer → cleanup before creating new
+            logger.info(f"[ObserverMgr] Cleaning up dead observer for {board_id}")
+            try:
+                await existing.close_session()
+            except Exception as e:
+                logger.debug(f"[ObserverMgr] cleanup error (ignored): {e}")
 
         obs = AutodartsObserver(board_id)
         self._observers[board_id] = obs

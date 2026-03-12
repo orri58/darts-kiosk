@@ -186,11 +186,16 @@ async def lifespan(app: FastAPI):
     from backend.services.update_service import update_service as _update_svc
     await _update_svc.start_background_checker()
 
+    # Start observer watchdog (crash recovery + zombie cleanup)
+    from backend.services.watchdog_service import start_watchdog, stop_watchdog
+    await start_watchdog()
+
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
     logger.info(f"Autodarts mode: {os.environ.get('AUTODARTS_MODE', 'observer')}")
     yield
-    # Shutdown: close all observers first
+    # Shutdown: stop watchdog, close all observers
+    await stop_watchdog()
     from backend.services.autodarts_observer import observer_manager
     await observer_manager.close_all()
     from backend.services.update_service import update_service as _update_svc
