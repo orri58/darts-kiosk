@@ -535,6 +535,41 @@ autostart.bat:
     - FIX: [DEBUG] Logs fuer SCRIPT_DIR, SOURCE_DIR, INSTALL_DIR, Shell-Wert
   - Geaenderte Dateien: kiosk/setup_kiosk.bat, kiosk/kiosk_shell.vbs
   - ZIP: darts-kiosk-v3.0.1-windows.zip (2.1 MB)
+- v3.0.2: Boot/Runtime Stability - Anti-Black-Screen Architecture (2026-03-12)
+  - ROOT CAUSE: Black screen because shell launched darts_launcher.bat hidden,
+    backend/chrome failed silently (Python not in PATH, no permissions, no fallback)
+  - NEW ARCHITECTURE:
+    - Scheduled Task "DartsKioskLauncher" = PRIMARY startup (at logon, elevated)
+    - kiosk_shell.vbs = SAFETY NET (readiness gate + fallback recovery)
+    - darts_launcher.bat = Backend/Chrome supervisor (triggered by scheduled task)
+  - TASK 1 (Startup Architecture):
+    - Installer creates schtasks "DartsKioskLauncher" at logon with highest privileges
+    - Shell VBS triggers task AND starts launcher as fallback if task fails
+    - No UAC prompt needed at kiosk boot
+  - TASK 2 (Readiness Gate):
+    - VBS waits up to 90s for backend health (PowerShell Invoke-WebRequest)
+    - Then waits up to 30s for chrome.exe to appear (WMI process check)
+    - If Chrome missing but backend OK: VBS starts Chrome directly as fallback
+    - NEVER leaves permanent black screen
+  - TASK 3 (Failsafe Recovery):
+    - If startup fails: opens maintenance.bat visibly
+    - If maintenance.bat missing: opens visible cmd with recovery instructions
+    - User always gets a visible escape path
+  - TASK 4 (Hardening Fix):
+    - Force-creates kiosk user profile via PowerShell (Start-Process with Credential)
+    - NTUSER.DAT now available immediately for policy application
+    - Grants file permissions via icacls (kiosk user -> full access to install dir)
+  - TASK 5 (Boot Logging):
+    - Unified kiosk_boot.log with [BOOT] prefixed entries from both VBS and launcher
+    - Every startup stage logged: shell start, task trigger, health wait, chrome wait, fallback
+  - TASK 6 (Scheduled Task):
+    - Created: schtasks /create /tn "DartsKioskLauncher" /sc onlogon /rl highest
+    - Uninstaller: schtasks /delete /tn "DartsKioskLauncher" /f
+  - TASK 7 (No Black Screen Before Chrome):
+    - VBS only enters keep-alive after Chrome confirmed running
+    - If Chrome not detected: explicit fallback path (never silent failure)
+  - Geaenderte Dateien: alle 4 kiosk/ Dateien komplett ueberarbeitet
+  - ZIP: darts-kiosk-v3.0.2-windows.zip (2.1 MB)
 
 ## Remaining Backlog
 ### P1

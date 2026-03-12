@@ -1,12 +1,14 @@
 @echo off
 REM ============================================================================
-REM  DARTS KIOSK — Launcher / Supervisor
-REM  Starts and monitors all kiosk services. Runs as Windows shell replacement.
-REM  This script must NEVER exit (otherwise Windows logs out the kiosk user).
+REM  DARTS KIOSK - Launcher / Supervisor v3.0.2
+REM  Starts and monitors all kiosk services.
+REM  Primary startup: via Scheduled Task "DartsKioskLauncher" (at logon)
+REM  Fallback: via kiosk_shell.vbs (direct start)
+REM  This script must NEVER exit while kiosk is running.
 REM ============================================================================
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
-title Darts Kiosk — Launcher
+title Darts Kiosk Launcher
 
 REM === Load Configuration ===
 set "INSTALL_DIR=%~dp0"
@@ -23,10 +25,11 @@ if not defined BACKEND_PORT set "BACKEND_PORT=8001"
 set "LOG_DIR=!INSTALL_DIR!\logs"
 set "DATA_DIR=!INSTALL_DIR!\data"
 set "VENV_DIR=!INSTALL_DIR!\.venv"
-set "LAUNCHER_LOG=!LOG_DIR!\launcher.log"
+set "BOOT_LOG=!LOG_DIR!\kiosk_boot.log"
 set "BACKEND_LOG=!LOG_DIR!\backend.log"
-set "HEALTH_URL=http://localhost:!BACKEND_PORT!/api/health"
-set "KIOSK_URL=http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!"
+set "LAUNCHER_LOG=!LOG_DIR!\launcher.log"
+set "HEALTH_URL=http://127.0.0.1:!BACKEND_PORT!/api/health"
+set "KIOSK_URL=http://127.0.0.1:!BACKEND_PORT!/kiosk/!BOARD_ID!"
 set "CHECK_INTERVAL=10"
 set "RESTART_DELAY=5"
 set "MAX_BACKEND_RESTARTS=10"
@@ -34,7 +37,7 @@ set "BACKEND_RESTART_COUNT=0"
 set "MAX_CHROME_RESTARTS=10"
 set "CHROME_RESTART_COUNT=0"
 
-REM === Detect Chrome ===
+REM === Detect Chrome (if not in config) ===
 if not defined CHROME_PATH (
     for %%G in (
         "%ProgramFiles%\Google\Chrome\Application\chrome.exe"
@@ -52,7 +55,18 @@ if not exist "!LOG_DIR!" mkdir "!LOG_DIR!"
 if not exist "!DATA_DIR!\db" mkdir "!DATA_DIR!\db"
 if not exist "!DATA_DIR!\kiosk_ui_profile" mkdir "!DATA_DIR!\kiosk_ui_profile"
 
-REM === Logging helper ===
+REM === Set working directory ===
+cd /d "!INSTALL_DIR!"
+
+REM === Boot logging ===
+call :bootlog "========================================"
+call :bootlog "[BOOT] launcher task started"
+call :bootlog "[BOOT]   Install:  !INSTALL_DIR!"
+call :bootlog "[BOOT]   Board:    !BOARD_ID!"
+call :bootlog "[BOOT]   Port:     !BACKEND_PORT!"
+call :bootlog "[BOOT]   Chrome:   !CHROME_PATH!"
+call :bootlog "[BOOT]   Venv:     !VENV_DIR!"
+
 call :log "========================================"
 call :log "LAUNCHER START"
 call :log "  Install:  !INSTALL_DIR!"
@@ -61,15 +75,20 @@ call :log "  Port:     !BACKEND_PORT!"
 call :log "  Chrome:   !CHROME_PATH!"
 call :log "========================================"
 
-REM === Set working directory ===
-cd /d "!INSTALL_DIR!"
-
 REM === Activate Virtual Environment ===
 if exist "!VENV_DIR!\Scripts\activate.bat" (
     call "!VENV_DIR!\Scripts\activate.bat"
     call :log "Python venv aktiviert"
+    call :bootlog "[BOOT] python venv activated"
 ) else (
-    call :log "WARN: keine .venv gefunden — verwende System-Python"
+    call :log "WARN: keine .venv gefunden"
+    call :bootlog "[BOOT] WARNING: no .venv found - using system python"
+    REM Try adding Python to PATH from config
+    if defined PYTHON_PATH (
+        for %%P in ("!PYTHON_PATH!") do set "PYTHON_DIR=%%~dpP"
+        set "PATH=!PYTHON_DIR!;!PATH!"
+        call :bootlog "[BOOT] added PYTHON_PATH to PATH: !PYTHON_DIR!"
+    )
 )
 
 REM ============================================================================
@@ -77,10 +96,12 @@ REM  STARTUP SEQUENCE
 REM ============================================================================
 
 REM --- 1. Start Backend ---
+call :bootlog "[BOOT] starting backend..."
 call :log "Backend starten..."
 call :start_backend
 
 REM --- 2. Wait for Backend Health ---
+call :bootlog "[BOOT] waiting for backend health !HEALTH_URL!"
 call :log "Warte auf Backend-Health..."
 set "BACKEND_READY=0"
 for /L %%i in (1,1,30) do (
@@ -89,6 +110,7 @@ for /L %%i in (1,1,30) do (
         if !ERRORLEVEL!==0 (
             set "BACKEND_READY=1"
             call :log "Backend bereit (Versuch %%i)"
+            call :bootlog "[BOOT] backend ready (attempt %%i)"
         ) else (
             timeout /t 2 /nobreak >nul
         )
@@ -96,20 +118,25 @@ for /L %%i in (1,1,30) do (
 )
 
 if !BACKEND_READY!==0 (
-    call :log "WARNUNG: Backend nicht erreichbar nach 60s — starte Chrome trotzdem"
+    call :log "WARNUNG: Backend nicht erreichbar nach 60s"
+    call :bootlog "[BOOT] WARNING: backend NOT ready after 60s - starting chrome anyway"
+) else (
+    call :bootlog "[BOOT] backend healthy"
 )
 
 REM --- 3. Start Chrome Kiosk ---
+call :bootlog "[BOOT] launching chrome kiosk ui"
 call :log "Chrome Kiosk starten..."
 call :start_chrome
 
 REM --- 4. Start Credits Overlay (optional) ---
 if exist "!INSTALL_DIR!\credits_overlay.py" (
-    start "Darts Overlay" /MIN pythonw "!INSTALL_DIR!\credits_overlay.py" --board-id "!BOARD_ID!" --api "http://localhost:!BACKEND_PORT!"
+    start "Darts Overlay" /MIN python "!INSTALL_DIR!\credits_overlay.py" --board-id "!BOARD_ID!" --api "http://127.0.0.1:!BACKEND_PORT!"
     call :log "Credits-Overlay gestartet"
 )
 
-call :log "Alle Dienste gestartet — Monitoring aktiv"
+call :bootlog "[BOOT] all services started - entering monitor loop"
+call :log "Alle Dienste gestartet - Monitoring aktiv"
 
 REM ============================================================================
 REM  MONITOR LOOP (runs forever)
@@ -122,9 +149,10 @@ REM ============================================================================
     if !ERRORLEVEL! NEQ 0 (
         set /a "BACKEND_RESTART_COUNT+=1"
         call :log "BACKEND_CRASH erkannt (Restart !BACKEND_RESTART_COUNT!/!MAX_BACKEND_RESTARTS!)"
+        call :bootlog "[BOOT] BACKEND_CRASH detected (restart !BACKEND_RESTART_COUNT!)"
 
         if !BACKEND_RESTART_COUNT! GEQ !MAX_BACKEND_RESTARTS! (
-            call :log "KRITISCH: Max Backend-Restarts erreicht — warte 60s dann Reset"
+            call :log "KRITISCH: Max Backend-Restarts erreicht - warte 60s dann Reset"
             timeout /t 60 /nobreak >nul
             set "BACKEND_RESTART_COUNT=0"
         )
@@ -133,7 +161,6 @@ REM ============================================================================
         call :start_backend
         timeout /t 5 /nobreak >nul
     ) else (
-        REM Backend is healthy — reset restart counter
         set "BACKEND_RESTART_COUNT=0"
     )
 
@@ -142,9 +169,10 @@ REM ============================================================================
     if !ERRORLEVEL! NEQ 0 (
         set /a "CHROME_RESTART_COUNT+=1"
         call :log "CHROME_CRASH erkannt (Restart !CHROME_RESTART_COUNT!/!MAX_CHROME_RESTARTS!)"
+        call :bootlog "[BOOT] CHROME_CRASH detected (restart !CHROME_RESTART_COUNT!)"
 
         if !CHROME_RESTART_COUNT! GEQ !MAX_CHROME_RESTARTS! (
-            call :log "KRITISCH: Max Chrome-Restarts erreicht — warte 60s dann Reset"
+            call :log "KRITISCH: Max Chrome-Restarts erreicht - warte 60s dann Reset"
             timeout /t 60 /nobreak >nul
             set "CHROME_RESTART_COUNT=0"
         )
@@ -175,8 +203,7 @@ REM ============================================================================
     goto :eof
 
 :start_chrome
-    REM Kill existing kiosk chrome (but NOT the Autodarts observer chrome)
-    REM We identify kiosk chrome by window title containing the kiosk URL port
+    REM Kill existing kiosk chrome
     taskkill /F /FI "WINDOWTITLE eq DartsKiosk*" >nul 2>&1
     timeout /t 1 /nobreak >nul
 
@@ -195,10 +222,14 @@ REM ============================================================================
             "!KIOSK_URL!"
         call :log "Chrome Kiosk gestartet: !KIOSK_URL!"
     ) else (
-        call :log "FEHLER: Chrome nicht gefunden — kann Kiosk-UI nicht starten"
+        call :log "FEHLER: Chrome nicht gefunden"
     )
     goto :eof
 
 :log
     echo [%date% %time%] %~1 >> "!LAUNCHER_LOG!" 2>nul
+    goto :eof
+
+:bootlog
+    echo [%date% %time%] %~1 >> "!BOOT_LOG!" 2>nul
     goto :eof

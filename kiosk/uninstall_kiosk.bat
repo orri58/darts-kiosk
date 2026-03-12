@@ -1,16 +1,16 @@
 @echo off
 REM ============================================================================
-REM  DARTS KIOSK — Uninstaller / Rollback
+REM  DARTS KIOSK - Uninstaller / Rollback v3.0.2
 REM  Reverses all changes made by setup_kiosk.bat.
 REM  MUST be run as Administrator.
 REM ============================================================================
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
-title Darts Kiosk — Uninstaller
+title Darts Kiosk - Uninstaller
 
 echo.
 echo ================================================================
-echo   DARTS KIOSK — UNINSTALLER
+echo   DARTS KIOSK - UNINSTALLER
 echo ================================================================
 echo.
 
@@ -43,19 +43,26 @@ if /i not "!CONFIRM!"=="J" (
 )
 
 echo.
-echo [1/6] Dienste stoppen...
+echo [1/7] Dienste stoppen...
 taskkill /F /FI "WINDOWTITLE eq Darts Backend" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Darts Overlay" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq DartsKiosk*" >nul 2>&1
-REM Kill the shell VBS process
 taskkill /F /FI "IMAGENAME eq wscript.exe" >nul 2>&1
 echo   [OK] Dienste gestoppt
 
 echo.
-echo [2/6] Shell wiederherstellen...
+echo [2/7] Scheduled Task entfernen...
+schtasks /delete /tn "DartsKioskLauncher" /f >nul 2>&1
+if !ERRORLEVEL!==0 (
+    echo   [OK] Scheduled Task 'DartsKioskLauncher' entfernt
+) else (
+    echo   [OK] Kein Scheduled Task vorhanden
+)
+
+echo.
+echo [3/7] Shell wiederherstellen...
 set "WINLOGON=HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
 
-REM Restore original shell
 set "BACKUP_SHELL="
 for /f "tokens=2*" %%a in ('reg query "!WINLOGON!" /v Shell_Backup 2^>nul ^| findstr /i "Shell_Backup"') do (
     set "BACKUP_SHELL=%%b"
@@ -70,14 +77,13 @@ if defined BACKUP_SHELL (
 reg delete "!WINLOGON!" /v Shell_Backup /f >nul 2>&1
 
 echo.
-echo [3/6] Auto-Login deaktivieren...
+echo [4/7] Auto-Login deaktivieren...
 reg add "!WINLOGON!" /v AutoAdminLogon /t REG_SZ /d "0" /f >nul
 reg delete "!WINLOGON!" /v DefaultPassword /f >nul 2>&1
 echo   [OK] Auto-Login deaktiviert
 
 echo.
-echo [4/6] Kiosk-Richtlinien entfernen...
-REM Load kiosk user hive
+echo [5/7] Kiosk-Richtlinien entfernen...
 set "KIOSK_SID="
 for /f "tokens=2 delims==" %%s in ('wmic useraccount where "name='!KIOSK_USER!'" get sid /value 2^>nul ^| findstr /i "SID"') do (
     set "KIOSK_SID=%%s"
@@ -109,22 +115,22 @@ if defined KIOSK_SID (
         )
     )
 ) else (
-    echo   [WARN] Kiosk-User SID nicht gefunden — Richtlinien manuell pruefen
+    echo   [WARN] Kiosk-User SID nicht gefunden
 )
 
-REM Remove global notification disable
+REM Remove global policies
 reg delete "HKLM\SOFTWARE\Policies\Microsoft\Windows\Explorer" /v DisableNotificationCenter /f >nul 2>&1
 reg delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings" /v NOC_GLOBAL_SETTING_TOASTS_ENABLED /f >nul 2>&1
 reg delete "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoRebootWithLoggedOnUsers /f >nul 2>&1
 echo   [OK] Globale Richtlinien entfernt
 
 echo.
-echo [5/6] Firewall-Regel entfernen...
+echo [6/7] Firewall-Regel entfernen...
 netsh advfirewall firewall delete rule name="DartsKiosk Backend" >nul 2>&1
 echo   [OK] Firewall-Regel entfernt
 
 echo.
-echo [6/6] Kiosk-Benutzer...
+echo [7/7] Kiosk-Benutzer...
 set /p "DEL_USER=Kiosk-Benutzer '!KIOSK_USER!' loeschen? (J/N) [N]: "
 if /i "!DEL_USER!"=="J" (
     net user "!KIOSK_USER!" /delete >nul 2>&1
@@ -138,22 +144,21 @@ echo ================================================================
 echo   DEINSTALLATION ABGESCHLOSSEN
 echo ================================================================
 echo.
-echo   Die Shell wurde auf explorer.exe zurueckgesetzt.
-echo   Auto-Login wurde deaktiviert.
-echo   Kiosk-Richtlinien wurden entfernt.
+echo   Shell:          explorer.exe wiederhergestellt
+echo   Auto-Login:     deaktiviert
+echo   Scheduled Task: entfernt
+echo   Richtlinien:    entfernt
+echo   Firewall:       Regel entfernt
 echo.
-echo   HINWEIS: Die Anwendungsdateien in !INSTALL_DIR!
-echo            wurden NICHT geloescht (Daten bleiben erhalten).
-echo            Zum vollstaendigen Entfernen: !INSTALL_DIR! manuell loeschen.
+echo   HINWEIS: Dateien in !INSTALL_DIR! bleiben erhalten.
 echo.
 
 set /p "REBOOT=System jetzt neu starten? (J/N) [N]: "
 if /i "!REBOOT!"=="J" (
-    shutdown /r /t 10 /c "Darts Kiosk Deinstallation — Neustart"
+    shutdown /r /t 10 /c "Darts Kiosk Deinstallation - Neustart"
 )
 
 echo.
-REM Start explorer immediately for current session
 start explorer.exe
 echo   [OK] Explorer gestartet fuer aktuelle Sitzung
 echo.
