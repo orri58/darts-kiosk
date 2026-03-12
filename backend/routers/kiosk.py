@@ -79,6 +79,7 @@ async def return_to_kiosk_ui(board_id: str, should_lock: bool):
     """
     Bring the local Kiosk UI back to the foreground after a game ends.
     Called ALWAYS — whether locked or unlocked.
+    Must be the LAST window operation so DartsKiosk ends up on top.
     """
     logger.info(f"[KIOSK_UI] return_to_kiosk_ui start board={board_id} should_lock={should_lock}")
 
@@ -89,14 +90,23 @@ async def return_to_kiosk_ui(board_id: str, should_lock: bool):
     except Exception as e:
         logger.warning(f"[KIOSK_UI] overlay kill failed: {e}")
 
-    # Restore/show the kiosk window
+    # First pass: restore/show the kiosk window
     try:
         from backend.services.window_manager import restore_kiosk_window
         await asyncio.sleep(0.3)
         await restore_kiosk_window()
-        logger.info("[KIOSK_UI] local kiosk window shown")
+        logger.info("[KIOSK_UI] kiosk window restored (first pass)")
     except Exception as e:
         logger.warning(f"[KIOSK_UI] kiosk window restore failed: {e}")
+
+    # Second pass after 400ms: hard foreground enforcement
+    try:
+        from backend.services.window_manager import force_kiosk_foreground
+        await asyncio.sleep(0.4)
+        await force_kiosk_foreground()
+        logger.info("[KIOSK_UI] kiosk foreground enforced (second pass)")
+    except Exception as e:
+        logger.warning(f"[KIOSK_UI] force_kiosk_foreground failed: {e}")
 
     # Broadcast state refresh to frontend
     try:
@@ -300,6 +310,23 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                 logger.error(f"[AUTODARTS] observer close failed: {e}")
         else:
             logger.info(f"[AUTODARTS] OBSERVER_KEPT_ALIVE board={board_id} credits={credits_remaining}")
+            # ── Step 4b: Navigate Autodarts to home + hide chrome window ──
+            # This MUST happen BEFORE return_to_kiosk_ui (in finally) so kiosk ends up on top
+            obs = observer_manager.get(board_id)
+            if obs:
+                try:
+                    match_id = obs._ws_state.last_match_id if hasattr(obs, '_ws_state') else None
+                    obs._last_finalized_match_id = match_id
+                    logger.info(f"[SESSION] MATCH_FINALIZED_ONCE match_id={match_id}")
+                    await obs._navigate_to_home()
+                except Exception as e:
+                    logger.warning(f"[AUTODARTS] navigate_to_home failed: {e}")
+            # Minimize the observer/chrome window so it doesn't cover the kiosk
+            try:
+                from backend.services.window_manager import minimize_observer_window
+                await minimize_observer_window()
+            except Exception as e:
+                logger.warning(f"[AUTODARTS] minimize_observer failed: {e}")
 
         # ── Step 7: Sound broadcast ──
         try:

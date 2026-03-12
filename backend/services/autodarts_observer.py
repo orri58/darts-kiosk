@@ -1122,13 +1122,7 @@ class AutodartsObserver:
                         logger.info(f"[Observer:{self.board_id}] _stopping=True after abort finalize")
                         break
 
-                    # Credits remain — save match ID, navigate home, full reset
-                    old_match_id = self._ws_state.last_match_id
-                    self._last_finalized_match_id = old_match_id
-                    logger.info(f"[Observer:{self.board_id}] MATCH_FINALIZED_ONCE match_id={old_match_id}")
-
-                    await self._navigate_to_home()
-
+                    # Credits remain — state reset only (navigation done by finalize_match)
                     self._finalized = False
                     self._credit_consumed = False
                     self._abort_detected = False
@@ -1138,7 +1132,7 @@ class AutodartsObserver:
                     self._stable_state = ObserverState.IDLE
                     self._set_state(ObserverState.IDLE)
                     logger.info(f"[Observer:{self.board_id}] OBSERVER_RESET_FOR_NEXT_GAME done")
-                    logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME match_id={old_match_id}")
+                    logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME (abort path)")
                     continue
 
                 interval = DEBOUNCE_POLL_INTERVAL if self._exit_polls > 0 else OBSERVER_POLL_INTERVAL
@@ -1272,19 +1266,11 @@ class AutodartsObserver:
                     elif self._finalized:
                         logger.info(f"[Observer:{self.board_id}] FINALIZE_SKIPPED (already finalized)")
 
-                    # If finalize_match closed the observer (_stopping set by close_session),
-                    # break immediately — no more polls needed
                     if self._stopping:
                         logger.info(f"[Observer:{self.board_id}] _stopping=True after finalize, exiting loop")
                         break
 
-                    # Credits remain — save match ID, navigate home, full reset
-                    old_match_id = self._ws_state.last_match_id
-                    self._last_finalized_match_id = old_match_id
-                    logger.info(f"[Observer:{self.board_id}] MATCH_FINALIZED_ONCE match_id={old_match_id}")
-
-                    await self._navigate_to_home()
-
+                    # Credits remain — state reset only (navigation done by finalize_match)
                     self._finalized = False
                     self._credit_consumed = False
                     self._abort_detected = False
@@ -1294,7 +1280,7 @@ class AutodartsObserver:
                     self._stable_state = ObserverState.IDLE
                     self._set_state(ObserverState.IDLE)
                     logger.info(f"[Observer:{self.board_id}] OBSERVER_RESET_FOR_NEXT_GAME done")
-                    logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME match_id={old_match_id}")
+                    logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME (debounce path)")
 
                 # ═══════════════════════════════════════════
                 # CASE B: NOT in_game

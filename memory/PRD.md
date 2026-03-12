@@ -354,6 +354,24 @@ autostart.bat:
     - autodarts_observer.py: _navigate_to_home() [NEU], _update_ws_state(), _observe_loop()
   - Getestet: 3-Spiel-Zyklus + Doppelfinalisierung-Prävention
   - ZIP: darts-kiosk-v2.7.0-windows.zip (2.1 MB)
+- v2.7.1: Window-Focus-Fix — Kiosk immer im Vordergrund nach Matchende (2026-03-12)
+  - BUG: Nach Finish mit Credits blieb schwarzes Chrome-/Observer-Fenster im Vordergrund
+  - URSACHE: Observer-Loop navigierte NACH return_to_kiosk_ui → Chrome überdeckte Kiosk
+  - FIX 1: Reihenfolge korrigiert in finalize_match:
+    1. AUTODARTS_RETURN_TO_HOME (Chrome navigiert zu Lobby)
+    2. AUTODARTS_WINDOW_HIDE (Chrome minimieren via Win32 SW_MINIMIZE)
+    3. return_to_kiosk_ui (Kiosk restore + force foreground) ← LETZTER Schritt
+  - FIX 2: _navigate_to_home() aus Observer-Loop entfernt → nur noch von finalize_match gesteuert
+  - FIX 3: Neuer force_kiosk_foreground() mit BringWindowToTop + Alt-Trick (zweiter Pass nach 400ms)
+  - FIX 4: minimize_observer_window() minimiert alle Chrome-Fenster die NICHT DartsKiosk sind
+  - Geänderte Dateien:
+    - window_manager.py: minimize_observer_window() [NEU], force_kiosk_foreground() [NEU],
+                         _win32_minimize_non_kiosk_chrome() [NEU], _win32_force_foreground() [NEU]
+    - kiosk.py: _finalize_match_inner() (navigate+minimize vor finally), return_to_kiosk_ui() (double-focus)
+    - autodarts_observer.py: _observe_loop() (_navigate_to_home entfernt aus beiden Pfaden)
+  - Logs: AUTODARTS_WINDOW_HIDE start/success, KIOSK_FOCUS_RESTORE start/success,
+          FINAL_VISIBLE_WINDOW, FINAL_FOREGROUND_WINDOW
+  - ZIP: darts-kiosk-v2.7.1-windows.zip (2.1 MB)
 
 ## Remaining Backlog
   - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)
