@@ -64,20 +64,26 @@ Previous approach (BROKEN, replaced):
   was already established before the injection script ran.
 ```
 
-## Finalization Chain (v1.7.2)
+## Finalization Chain (v2.6.0)
 ```
-_on_game_ended(board_id, reason):
-  1. Check credits/time -> decide should_lock
-  2. If should_lock: update session (FINISHED), set board (LOCKED)
-  3. Broadcast board_status=locked via WebSocket
-  4. Schedule _safe_close_observer:
-     step_1: Close observer (Autodarts browser)
-     step_2: Kill credits overlay process (window_manager.kill_overlay_process)
-     step_3: Verify board locked in DB
-  5. Observer close_session:
-     - Cancel observe loop
-     - Close Playwright context (Chrome)
-     - Restore kiosk window (window_manager.restore_kiosk_window)
+finalize_match(board_id, trigger):
+  1. [GUARD]     Idempotency check (_finalizing, _finalized)
+  2. [CREDIT]    Deduct credit (finished/aborted/manual=yes, crashed=no)
+  3. [LOCK]      should_lock = credits_remaining <= 0
+  4. [TEARDOWN]  should_teardown = should_lock
+  5. [DELAY]     ONLY for trigger="finished" (4s player sees result)
+  6. [OBSERVER]  Close browser ONLY if should_teardown
+                 Otherwise: OBSERVER_KEPT_ALIVE (next game ready)
+  7. [BROADCAST] Sound + credit_update events
+  8. [FINALIZED] Mark as finalized
+  FINALLY:
+  9. [KIOSK_UI]  return_to_kiosk_ui() GUARANTEED (try...finally)
+                 Logs: "finally: restoring kiosk UI" → "finally: kiosk UI restored OK"
+
+Observer Abort Fast-Path (autodarts_observer._observe_loop):
+  - _abort_detected check at TOP of while loop (BEFORE asyncio.sleep)
+  - Zero delay: immediate finalize on delete event
+  - Log: "ABORT_FAST_PATH — immediate finalize, zero delay"
 ```
 
 ## Update System (v1.7.2)
@@ -305,6 +311,19 @@ autostart.bat:
   - FIX 5: Debounce-Skip wenn _finalized oder _abort_detected (keine Doppel-Finalisierung)
   - Timing verifiziert: Abort=471ms, Finished=4440ms
   - Alle Tests passing: 15/15 (iteration_46)
+- v2.6.0: Conditional Teardown + Abort Fast-Path + Kiosk-UI Finally (2026-03-12)
+  - BUG 1: Observer/Browser wurde nach JEDEM Spiel geschlossen, auch wenn Credits übrig
+  - BUG 2: Abort-Erkennung ging immer noch durch sleep/poll (nicht sofort)
+  - BUG 3: return_to_kiosk_ui() war nicht in finally — bei Teilfehler keine UI-Wiederherstellung
+  - FIX 1: should_teardown = should_lock (Observer NUR schließen wenn Board gesperrt wird)
+  - FIX 2: OBSERVER_KEPT_ALIVE wenn Credits > 0 (kein Browser-Neustart zwischen Spielen)
+  - FIX 3: Abort-Fast-Path ganz am Anfang der observe_loop, VOR asyncio.sleep()
+  - FIX 4: return_to_kiosk_ui() in try...finally Block (GARANTIERT, auch bei Teilfehler)
+  - FIX 5: Detaillierte Logs: OBSERVER_KEPT_ALIVE, finally: restoring/restored, ABORT_FAST_PATH
+  - Geänderte Dateien: backend/routers/kiosk.py, backend/services/autodarts_observer.py
+  - Entscheidungslogik: should_teardown=should_lock (nur bei credits=0 oder Crash)
+  - Getestet: 3-Spiel-Zyklus (3→2→1→0) mit korrektem Credit-Abzug und Teardown
+  - ZIP neu gebaut: darts-kiosk-v2.6.0-windows.zip (2.1 MB)
 
 ## Remaining Backlog
   - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)

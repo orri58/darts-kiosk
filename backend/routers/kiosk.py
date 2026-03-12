@@ -1,14 +1,15 @@
 """
-Kiosk Action Routes — Observer MVP (v2.5.0)
+Kiosk Action Routes — Observer MVP (v2.6.0)
 
 Central finalization via finalize_match(board_id, trigger):
   - Single entry point for ALL match-end scenarios
-  - ALWAYS tears down observer after every game
+  - Observer teardown ONLY when should_lock (credits exhausted)
+  - Observer KEPT ALIVE when credits remain (next game ready)
   - Credit deduction for finished, aborted, manual (not for crashed/unknown)
   - Lock ONLY when credits <= 0 after deduction
   - Delay ONLY for trigger="finished" (player sees result)
   - Abort (delete) = immediate finalize, NO delay
-  - return_to_kiosk_ui() ALWAYS called after finalize (locked or unlocked)
+  - return_to_kiosk_ui() GUARANTEED via finally block (even on partial failure)
   - Timeout protection (15s) prevents hanging finalize
 """
 import asyncio
@@ -123,9 +124,9 @@ async def _finalize_match_inner(board_id: str, trigger: str,
       1.  [GUARD]     Idempotency check
       2.  [CREDIT]    Deduct credit exactly once
       3.  [DELAY]     ONLY for trigger="finished" (player sees result)
-      4.  [OBSERVER]  Close Autodarts browser (page → context → playwright)
+      4.  [OBSERVER]  Close browser ONLY if should_teardown (credits=0)
       5.  [LOCK]      Lock board if remaining_credits <= 0
-      6.  [KIOSK_UI]  ALWAYS return to kiosk mask
+      6.  [KIOSK_UI]  GUARANTEED via finally (even on partial failure)
       7.  [BROADCAST] Notify clients
       8.  [CLEANUP]   Set finalized status
     """
@@ -144,6 +145,7 @@ async def _finalize_match_inner(board_id: str, trigger: str,
     logger.info(f"[SESSION] finalize start board={board_id} trigger={trigger}")
 
     should_lock = False
+    should_teardown = False
     credits_remaining = 0
     board_status = "unlocked"
     match_token = None
@@ -162,12 +164,15 @@ async def _finalize_match_inner(board_id: str, trigger: str,
 
                     if board.status == BoardStatus.LOCKED.value:
                         logger.info(f"[SESSION] board already locked board={board_id}")
+                        should_lock = True
+                        should_teardown = True
                         return {"should_lock": True, "should_teardown": True,
                                 "credits_remaining": 0, "board_status": "locked"}
 
                     session = await get_active_session_for_board(db, board.id)
                     if not session:
                         logger.info(f"[SESSION] no active session board={board_id}")
+                        should_teardown = True
                         return {"should_lock": False, "should_teardown": True,
                                 "credits_remaining": 0, "board_status": board.status}
 
@@ -193,6 +198,10 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                             should_lock = True
 
                     logger.info(f"[SESSION] should_lock={should_lock}")
+
+                    # ── Teardown decision: ONLY close observer when locking ──
+                    should_teardown = should_lock
+                    logger.info(f"[SESSION] should_teardown={should_teardown} (=should_lock)")
 
                     # ── Match result + player stats ──
                     if _should_deduct_credit(trigger):
@@ -265,16 +274,16 @@ async def _finalize_match_inner(board_id: str, trigger: str,
             logger.info(f"[SESSION] finished-delay={FINALIZE_DELAY_FINISHED}s")
             await asyncio.sleep(FINALIZE_DELAY_FINISHED)
 
-        # ── Step 4: Close Autodarts observer ──
-        try:
-            logger.info(f"[AUTODARTS] closing observer for {board_id}...")
-            await observer_manager.close(board_id)
-            logger.info("[AUTODARTS] observer closed OK")
-        except Exception as e:
-            logger.error(f"[AUTODARTS] observer close failed: {e}")
-
-        # ── Step 5-6: Return to kiosk UI (ALWAYS) ──
-        await return_to_kiosk_ui(board_id, should_lock)
+        # ── Step 4: Close Autodarts observer (ONLY when locking) ──
+        if should_teardown:
+            try:
+                logger.info(f"[AUTODARTS] closing observer board={board_id} (should_teardown=True, locking)")
+                await observer_manager.close(board_id)
+                logger.info("[AUTODARTS] observer closed OK")
+            except Exception as e:
+                logger.error(f"[AUTODARTS] observer close failed: {e}")
+        else:
+            logger.info(f"[AUTODARTS] OBSERVER_KEPT_ALIVE board={board_id} credits={credits_remaining}")
 
         # ── Step 7: Sound broadcast ──
         try:
@@ -293,6 +302,13 @@ async def _finalize_match_inner(board_id: str, trigger: str,
         _finalized[board_id] = True
 
     finally:
+        # ── GUARANTEED: Return to kiosk UI (even if finalize partially failed) ──
+        try:
+            logger.info(f"[KIOSK_UI] finally: restoring kiosk UI board={board_id} should_lock={should_lock}")
+            await return_to_kiosk_ui(board_id, should_lock)
+            logger.info(f"[KIOSK_UI] finally: kiosk UI restored OK board={board_id}")
+        except Exception as e:
+            logger.error(f"[KIOSK_UI] CRITICAL: return_to_kiosk_ui failed in finally: {e}", exc_info=True)
         _finalizing.discard(board_id)
 
     logger.info(
@@ -302,7 +318,7 @@ async def _finalize_match_inner(board_id: str, trigger: str,
 
     return {
         "should_lock": should_lock,
-        "should_teardown": True,
+        "should_teardown": should_teardown,
         "credits_remaining": credits_remaining,
         "board_status": board_status,
         "match_token": match_token,

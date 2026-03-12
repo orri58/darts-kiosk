@@ -1036,25 +1036,10 @@ class AutodartsObserver:
 
         while not self._stopping:
             try:
-                interval = DEBOUNCE_POLL_INTERVAL if self._exit_polls > 0 else OBSERVER_POLL_INTERVAL
-                await asyncio.sleep(interval)
-
-                # ── Null-safe page check ──
-                if self._stopping:
-                    stop_reason = "stopping_flag"
-                    break
-                if not self._page_alive():
-                    stop_reason = "page_not_alive"
-                    logger.warning(
-                        f"[Observer:{self.board_id}] OBSERVE_LOOP_STOP_REASON: {stop_reason} "
-                        f"(page={self._page is not None}, context={self._context is not None})"
-                    )
-                    break
-
-                # ── IMMEDIATE ABORT: delete event detected, bypass all debounce ──
+                # ── FAST PATH: Abort → immediate finalize, NO sleep ──
                 if self._abort_detected and not self._finalized:
-                    logger.info(f"[Observer:{self.board_id}] ABORT DETECTED IMMEDIATE — "
-                                f"bypassing debounce, calling finalize_match(aborted)")
+                    logger.info(f"[Observer:{self.board_id}] ABORT_FAST_PATH — "
+                                f"immediate finalize, zero delay (before sleep/poll)")
                     self._finalized = True
                     self._abort_detected = False
                     self._stable_state = ObserverState.IDLE
@@ -1066,6 +1051,7 @@ class AutodartsObserver:
                         try:
                             result = await self._on_game_ended(self.board_id, "aborted")
                             logger.info(f"[Observer:{self.board_id}] abort finalize returned: "
+                                        f"lock={result.get('should_lock') if result else '?'} "
                                         f"teardown={result.get('should_teardown') if result else '?'}")
                         except Exception as e:
                             logger.error(f"[Observer:{self.board_id}] on_game_ended(aborted) ERROR: {e}",
@@ -1080,6 +1066,21 @@ class AutodartsObserver:
                     self._ws_state.reset()
                     logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME after abort")
                     continue
+
+                interval = DEBOUNCE_POLL_INTERVAL if self._exit_polls > 0 else OBSERVER_POLL_INTERVAL
+                await asyncio.sleep(interval)
+
+                # ── Null-safe page check ──
+                if self._stopping:
+                    stop_reason = "stopping_flag"
+                    break
+                if not self._page_alive():
+                    stop_reason = "page_not_alive"
+                    logger.warning(
+                        f"[Observer:{self.board_id}] OBSERVE_LOOP_STOP_REASON: {stop_reason} "
+                        f"(page={self._page is not None}, context={self._context is not None})"
+                    )
+                    break
 
                 # ── Browser health check ──
                 try:
