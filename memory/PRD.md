@@ -395,6 +395,34 @@ autostart.bat:
       ObserverManager mit per-board locks
     - watchdog_service.py: komplett neu geschrieben (lifecycle-aware, cooldown, backoff)
   - ZIP: darts-kiosk-v2.8.0-windows.zip (2.1 MB)
+- v2.9.0: Desired State + Close Reason + Auth Detection (2026-03-12)
+  - PROBLEM 1: Watchdog startete Recovery nach manuellem Lock/Stop (desired_state fehlte)
+  - PROBLEM 2: Chrome landete auf login.autodarts.io → health failure → aggressive Recovery-Schleife
+  - FIX 1: desired_state pro Board ("running" | "stopped") in ObserverManager
+    - unlock → desired_state=running
+    - lock → desired_state=stopped
+    - session_end (credits=0) → desired_state=stopped
+    - credits>0 → desired_state bleibt running
+  - FIX 2: close_reason pro Board (manual_lock, session_end, watchdog_recovery, admin_stop, shutdown)
+    - Watchdog suppressed Recovery bei intentional close reasons
+  - FIX 3: AUTH_REQUIRED LifecycleState
+    - login.autodarts.io / /login / /auth Erkennung nach Navigation + im Health-Check
+    - Kein observe loop start, kein kiosk hide bei auth page
+    - Watchdog suppressed Recovery bei auth_required
+    - Log: AUTH_REQUIRED / AUTH_REDIRECT_DETECTED url=...
+  - FIX 4: Watchdog Entscheidungslogik (5 Checks):
+    1. desired_state != running → skip
+    2. transitional (starting/stopping) → skip
+    3. auth_required → skip
+    4. intentional close_reason → skip
+    5. grace period / cooldown → skip
+  - Geänderte Dateien:
+    - autodarts_observer.py: LifecycleState.AUTH_REQUIRED, close_session(reason=...), 
+      ObserverManager.set_desired_state/get_desired_state/get_close_reason, auth redirect detection
+    - watchdog_service.py: desired_state + close_reason checks, INTENTIONAL_CLOSE_REASONS set
+    - boards.py: set_desired_state bei lock/unlock
+    - kiosk.py: stop_observer_for_board(reason=...), set_desired_state=stopped bei session_end
+  - ZIP: darts-kiosk-v2.9.0-windows.zip (2.1 MB)
 
 ## Remaining Backlog
   - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)

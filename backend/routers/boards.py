@@ -20,6 +20,7 @@ from backend.dependencies import (
 )
 from backend.services.ws_manager import board_ws
 from backend.routers.kiosk import start_observer_for_board, stop_observer_for_board
+from backend.services.autodarts_observer import observer_manager
 
 router = APIRouter()
 
@@ -175,6 +176,7 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
 
     # Start Autodarts observer if board has a configured URL
     if board.autodarts_target_url:
+        observer_manager.set_desired_state(board_id, "running")
         asyncio.create_task(start_observer_for_board(board_id, board.autodarts_target_url))
 
     return SessionResponse(
@@ -251,7 +253,8 @@ async def lock_board(board_id: str, user: User = Depends(get_current_user), db: 
     await board_ws.broadcast("board_status", {"board_id": board_id, "status": "locked"})
 
     # Close Autodarts observer
-    asyncio.create_task(stop_observer_for_board(board_id))
+    observer_manager.set_desired_state(board_id, "stopped")
+    asyncio.create_task(stop_observer_for_board(board_id, reason="manual_lock"))
 
     return {"message": "Board locked", "board_id": board_id}
 

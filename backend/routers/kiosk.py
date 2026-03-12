@@ -304,7 +304,8 @@ async def _finalize_match_inner(board_id: str, trigger: str,
         if should_teardown:
             try:
                 logger.info(f"[AUTODARTS] closing observer board={board_id} (should_teardown=True, locking)")
-                await observer_manager.close(board_id)
+                observer_manager.set_desired_state(board_id, "stopped")
+                await observer_manager.close(board_id, reason="session_end")
                 logger.info("[AUTODARTS] observer closed OK")
             except Exception as e:
                 logger.error(f"[AUTODARTS] observer close failed: {e}")
@@ -459,9 +460,9 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
     logger.info(f"[Kiosk] Observer post-start: state={status['state']} browser_open={status['browser_open']}")
 
 
-async def stop_observer_for_board(board_id: str):
-    logger.info(f"[Kiosk] Stopping observer for {board_id}")
-    await observer_manager.close(board_id)
+async def stop_observer_for_board(board_id: str, reason: str = "unknown"):
+    logger.info(f"[Kiosk] Stopping observer for {board_id} reason={reason}")
+    await observer_manager.close(board_id, reason=reason)
     logger.info(f"[Kiosk] Observer stopped for {board_id}")
 
 

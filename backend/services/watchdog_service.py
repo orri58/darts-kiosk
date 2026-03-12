@@ -3,9 +3,11 @@ Watchdog Service — monitors observer health and triggers recovery.
 
 Lifecycle-aware:
   - Skips boards in STARTING or STOPPING state (transitional)
+  - Only recovers when desired_state == "running"
+  - Suppresses recovery for manual_lock / session_end / admin_stop
   - Enforces cooldown between recovery attempts (RECOVERY_COOLDOWN)
-  - Tracks consecutive failures per board for backoff
-  - Only recovers when lifecycle=RUNNING but page/context is dead
+  - Tracks consecutive failures per board for exponential backoff
+  - AUTH_REQUIRED is NOT recovered (needs manual login)
 """
 import asyncio
 import time
@@ -22,9 +24,12 @@ WATCHDOG_INTERVAL = 30      # seconds between health checks
 RECOVERY_COOLDOWN = 15      # min seconds between recovery attempts per board
 LAUNCH_GRACE_PERIOD = 20    # seconds after launch before watchdog may intervene
 
+# Close reasons that suppress automatic recovery
+INTENTIONAL_CLOSE_REASONS = {"manual_lock", "session_end", "admin_stop", "shutdown"}
+
 # Per-board recovery state
-_last_recovery_time: dict = {}      # board_id -> timestamp of last recovery attempt
-_consecutive_failures: dict = {}    # board_id -> count of consecutive failures
+_last_recovery_time: dict = {}
+_consecutive_failures: dict = {}
 
 _watchdog_task: asyncio.Task = None
 
@@ -89,14 +94,24 @@ async def _run_health_checks():
     for board in boards:
         board_id = board.board_id
         obs = observer_manager.get(board_id)
+        desired = observer_manager.get_desired_state(board_id)
+        close_reason = observer_manager.get_close_reason(board_id)
+
+        # ── Check 1: desired_state must be "running" ──
+        if desired != "running":
+            if obs and obs.lifecycle_state not in (LifecycleState.CLOSED, LifecycleState.STOPPING):
+                logger.info(
+                    f"[WATCHDOG] recovery suppressed {board_id} — "
+                    f"desired_state={desired} (intentionally stopped)"
+                )
+            continue
 
         if obs is None:
-            # No observer created yet — not our responsibility
             continue
 
         lifecycle = obs.lifecycle_state
 
-        # ── Skip transitional states ──
+        # ── Check 2: Skip transitional states ──
         if lifecycle in (LifecycleState.STARTING, LifecycleState.STOPPING):
             logger.info(
                 f"[WATCHDOG] skipped {board_id} — lifecycle={lifecycle.value} "
@@ -104,7 +119,24 @@ async def _run_health_checks():
             )
             continue
 
-        # ── Skip if recently launched (grace period) ──
+        # ── Check 3: AUTH_REQUIRED is NOT recoverable ──
+        if lifecycle == LifecycleState.AUTH_REQUIRED:
+            logger.info(
+                f"[WATCHDOG] auth_required detected {board_id} — "
+                f"recovery suppressed (needs manual login in Chrome profile)"
+            )
+            continue
+
+        # ── Check 4: Skip if intentional close reason ──
+        if close_reason in INTENTIONAL_CLOSE_REASONS:
+            if lifecycle in (LifecycleState.CLOSED, LifecycleState.ERROR):
+                logger.info(
+                    f"[WATCHDOG] recovery suppressed {board_id} — "
+                    f"close_reason={close_reason} (intentional stop)"
+                )
+                continue
+
+        # ── Check 5: Skip if recently launched (grace period) ──
         if obs._last_launch_time and (now - obs._last_launch_time) < LAUNCH_GRACE_PERIOD:
             elapsed = now - obs._last_launch_time
             logger.info(
@@ -113,27 +145,25 @@ async def _run_health_checks():
             )
             continue
 
-        # ── Check if observer is healthy ──
+        # ── Check 6: Is observer actually unhealthy? ──
         is_healthy = obs.is_open and obs._page_alive()
 
         if is_healthy:
-            # Reset consecutive failure counter on healthy check
             _consecutive_failures.pop(board_id, None)
             continue
 
         # ── Observer unhealthy — should we recover? ──
         logger.warning(
             f"[WATCHDOG] UNHEALTHY {board_id}: lifecycle={lifecycle.value} "
-            f"is_open={obs.is_open} page_alive={obs._page_alive()}"
+            f"is_open={obs.is_open} page_alive={obs._page_alive()} "
+            f"desired_state={desired} close_reason={close_reason}"
         )
 
-        # Cooldown check
+        # Cooldown + backoff check
         last_recovery = _last_recovery_time.get(board_id, 0)
         cooldown_elapsed = now - last_recovery
-
-        # Backoff: consecutive failures increase cooldown
         failures = _consecutive_failures.get(board_id, 0)
-        effective_cooldown = RECOVERY_COOLDOWN * (2 ** min(failures, 4))  # max 16x
+        effective_cooldown = RECOVERY_COOLDOWN * (2 ** min(failures, 4))
 
         if cooldown_elapsed < effective_cooldown:
             logger.info(
@@ -146,7 +176,8 @@ async def _run_health_checks():
         # ── Trigger recovery ──
         logger.info(
             f"[WATCHDOG] recovery starting {board_id} "
-            f"(failures={failures}, cooldown={effective_cooldown:.0f}s)"
+            f"(failures={failures}, cooldown={effective_cooldown:.0f}s, "
+            f"desired_state={desired})"
         )
         _last_recovery_time[board_id] = now
         _consecutive_failures[board_id] = failures + 1
@@ -165,13 +196,12 @@ async def _recover_observer(board_id: str, autodarts_url: str):
 
     headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
 
-    # Close existing (this acquires the lifecycle lock)
-    await observer_manager.close(board_id)
+    # Close existing (acquires lifecycle lock, records reason)
+    await observer_manager.close(board_id, reason="watchdog_recovery")
 
-    # Small pause before relaunch
     await asyncio.sleep(2)
 
-    # Reopen (this also acquires the lifecycle lock)
+    # Reopen (acquires lifecycle lock)
     await observer_manager.open(
         board_id=board_id,
         autodarts_url=autodarts_url,

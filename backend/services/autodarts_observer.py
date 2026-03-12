@@ -135,6 +135,7 @@ class LifecycleState(str, Enum):
     RUNNING = "running"
     STOPPING = "stopping"
     ERROR = "error"
+    AUTH_REQUIRED = "auth_required"
 
 
 @dataclass
@@ -233,6 +234,7 @@ class AutodartsObserver:
         self._lifecycle_state: LifecycleState = LifecycleState.CLOSED
         self._session_generation: int = 0
         self._last_launch_time: float = 0
+        self._close_reason: str = ""
 
         # Stable confirmed state (only changes after debounce)
         self._stable_state: ObserverState = ObserverState.CLOSED
@@ -637,16 +639,38 @@ class AutodartsObserver:
                     f"Autodarts may be unreachable."
                 )
 
+            # ── Auth redirect detection ──
+            final_url = self._page.url.lower()
+            is_auth_redirect = (
+                'login.autodarts.io' in final_url
+                or '/login' in final_url
+                or '/auth' in final_url
+                or 'signin' in final_url
+            )
+            if is_auth_redirect:
+                logger.error(
+                    f"[Observer:{self.board_id}] *** AUTH_REQUIRED *** "
+                    f"Browser landed on login page: {self._page.url}  "
+                    f"Session/cookies for profile {profile_dir_abs} are invalid or expired. "
+                    f"Please log in manually once, then restart the observer."
+                )
+                self.status.last_error = f"auth_required: {self._page.url}"
+                self._set_state(ObserverState.ERROR)
+                self._set_lifecycle(LifecycleState.AUTH_REQUIRED)
+                self.status.browser_open = True
+                # Do NOT start observe loop, do NOT hide kiosk
+                return
+
             self.status.browser_open = True
             self._set_state(ObserverState.IDLE)
             self._stable_state = ObserverState.IDLE
 
-            # OS-level window management
+            # OS-level window management: only hide kiosk if on valid play page
             try:
                 from backend.services.window_manager import hide_kiosk_window
                 await asyncio.sleep(1.5)
                 await hide_kiosk_window()
-                logger.info(f"[Observer:{self.board_id}]   Kiosk window hidden")
+                logger.info(f"[Observer:{self.board_id}]   Kiosk window hidden (valid play page)")
             except Exception as wm_err:
                 logger.warning(f"[Observer:{self.board_id}]   Window management skipped: {wm_err}")
 
@@ -672,6 +696,17 @@ class AutodartsObserver:
                 try:
                     alive_url = self._page.url
                     page_count = len(self._context.pages) if self._context else 0
+                    # Auth redirect detection during health check
+                    alive_lower = alive_url.lower()
+                    if 'login.autodarts.io' in alive_lower or '/login' in alive_lower:
+                        logger.error(
+                            f"[Observer:{self.board_id}]   HEALTH@{check_at}s: "
+                            f"AUTH_REDIRECT_DETECTED url={alive_url}"
+                        )
+                        health_ok = False
+                        self.status.last_error = f"auth_required: {alive_url}"
+                        self._set_lifecycle(LifecycleState.AUTH_REQUIRED)
+                        break
                     logger.info(
                         f"[Observer:{self.board_id}]   HEALTH@{check_at}s: "
                         f"page_alive=True, url={alive_url}, pages={page_count}"
@@ -1090,11 +1125,12 @@ class AutodartsObserver:
     # SESSION LIFECYCLE
     # ═══════════════════════════════════════════════════════════════
 
-    async def close_session(self):
+    async def close_session(self, reason: str = "unknown"):
         """
         Close Playwright browser ONLY. Idempotent.
         Detects self-call (from within observe_task) to avoid deadlock.
         Does NOT handle kiosk window management — that is finalize_match's job.
+        reason: manual_lock | session_end | watchdog_recovery | crash_cleanup | admin_stop
         """
         if self._lifecycle_state == LifecycleState.CLOSED:
             logger.info(f"[Observer:{self.board_id}] CLOSE_SESSION_SKIPPED (lifecycle=closed)")
@@ -1104,8 +1140,12 @@ class AutodartsObserver:
             return
         self._closing = True
         self._stopping = True
+        self._close_reason = reason
         self._set_lifecycle(LifecycleState.STOPPING)
-        logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_START === (gen={self._session_generation})")
+        logger.info(
+            f"[Observer:{self.board_id}] === CLOSE_SESSION_START === "
+            f"(gen={self._session_generation}, reason={reason})"
+        )
 
         # Detect self-call: if we're being called from within the observe_task,
         # do NOT cancel/await ourselves (would deadlock).
@@ -1668,11 +1708,27 @@ class ObserverManager:
     def __init__(self):
         self._observers: Dict[str, AutodartsObserver] = {}
         self._locks: Dict[str, asyncio.Lock] = {}
+        self._desired_state: Dict[str, str] = {}      # board_id -> "running" | "stopped"
+        self._close_reasons: Dict[str, str] = {}       # board_id -> last close reason
 
     def _get_lock(self, board_id: str) -> asyncio.Lock:
         if board_id not in self._locks:
             self._locks[board_id] = asyncio.Lock()
         return self._locks[board_id]
+
+    # ── Desired state management ──
+
+    def set_desired_state(self, board_id: str, state: str):
+        old = self._desired_state.get(board_id, "stopped")
+        self._desired_state[board_id] = state
+        if old != state:
+            logger.info(f"[ObserverMgr] desired_state: {board_id} {old} → {state}")
+
+    def get_desired_state(self, board_id: str) -> str:
+        return self._desired_state.get(board_id, "stopped")
+
+    def get_close_reason(self, board_id: str) -> str:
+        return self._close_reasons.get(board_id, "")
 
     def get(self, board_id: str) -> Optional[AutodartsObserver]:
         return self._observers.get(board_id)
@@ -1683,10 +1739,14 @@ class ObserverManager:
             d = obs.status.to_dict()
             d["lifecycle"] = obs.lifecycle_state.value
             d["session_generation"] = obs._session_generation
+            d["desired_state"] = self.get_desired_state(board_id)
+            d["close_reason"] = self._close_reasons.get(board_id, "")
             return d
         d = ObserverStatus(board_id=board_id).to_dict()
         d["lifecycle"] = "closed"
         d["session_generation"] = 0
+        d["desired_state"] = self.get_desired_state(board_id)
+        d["close_reason"] = self._close_reasons.get(board_id, "")
         return d
 
     def get_all_statuses(self) -> list:
@@ -1705,16 +1765,14 @@ class ObserverManager:
         async with lock:
             logger.info(f"[ObserverMgr] lifecycle_lock acquired board={board_id}")
             try:
-                # ── Single observer per board: cleanup existing first ──
                 existing = self._observers.get(board_id)
                 if existing:
                     if existing.is_open:
                         logger.info(f"[ObserverMgr] Board {board_id} already open, returning existing")
                         return existing
-                    # Dead/closed observer → cleanup before creating new
                     logger.info(f"[ObserverMgr] Cleaning up dead observer for {board_id}")
                     try:
-                        await existing.close_session()
+                        await existing.close_session(reason="cleanup_before_reopen")
                     except Exception as e:
                         logger.debug(f"[ObserverMgr] cleanup error (ignored): {e}")
 
@@ -1730,22 +1788,23 @@ class ObserverManager:
             finally:
                 logger.info(f"[ObserverMgr] lifecycle_lock released board={board_id}")
 
-    async def close(self, board_id: str):
+    async def close(self, board_id: str, reason: str = "unknown"):
         lock = self._get_lock(board_id)
-        logger.info(f"[ObserverMgr] lifecycle_lock acquiring (close) board={board_id}")
+        logger.info(f"[ObserverMgr] lifecycle_lock acquiring (close) board={board_id} reason={reason}")
         async with lock:
             logger.info(f"[ObserverMgr] lifecycle_lock acquired (close) board={board_id}")
             try:
+                self._close_reasons[board_id] = reason
                 obs = self._observers.get(board_id)
                 if obs:
-                    await obs.close_session()
-                    logger.info(f"[ObserverMgr] Observer closed for board {board_id}")
+                    await obs.close_session(reason=reason)
+                    logger.info(f"[ObserverMgr] Observer closed for board {board_id} reason={reason}")
             finally:
                 logger.info(f"[ObserverMgr] lifecycle_lock released (close) board={board_id}")
 
     async def close_all(self):
         for board_id in list(self._observers.keys()):
-            await self.close(board_id)
+            await self.close(board_id, reason="shutdown")
 
 
 observer_manager = ObserverManager()
