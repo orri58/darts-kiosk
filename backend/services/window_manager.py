@@ -97,6 +97,25 @@ async def force_kiosk_foreground():
         logger.warning("[WindowMgr] KIOSK_FOCUS_RESTORE failed — window not found")
 
 
+async def ensure_autodarts_foreground():
+    """
+    Ensure the Autodarts Chrome window is visible and in the foreground.
+    Used ONLY on the keep-alive path (credits remain after match end).
+    Does NOT touch the kiosk window.
+    """
+    if sys.platform != 'win32':
+        logger.debug("[WindowMgr] Not Windows — skip ensure_autodarts_foreground")
+        return True
+
+    logger.info("[WindowMgr] AUTODARTS_WINDOW_FOREGROUND start")
+    found = await asyncio.to_thread(_win32_foreground_autodarts)
+    if found:
+        logger.info("[WindowMgr] AUTODARTS_WINDOW_FOREGROUND success")
+    else:
+        logger.warning("[WindowMgr] AUTODARTS_WINDOW_FOREGROUND: no autodarts window found")
+    return found
+
+
 # ─── Win32 Implementation ────────────────────────────────────────────
 
 def _win32_hide_by_title(pattern):
@@ -299,6 +318,60 @@ def _win32_force_foreground(pattern):
 
     except Exception as e:
         logger.warning(f"[WindowMgr] force_foreground failed: {e}")
+        return False
+
+
+def _win32_foreground_autodarts():
+    """Find Autodarts Chrome window, restore if minimized, bring to foreground.
+    Does NOT touch the kiosk window."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        SW_RESTORE = 9
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(
+            wintypes.BOOL, wintypes.HWND, wintypes.LPARAM
+        )
+
+        targets = []
+
+        def callback(hwnd, _lparam):
+            length = user32.GetWindowTextLengthW(hwnd)
+            if length <= 0:
+                return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buf, length + 1)
+            title = buf.value
+            title_lower = title.lower()
+
+            # Target: Chrome/Autodarts windows that are NOT the kiosk
+            is_chrome = 'chrome' in title_lower or 'autodarts' in title_lower
+            is_kiosk = KIOSK_WINDOW_TITLE.lower() in title_lower
+
+            if is_chrome and not is_kiosk:
+                targets.append((hwnd, title))
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(callback), 0)
+
+        for hwnd, title in targets:
+            logger.info(f"[WindowMgr] AUTODARTS_WINDOW_FOREGROUND: forcing foreground '{title}'")
+            # SW_RESTORE handles both minimized and normal state
+            user32.ShowWindow(hwnd, SW_RESTORE)
+            try:
+                user32.keybd_event(0x12, 0, 0, 0)   # Alt down
+                user32.SetForegroundWindow(hwnd)
+                user32.keybd_event(0x12, 0, 2, 0)   # Alt up
+                user32.BringWindowToTop(hwnd)
+            except Exception:
+                pass
+
+        return len(targets) > 0
+
+    except Exception as e:
+        logger.warning(f"[WindowMgr] foreground_autodarts failed: {e}")
         return False
 
 

@@ -308,19 +308,27 @@ async def _finalize_match_inner(board_id: str, trigger: str,
             logger.info(f"[SESSION] finished-delay={FINALIZE_DELAY_FINISHED}s")
             await asyncio.sleep(FINALIZE_DELAY_FINISHED)
 
-        # ── Step 4: Close Autodarts observer (ONLY when locking) ──
+        # ── Step 4: SESSION-END vs KEEP-ALIVE branch ──
         if should_teardown:
+            # ═══ SESSION-END PATH ═══
+            logger.info(
+                f"[SESSION] finalize branch board={board_id} "
+                f"should_lock={should_lock} should_teardown=True branch=session_end"
+            )
             try:
-                logger.info(f"[AUTODARTS] closing observer board={board_id} (should_teardown=True, locking)")
+                logger.info(f"[AUTODARTS] closing observer board={board_id} (session_end)")
                 observer_manager.set_desired_state(board_id, "stopped")
                 await observer_manager.close(board_id, reason="session_end")
                 logger.info("[AUTODARTS] observer closed OK")
             except Exception as e:
                 logger.error(f"[AUTODARTS] observer close failed: {e}")
         else:
+            # ═══ KEEP-ALIVE PATH ═══
+            logger.info(
+                f"[SESSION] finalize branch board={board_id} "
+                f"should_lock=False should_teardown=False branch=keep_alive"
+            )
             logger.info(f"[AUTODARTS] OBSERVER_KEPT_ALIVE board={board_id} credits={credits_remaining}")
-            # ── Step 4b: Navigate Autodarts to home + hide chrome window ──
-            # This MUST happen BEFORE return_to_kiosk_ui (in finally) so kiosk ends up on top
             obs = observer_manager.get(board_id)
             if obs:
                 try:
@@ -349,12 +357,18 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                         logger.warning(f"[RETURN_HOME] failed board={board_id} lifecycle={lc_val}")
                 except Exception as e:
                     logger.warning(f"[AUTODARTS] navigate_to_home failed: {e}")
-            # Minimize the observer/chrome window so it doesn't cover the kiosk
-            try:
-                from backend.services.window_manager import minimize_observer_window
-                await minimize_observer_window()
-            except Exception as e:
-                logger.warning(f"[AUTODARTS] minimize_observer failed: {e}")
+
+            # ── Clear stale close_reason (TASK 3) ──
+            observer_manager.clear_close_reason(board_id)
+            obs_inst = observer_manager.get(board_id)
+            if obs_inst:
+                obs_inst._close_reason = ""
+            lc_now = obs_inst.lifecycle_state.value if obs_inst else "none"
+            desired_now = observer_manager.get_desired_state(board_id)
+            logger.info(
+                f"[SESSION] keep_alive_reset board={board_id} "
+                f"close_reason_cleared=True desired_state={desired_now} lifecycle={lc_now}"
+            )
 
         # ── Step 7: Sound broadcast ──
         try:
@@ -373,13 +387,31 @@ async def _finalize_match_inner(board_id: str, trigger: str,
         _finalized[board_id] = True
 
     finally:
-        # ── GUARANTEED: Return to kiosk UI (even if finalize partially failed) ──
-        try:
-            logger.info(f"[KIOSK_UI] finally: restoring kiosk UI board={board_id} should_lock={should_lock}")
-            await return_to_kiosk_ui(board_id, should_lock)
-            logger.info(f"[KIOSK_UI] finally: kiosk UI restored OK board={board_id}")
-        except Exception as e:
-            logger.error(f"[KIOSK_UI] CRITICAL: return_to_kiosk_ui failed in finally: {e}", exc_info=True)
+        if should_teardown:
+            # ── SESSION-END: Restore kiosk UI (guaranteed) ──
+            try:
+                logger.info(f"[KIOSK_UI] session_end_restore start board={board_id} should_lock={should_lock}")
+                await return_to_kiosk_ui(board_id, should_lock)
+                logger.info(f"[KIOSK_UI] session_end_restore done board={board_id}")
+            except Exception as e:
+                logger.error(f"[KIOSK_UI] CRITICAL: return_to_kiosk_ui failed in finally: {e}", exc_info=True)
+        else:
+            # ── KEEP-ALIVE: Ensure Autodarts stays foreground ──
+            obs_ka = observer_manager.get(board_id)
+            lc_ka = obs_ka.lifecycle_state.value if obs_ka else "none"
+            desired_ka = observer_manager.get_desired_state(board_id)
+            logger.info(
+                f"[KEEP_ALIVE_UI] start board={board_id} "
+                f"lifecycle={lc_ka} desired={desired_ka}"
+            )
+            logger.info(f"[KEEP_ALIVE_UI] skip_kiosk_restore board={board_id} reason=observer_kept_alive")
+            try:
+                from backend.services.window_manager import ensure_autodarts_foreground
+                ad_ok = await ensure_autodarts_foreground()
+                logger.info(f"[KEEP_ALIVE_UI] done board={board_id} autodarts_foreground={ad_ok}")
+            except Exception as e:
+                logger.warning(f"[KEEP_ALIVE_UI] ensure_autodarts_foreground failed: {e}")
+                logger.info(f"[KEEP_ALIVE_UI] done board={board_id} autodarts_foreground=False")
         _finalizing.discard(board_id)
 
     logger.info(

@@ -455,6 +455,44 @@ autostart.bat:
     - kiosk.py: finalize decision log, RETURN_HOME logs
     - watchdog_service.py: komplett neu (_should_attempt_recovery, escalation, blocking)
   ZIP: darts-kiosk-v2.9.1-windows.zip (2.1 MB)
+- v2.9.2: Auth-State Lifecycle Guard (2026-03-12)
+  - BUG: AUTH_REQUIRED state was overwritten to ERROR in health-check failure path
+  - FIX 1: Guard `if self._lifecycle_state != LifecycleState.AUTH_REQUIRED` before setting ERROR
+  - FIX 2: Page/context close callbacks treat auth_required as expected closure
+  - FIX 3: Kiosk hide deferred until AFTER health check confirms valid session
+  - ZIP: darts-kiosk-v2.9.2-windows.zip (2.1 MB)
+- v2.9.3: Auth-State Consistency Fix (2026-03-12)
+  - BUG 1: Health-check auth path (Path B) left observer state="idle" while lifecycle="auth_required"
+  - BUG 2: ObserverManager close_reason not propagated from observer instance during auth detection
+  - FIX 1: Path B now also sets _set_state(ObserverState.ERROR) + browser_open=False
+  - FIX 2: ObserverManager.open() propagates obs._close_reason to manager dict after open_session
+  - Result: Both auth paths now return identical API state: state=error, lifecycle=auth_required, close_reason=auth_required
+  - ZIP: darts-kiosk-v2.9.3-windows.zip (2.1 MB)
+- v2.9.4: Multi-Credit Post-Match UI Orchestration Fix (2026-03-12)
+  - BUG 1: Keep-alive path (credits>0) minimized Autodarts + restored kiosk = black screen over Autodarts
+  - BUG 2: return_to_kiosk_ui() ran unconditionally in finally block, even on keep-alive
+  - BUG 3: close_reason="session_end" persisted after keep-alive, causing stale watchdog state
+  - FIX 1 (TASK 1): Split finalize into explicit SESSION-END and KEEP-ALIVE branches
+    - Session-end: close observer → minimize Autodarts → restore kiosk (existing behavior)
+    - Keep-alive: navigate home → ensure Autodarts foreground → NO kiosk restore
+  - FIX 2 (TASK 2): New ensure_autodarts_foreground() in window_manager.py
+    - Finds Autodarts Chrome window, restores if minimized, forces to foreground
+    - Does NOT touch kiosk window
+  - FIX 3 (TASK 3): clear_close_reason() in ObserverManager
+    - Clears stale close_reason on keep-alive path
+    - Clears both manager dict and observer instance
+  - FIX 4 (TASK 4): Watchdog now sees clean state after keep-alive:
+    desired=running, lifecycle=running, close_reason=None
+  - FIX 5 (TASK 5): Explicit branch-selection logs:
+    [SESSION] finalize branch ... branch=keep_alive / branch=session_end
+    [KEEP_ALIVE_UI] start/skip_kiosk_restore/done
+    [KIOSK_UI] session_end_restore start/done
+    [SESSION] keep_alive_reset ... close_reason_cleared=True
+  - Geänderte Dateien:
+    - backend/routers/kiosk.py: _finalize_match_inner (branch split, conditional finally)
+    - backend/services/window_manager.py: ensure_autodarts_foreground(), _win32_foreground_autodarts()
+    - backend/services/autodarts_observer.py: ObserverManager.clear_close_reason()
+  - ZIP: darts-kiosk-v2.9.4-windows.zip (2.1 MB)
 
 ## Remaining Backlog
   - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)

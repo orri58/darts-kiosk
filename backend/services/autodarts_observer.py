@@ -1773,6 +1773,16 @@ class ObserverManager:
     def get_close_reason(self, board_id: str) -> str:
         return self._close_reasons.get(board_id, "")
 
+    def clear_close_reason(self, board_id: str):
+        """Clear stale close_reason after keep-alive path. Only call when observer stays alive."""
+        old = self._close_reasons.get(board_id, "")
+        if old:
+            self._close_reasons[board_id] = ""
+            logger.info(f"[ObserverMgr] close_reason cleared: {board_id} was={old}")
+        obs = self._observers.get(board_id)
+        if obs and obs._close_reason:
+            obs._close_reason = ""
+
     def get(self, board_id: str) -> Optional[AutodartsObserver]:
         return self._observers.get(board_id)
 
