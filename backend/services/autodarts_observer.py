@@ -585,7 +585,7 @@ class AutodartsObserver:
                 def handler():
                     lc = obs_ref._lifecycle_state.value
                     gen = obs_ref._session_generation
-                    if obs_ref._stopping or obs_ref._closing or lc in ("stopping", "closed"):
+                    if obs_ref._stopping or obs_ref._closing or lc in ("stopping", "closed", "auth_required"):
                         logger.info(
                             f"[Observer:{obs_ref.board_id}] PAGE_CLOSED_EXPECTED "
                             f"lifecycle={lc} gen={gen}"
@@ -611,7 +611,7 @@ class AutodartsObserver:
                 def handler():
                     lc = obs_ref._lifecycle_state.value
                     gen = obs_ref._session_generation
-                    if obs_ref._stopping or obs_ref._closing or lc in ("stopping", "closed"):
+                    if obs_ref._stopping or obs_ref._closing or lc in ("stopping", "closed", "auth_required"):
                         logger.info(
                             f"[Observer:{obs_ref.board_id}] CONTEXT_CLOSED_EXPECTED "
                             f"lifecycle={lc} gen={gen}"
@@ -692,7 +692,8 @@ class AutodartsObserver:
                 self._close_reason = "auth_required"
                 self._set_state(ObserverState.ERROR)
                 self._set_lifecycle(LifecycleState.AUTH_REQUIRED)
-                self.status.browser_open = True
+                self.status.browser_open = False
+                await self._cleanup()
                 # Do NOT start observe loop, do NOT hide kiosk
                 return
 
@@ -700,14 +701,7 @@ class AutodartsObserver:
             self._set_state(ObserverState.IDLE)
             self._stable_state = ObserverState.IDLE
 
-            # OS-level window management: only hide kiosk if on valid play page
-            try:
-                from backend.services.window_manager import hide_kiosk_window
-                await asyncio.sleep(1.5)
-                await hide_kiosk_window()
-                logger.info(f"[Observer:{self.board_id}]   Kiosk window hidden (valid play page)")
-            except Exception as wm_err:
-                logger.warning(f"[Observer:{self.board_id}]   Window management skipped: {wm_err}")
+            # NOTE: Kiosk hide is deferred until AFTER health check confirms valid session
 
             # ── Post-launch health check: verify page is still alive ──
             health_ok = True
@@ -758,11 +752,22 @@ class AutodartsObserver:
             if health_ok:
                 logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH SUCCESS === (gen={gen})")
                 self._set_lifecycle(LifecycleState.RUNNING)
+                # Only hide kiosk AFTER health confirms valid authenticated session
+                try:
+                    from backend.services.window_manager import hide_kiosk_window
+                    await hide_kiosk_window()
+                    logger.info(f"[Observer:{self.board_id}]   Kiosk window hidden (session confirmed)")
+                except Exception as wm_err:
+                    logger.warning(f"[Observer:{self.board_id}]   Window management skipped: {wm_err}")
                 self._observe_task = asyncio.create_task(self._observe_loop())
             else:
-                logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH FAILED (health) === (gen={gen})")
-                self._set_lifecycle(LifecycleState.ERROR)
-                self.status.last_error = "Post-launch health check failed"
+                # Preserve AUTH_REQUIRED — do NOT overwrite with ERROR
+                if self._lifecycle_state != LifecycleState.AUTH_REQUIRED:
+                    logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH FAILED (health) === (gen={gen})")
+                    self._set_lifecycle(LifecycleState.ERROR)
+                    self.status.last_error = "Post-launch health check failed"
+                else:
+                    logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH FAILED (auth_required) === (gen={gen})")
                 await self._cleanup()
 
         except Exception as e:
