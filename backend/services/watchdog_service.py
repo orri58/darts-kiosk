@@ -1,33 +1,35 @@
 """
-Observer Watchdog Service — Crash Recovery & Zombie Cleanup (v2.4.0)
+Watchdog Service — monitors observer health and triggers recovery.
 
-Background task that monitors observer health for all active boards.
-Runs every 5 seconds and handles:
-  - Observer dead but session active → auto-restart
-  - Page/context crashed → recovery
-  - Zombie observers (no active session) → cleanup
-  - Stale WS connection (no frames for 60s during game) → restart
+Lifecycle-aware:
+  - Skips boards in STARTING or STOPPING state (transitional)
+  - Enforces cooldown between recovery attempts (RECOVERY_COOLDOWN)
+  - Tracks consecutive failures per board for backoff
+  - Only recovers when lifecycle=RUNNING but page/context is dead
 """
 import asyncio
 import time
 import logging
-from sqlalchemy import select
 
-from backend.database import AsyncSessionLocal
-from backend.models import Board, Session, BoardStatus, SessionStatus
-from backend.dependencies import get_active_session_for_board
-from backend.services.autodarts_observer import observer_manager
+from backend.services.autodarts_observer import (
+    observer_manager,
+    LifecycleState,
+)
 
 logger = logging.getLogger(__name__)
 
-WATCHDOG_INTERVAL = 5  # seconds between checks
-WS_STALE_THRESHOLD = 60  # seconds without WS frame during active game
+WATCHDOG_INTERVAL = 30      # seconds between health checks
+RECOVERY_COOLDOWN = 15      # min seconds between recovery attempts per board
+LAUNCH_GRACE_PERIOD = 20    # seconds after launch before watchdog may intervene
+
+# Per-board recovery state
+_last_recovery_time: dict = {}      # board_id -> timestamp of last recovery attempt
+_consecutive_failures: dict = {}    # board_id -> count of consecutive failures
 
 _watchdog_task: asyncio.Task = None
 
 
 async def start_watchdog():
-    """Start the watchdog background task. Call from app startup."""
     global _watchdog_task
     if _watchdog_task and not _watchdog_task.done():
         logger.info("[WATCHDOG] already running")
@@ -37,105 +39,143 @@ async def start_watchdog():
 
 
 async def stop_watchdog():
-    """Stop the watchdog. Call from app shutdown."""
     global _watchdog_task
-    if _watchdog_task and not _watchdog_task.done():
+    if _watchdog_task:
         _watchdog_task.cancel()
         try:
             await _watchdog_task
         except asyncio.CancelledError:
             pass
-    _watchdog_task = None
+        _watchdog_task = None
     logger.info("[WATCHDOG] stopped")
 
 
 async def _watchdog_loop():
-    """Main watchdog loop. Runs indefinitely."""
-    # Wait for app to fully start
-    await asyncio.sleep(10)
-    logger.info("[WATCHDOG] active — monitoring observers")
-
+    """Main watchdog loop — runs periodically to check observer health."""
     while True:
         try:
+            await asyncio.sleep(WATCHDOG_INTERVAL)
             await _run_health_checks()
         except asyncio.CancelledError:
-            raise
+            break
         except Exception as e:
-            logger.error(f"[WATCHDOG] error in health check: {e}", exc_info=True)
-        await asyncio.sleep(WATCHDOG_INTERVAL)
+            logger.error(f"[WATCHDOG] loop error: {e}", exc_info=True)
+            await asyncio.sleep(5)
 
 
 async def _run_health_checks():
-    """Check all boards and recover unhealthy observers."""
-    # Collect active boards from DB
-    active_boards = {}
+    """Check all known observers and recover if needed."""
+    from backend.database import AsyncSessionLocal
+    from backend.models import Board
+    from sqlalchemy import select
+
+    logger.info("[WATCHDOG] active — monitoring observers")
+
     try:
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 select(Board).where(
-                    Board.status.in_([
-                        BoardStatus.UNLOCKED.value,
-                        BoardStatus.IN_GAME.value,
-                    ])
+                    Board.autodarts_target_url.isnot(None),
+                    Board.autodarts_target_url != "",
                 )
             )
-            for board in result.scalars():
-                session = await get_active_session_for_board(db, board.id)
-                if session:
-                    active_boards[board.board_id] = {
-                        "autodarts_url": board.autodarts_target_url,
-                        "board_name": board.name,
-                    }
+            boards = result.scalars().all()
     except Exception as e:
         logger.error(f"[WATCHDOG] DB error: {e}")
         return
 
-    # Check 1: Active session but no/dead observer → restart
-    for board_id, info in active_boards.items():
+    now = time.time()
+
+    for board in boards:
+        board_id = board.board_id
         obs = observer_manager.get(board_id)
-        autodarts_url = info.get("autodarts_url")
 
-        if obs is None or not obs.is_open:
-            if autodarts_url:
-                logger.warning(f"[WATCHDOG] observer unhealthy for {board_id} (missing/closed)")
-                logger.info(f"[WATCHDOG] attempting recovery for {board_id}")
-                await _recover_observer(board_id, autodarts_url)
+        if obs is None:
+            # No observer created yet — not our responsibility
             continue
 
-        # Check 2: Observer exists but page/context is dead
-        if not obs._page_alive():
-            logger.warning(f"[WATCHDOG] page dead for {board_id}")
-            if autodarts_url:
-                logger.info(f"[WATCHDOG] relaunching observer/browser for {board_id}")
-                await _recover_observer(board_id, autodarts_url)
+        lifecycle = obs.lifecycle_state
+
+        # ── Skip transitional states ──
+        if lifecycle in (LifecycleState.STARTING, LifecycleState.STOPPING):
+            logger.info(
+                f"[WATCHDOG] skipped {board_id} — lifecycle={lifecycle.value} "
+                f"(transitional, waiting)"
+            )
             continue
 
-    # Check 3: Zombie observers (observer open but no active session)
-    for board_id in list(observer_manager._observers.keys()):
-        if board_id not in active_boards:
-            obs = observer_manager.get(board_id)
-            if obs and obs.is_open:
-                logger.warning(f"[WATCHDOG] zombie observer {board_id} (no active session)")
-                logger.info(f"[WATCHDOG] cleaning up zombie for {board_id}")
-                try:
-                    await observer_manager.close(board_id)
-                    logger.info(f"[WATCHDOG] orphan context cleaned {board_id}")
-                except Exception as e:
-                    logger.error(f"[WATCHDOG] zombie cleanup failed {board_id}: {e}")
+        # ── Skip if recently launched (grace period) ──
+        if obs._last_launch_time and (now - obs._last_launch_time) < LAUNCH_GRACE_PERIOD:
+            elapsed = now - obs._last_launch_time
+            logger.info(
+                f"[WATCHDOG] skipped {board_id} — launched {elapsed:.0f}s ago "
+                f"(grace period {LAUNCH_GRACE_PERIOD}s)"
+            )
+            continue
+
+        # ── Check if observer is healthy ──
+        is_healthy = obs.is_open and obs._page_alive()
+
+        if is_healthy:
+            # Reset consecutive failure counter on healthy check
+            _consecutive_failures.pop(board_id, None)
+            continue
+
+        # ── Observer unhealthy — should we recover? ──
+        logger.warning(
+            f"[WATCHDOG] UNHEALTHY {board_id}: lifecycle={lifecycle.value} "
+            f"is_open={obs.is_open} page_alive={obs._page_alive()}"
+        )
+
+        # Cooldown check
+        last_recovery = _last_recovery_time.get(board_id, 0)
+        cooldown_elapsed = now - last_recovery
+
+        # Backoff: consecutive failures increase cooldown
+        failures = _consecutive_failures.get(board_id, 0)
+        effective_cooldown = RECOVERY_COOLDOWN * (2 ** min(failures, 4))  # max 16x
+
+        if cooldown_elapsed < effective_cooldown:
+            logger.info(
+                f"[WATCHDOG] recovery throttled {board_id} — "
+                f"last attempt {cooldown_elapsed:.0f}s ago, "
+                f"cooldown={effective_cooldown:.0f}s (failures={failures})"
+            )
+            continue
+
+        # ── Trigger recovery ──
+        logger.info(
+            f"[WATCHDOG] recovery starting {board_id} "
+            f"(failures={failures}, cooldown={effective_cooldown:.0f}s)"
+        )
+        _last_recovery_time[board_id] = now
+        _consecutive_failures[board_id] = failures + 1
+
+        try:
+            await _recover_observer(board_id, board.autodarts_target_url)
+            logger.info(f"[WATCHDOG] recovery successful for {board_id}")
+        except Exception as e:
+            logger.error(f"[WATCHDOG] recovery failed for {board_id}: {e}")
 
 
 async def _recover_observer(board_id: str, autodarts_url: str):
-    """Close existing observer and start fresh."""
-    try:
-        await observer_manager.close(board_id)
-        logger.info(f"[WATCHDOG] old observer closed for {board_id}")
-    except Exception as e:
-        logger.warning(f"[WATCHDOG] close failed during recovery {board_id}: {e}")
+    """Close and reopen an unhealthy observer."""
+    from backend.routers.kiosk import _on_game_started, _on_game_ended
+    import os
 
-    try:
-        # Late import to avoid circular dependency
-        from backend.routers.kiosk import start_observer_for_board
-        await start_observer_for_board(board_id, autodarts_url)
-        logger.info(f"[WATCHDOG] recovery successful for {board_id}")
-    except Exception as e:
-        logger.error(f"[WATCHDOG] recovery failed for {board_id}: {e}")
+    headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
+
+    # Close existing (this acquires the lifecycle lock)
+    await observer_manager.close(board_id)
+
+    # Small pause before relaunch
+    await asyncio.sleep(2)
+
+    # Reopen (this also acquires the lifecycle lock)
+    await observer_manager.open(
+        board_id=board_id,
+        autodarts_url=autodarts_url,
+        on_game_started=_on_game_started,
+        on_game_ended=_on_game_ended,
+        headless=headless,
+    )

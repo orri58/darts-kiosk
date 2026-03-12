@@ -34,6 +34,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 import logging
 import threading
 from collections import deque
@@ -124,6 +125,15 @@ class ObserverState(str, Enum):
     ROUND_TRANSITION = "round_transition"
     FINISHED = "finished"
     UNKNOWN = "unknown"
+    ERROR = "error"
+
+
+class LifecycleState(str, Enum):
+    """Observer lifecycle state — controls what operations are allowed."""
+    CLOSED = "closed"
+    STARTING = "starting"
+    RUNNING = "running"
+    STOPPING = "stopping"
     ERROR = "error"
 
 
@@ -219,6 +229,11 @@ class AutodartsObserver:
         self._abort_detected = False  # Set by WS delete handler, triggers immediate finalize
         self._last_finalized_match_id: Optional[str] = None  # Prevents double-finalize for same match
 
+        # ── Lifecycle state (serializes start/stop/recovery) ──
+        self._lifecycle_state: LifecycleState = LifecycleState.CLOSED
+        self._session_generation: int = 0
+        self._last_launch_time: float = 0
+
         # Stable confirmed state (only changes after debounce)
         self._stable_state: ObserverState = ObserverState.CLOSED
 
@@ -242,6 +257,23 @@ class AutodartsObserver:
     def is_open(self) -> bool:
         return self._context is not None and self.status.browser_open
 
+    @property
+    def lifecycle_state(self) -> LifecycleState:
+        return self._lifecycle_state
+
+    @property
+    def is_transitioning(self) -> bool:
+        return self._lifecycle_state in (LifecycleState.STARTING, LifecycleState.STOPPING)
+
+    def _set_lifecycle(self, new_state: LifecycleState):
+        old = self._lifecycle_state
+        if old != new_state:
+            self._lifecycle_state = new_state
+            logger.info(
+                f"[Observer:{self.board_id}] lifecycle_state: {old.value} → {new_state.value} "
+                f"(gen={self._session_generation})"
+            )
+
     def _page_alive(self) -> bool:
         """Check if the page is still alive and usable. Null-safe."""
         if self._page is None or self._context is None:
@@ -254,7 +286,8 @@ class AutodartsObserver:
     def _check_profile_locked(self, profile_dir: str) -> bool:
         """
         Safety check: detect if another Chrome instance is already using this
-        user-data-dir. Returns True if locked (caller must abort), False if safe.
+        user-data-dir. If found, attempts to kill it and clean up.
+        Returns True if STILL locked (caller must abort), False if safe.
         """
         profile_abs = os.path.abspath(profile_dir)
         profile_norm = os.path.normpath(profile_abs).lower()
@@ -274,62 +307,53 @@ class AutodartsObserver:
             f"in {profile_abs}"
         )
 
-        # ── Verify Chrome is actually running with this profile ──
-        chrome_using_profile = False
+        # ── Find Chrome processes using this profile ──
+        chrome_pids = self._find_chrome_pids_for_profile(profile_norm)
 
-        if sys.platform == 'win32':
-            # Try PowerShell (precise: checks command-line args)
-            try:
-                ps_cmd = (
-                    "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" "
-                    "| Select-Object ProcessId,CommandLine "
-                    "| Format-List"
-                )
-                result = subprocess.run(
-                    ['powershell', '-NoProfile', '-Command', ps_cmd],
-                    capture_output=True, text=True, timeout=10,
-                )
-                for line in result.stdout.splitlines():
-                    if 'commandline' in line.lower():
-                        cmdline = line.split(':', 1)[1].strip().lower().replace('/', '\\')
-                        if profile_norm in cmdline:
-                            chrome_using_profile = True
-                            break
-            except Exception as e:
-                logger.debug(f"[Observer:{self.board_id}] PowerShell check failed: {e}")
-                # Fallback: any chrome.exe running + lock file = likely conflict
-                try:
-                    result = subprocess.run(
-                        ['tasklist', '/FI', 'IMAGENAME eq chrome.exe', '/NH'],
-                        capture_output=True, text=True, timeout=5,
-                    )
-                    if 'chrome.exe' in result.stdout.lower():
-                        chrome_using_profile = True
-                except Exception:
-                    pass
-        else:
-            # Linux/Mac: pgrep with full command line
-            try:
-                result = subprocess.run(
-                    ['pgrep', '-af', 'chrome'],
-                    capture_output=True, text=True, timeout=5,
-                )
-                for line in result.stdout.splitlines():
-                    if profile_norm in line.lower():
-                        chrome_using_profile = True
-                        break
-            except Exception:
-                pass
-
-        if chrome_using_profile:
-            logger.error(
-                f"[Observer:{self.board_id}] *** PROFILE LOCKED *** "
-                f"Another Chrome instance is already using: {profile_abs}  "
-                f"Playwright cannot launch a second persistent context with the same "
-                f"user-data-dir. Aborting observer launch. "
-                f"Ensure start.bat does NOT use --user-data-dir pointing to this path."
+        if chrome_pids:
+            logger.warning(
+                f"[Observer:{self.board_id}] Chrome processes holding profile: "
+                f"pids={chrome_pids} profile={profile_abs}"
             )
-            return True
+            # ── Kill them ──
+            killed = self._kill_pids(chrome_pids)
+            if killed:
+                logger.info(
+                    f"[Observer:{self.board_id}] Killed {len(killed)} Chrome processes, "
+                    f"waiting for exit..."
+                )
+                time.sleep(2)  # Wait for process exit
+
+                # ── Re-check: are lock files still there? ──
+                remaining_locks = [
+                    name for name in lock_names
+                    if os.path.exists(os.path.join(profile_dir, name))
+                ]
+                if remaining_locks:
+                    # Processes killed but locks remain → stale, clean up
+                    still_running = self._find_chrome_pids_for_profile(profile_norm)
+                    if still_running:
+                        logger.error(
+                            f"[Observer:{self.board_id}] *** PROFILE STILL LOCKED *** "
+                            f"Chrome pids={still_running} survived kill. "
+                            f"Cannot launch observer. Profile: {profile_abs}"
+                        )
+                        return True
+                    # Processes gone, stale locks remain → clean up
+                    for name in remaining_locks:
+                        lock_path = os.path.join(profile_dir, name)
+                        try:
+                            os.remove(lock_path)
+                            logger.info(f"[Observer:{self.board_id}] Removed stale lock after kill: {lock_path}")
+                        except Exception as e:
+                            logger.warning(f"[Observer:{self.board_id}] Could not remove lock {lock_path}: {e}")
+                return False  # Profile is now free
+            else:
+                logger.error(
+                    f"[Observer:{self.board_id}] *** PROFILE LOCKED *** "
+                    f"Could not kill Chrome processes. Profile: {profile_abs}"
+                )
+                return True
 
         # Lock files exist but no Chrome process found → stale locks, clean up
         for name in found_locks:
@@ -342,6 +366,75 @@ class AutodartsObserver:
 
         return False
 
+    def _find_chrome_pids_for_profile(self, profile_norm: str) -> list:
+        """Find Chrome process PIDs using the given profile directory."""
+        pids = []
+        if sys.platform == 'win32':
+            try:
+                result = subprocess.run(
+                    ['powershell', '-NoProfile', '-Command',
+                     "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" "
+                     "| Select-Object ProcessId,CommandLine | Format-List"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                current_pid = None
+                for line in result.stdout.splitlines():
+                    s = line.strip()
+                    if s.lower().startswith('processid'):
+                        current_pid = s.split(':', 1)[1].strip()
+                    elif s.lower().startswith('commandline') and current_pid:
+                        cmdline = s.split(':', 1)[1].strip().lower().replace('/', '\\')
+                        if profile_norm in cmdline:
+                            pids.append(current_pid)
+                            logger.info(
+                                f"[Observer:{self.board_id}] chrome_pid={current_pid} "
+                                f"matched user-data-dir={profile_norm}"
+                            )
+                        current_pid = None
+            except Exception as e:
+                logger.debug(f"[Observer:{self.board_id}] PowerShell PID scan failed: {e}")
+        else:
+            try:
+                result = subprocess.run(
+                    ['pgrep', '-af', 'chrome'],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in result.stdout.splitlines():
+                    if profile_norm in line.lower():
+                        pid = line.split()[0]
+                        pids.append(pid)
+                        logger.info(
+                            f"[Observer:{self.board_id}] chrome_pid={pid} "
+                            f"matched user-data-dir={profile_norm}"
+                        )
+            except Exception:
+                pass
+        return pids
+
+    def _kill_pids(self, pids: list) -> list:
+        """Kill processes by PID. Returns list of successfully killed PIDs."""
+        killed = []
+        for pid in pids:
+            try:
+                if sys.platform == 'win32':
+                    r = subprocess.run(
+                        ['taskkill', '/F', '/PID', str(pid)],
+                        capture_output=True, timeout=5,
+                    )
+                else:
+                    r = subprocess.run(
+                        ['kill', '-9', str(pid)],
+                        capture_output=True, timeout=5,
+                    )
+                if r.returncode == 0:
+                    logger.info(f"[Observer:{self.board_id}] CHROME_KILL: pid={pid} success")
+                    killed.append(pid)
+                else:
+                    logger.warning(f"[Observer:{self.board_id}] CHROME_KILL: pid={pid} failed rc={r.returncode}")
+            except Exception as e:
+                logger.warning(f"[Observer:{self.board_id}] CHROME_KILL: pid={pid} error: {e}")
+        return killed
+
     async def open_session(
         self,
         autodarts_url: str,
@@ -350,9 +443,23 @@ class AutodartsObserver:
         headless: bool = False,
     ):
         """Open Chrome with persistent profile and start the observer loop."""
+        # ── Lifecycle guard: block if already starting or stopping ──
+        if self._lifecycle_state in (LifecycleState.STARTING, LifecycleState.STOPPING):
+            logger.warning(
+                f"[Observer:{self.board_id}] open_session BLOCKED — "
+                f"lifecycle={self._lifecycle_state.value} (gen={self._session_generation})"
+            )
+            return
+
         if self.is_open:
             logger.info(f"[Observer:{self.board_id}] Browser already open, skipping")
             return
+
+        # ── Transition to STARTING ──
+        self._session_generation += 1
+        gen = self._session_generation
+        self._set_lifecycle(LifecycleState.STARTING)
+        self._last_launch_time = time.time()
 
         self._on_game_started = on_game_started
         self._on_game_ended = on_game_ended
@@ -372,7 +479,7 @@ class AutodartsObserver:
 
         logger.info(f"[Observer:{self.board_id}] ALL_FLAGS_RESET: "
                     f"stopping=False closing=False finalized=False abort_detected=False "
-                    f"last_finalized_match_id=None")
+                    f"last_finalized_match_id=None gen={self._session_generation}")
 
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
@@ -544,13 +651,23 @@ class AutodartsObserver:
                 logger.warning(f"[Observer:{self.board_id}]   Window management skipped: {wm_err}")
 
             # ── Post-launch health check: verify page is still alive ──
+            health_ok = True
             for check_at in [3, 7, 12]:
+                # Stale generation check: abort if a newer session superseded this one
+                if self._session_generation != gen:
+                    logger.warning(
+                        f"[Observer:{self.board_id}]   HEALTH stale gen={gen} "
+                        f"current={self._session_generation}, aborting"
+                    )
+                    health_ok = False
+                    break
                 await asyncio.sleep(check_at - (0 if check_at == 3 else (3 if check_at == 7 else 7)))
                 if not self._page_alive():
                     logger.error(
                         f"[Observer:{self.board_id}]   HEALTH@{check_at}s: "
                         f"page_alive=False (page or context is None/closed)"
                     )
+                    health_ok = False
                     break
                 try:
                     alive_url = self._page.url
@@ -564,15 +681,24 @@ class AutodartsObserver:
                         f"[Observer:{self.board_id}]   HEALTH@{check_at}s: "
                         f"page_alive=False, error={health_err}"
                     )
+                    health_ok = False
                     break
 
-            logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH SUCCESS ===")
-            self._observe_task = asyncio.create_task(self._observe_loop())
+            if health_ok:
+                logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH SUCCESS === (gen={gen})")
+                self._set_lifecycle(LifecycleState.RUNNING)
+                self._observe_task = asyncio.create_task(self._observe_loop())
+            else:
+                logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH FAILED (health) === (gen={gen})")
+                self._set_lifecycle(LifecycleState.ERROR)
+                self.status.last_error = "Post-launch health check failed"
+                await self._cleanup()
 
         except Exception as e:
             logger.error(f"[Observer:{self.board_id}] === BROWSER LAUNCH FAILED === {e}", exc_info=True)
             self.status.last_error = f"{type(e).__name__}: {str(e)[:200]}"
             self._set_state(ObserverState.ERROR)
+            self._set_lifecycle(LifecycleState.ERROR)
             await self._cleanup()
 
     # ═══════════════════════════════════════════════════════════════
@@ -970,12 +1096,16 @@ class AutodartsObserver:
         Detects self-call (from within observe_task) to avoid deadlock.
         Does NOT handle kiosk window management — that is finalize_match's job.
         """
+        if self._lifecycle_state == LifecycleState.CLOSED:
+            logger.info(f"[Observer:{self.board_id}] CLOSE_SESSION_SKIPPED (lifecycle=closed)")
+            return
         if self._closing:
             logger.info(f"[Observer:{self.board_id}] CLOSE_SESSION_SKIPPED (already closing)")
             return
         self._closing = True
         self._stopping = True
-        logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_START ===")
+        self._set_lifecycle(LifecycleState.STOPPING)
+        logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_START === (gen={self._session_generation})")
 
         # Detect self-call: if we're being called from within the observe_task,
         # do NOT cancel/await ourselves (would deadlock).
@@ -997,6 +1127,7 @@ class AutodartsObserver:
 
         await self._cleanup()
         self._set_state(ObserverState.CLOSED)
+        self._set_lifecycle(LifecycleState.CLOSED)
         logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_DONE ===")
 
     async def _cleanup(self):
@@ -1532,10 +1663,16 @@ class AutodartsObserver:
 
 
 class ObserverManager:
-    """Manages one AutodartsObserver instance per board."""
+    """Manages one AutodartsObserver instance per board with lifecycle serialization."""
 
     def __init__(self):
         self._observers: Dict[str, AutodartsObserver] = {}
+        self._locks: Dict[str, asyncio.Lock] = {}
+
+    def _get_lock(self, board_id: str) -> asyncio.Lock:
+        if board_id not in self._locks:
+            self._locks[board_id] = asyncio.Lock()
+        return self._locks[board_id]
 
     def get(self, board_id: str) -> Optional[AutodartsObserver]:
         return self._observers.get(board_id)
@@ -1543,11 +1680,17 @@ class ObserverManager:
     def get_status(self, board_id: str) -> dict:
         obs = self._observers.get(board_id)
         if obs:
-            return obs.status.to_dict()
-        return ObserverStatus(board_id=board_id).to_dict()
+            d = obs.status.to_dict()
+            d["lifecycle"] = obs.lifecycle_state.value
+            d["session_generation"] = obs._session_generation
+            return d
+        d = ObserverStatus(board_id=board_id).to_dict()
+        d["lifecycle"] = "closed"
+        d["session_generation"] = 0
+        return d
 
     def get_all_statuses(self) -> list:
-        return [obs.status.to_dict() for obs in self._observers.values()]
+        return [self.get_status(bid) for bid in self._observers]
 
     async def open(
         self,
@@ -1557,34 +1700,48 @@ class ObserverManager:
         on_game_ended=None,
         headless: bool = False,
     ):
-        # ── Single observer per board: cleanup existing first ──
-        existing = self._observers.get(board_id)
-        if existing:
-            if existing.is_open:
-                logger.info(f"[ObserverMgr] Board {board_id} already open, returning existing")
-                return existing
-            # Dead/closed observer → cleanup before creating new
-            logger.info(f"[ObserverMgr] Cleaning up dead observer for {board_id}")
+        lock = self._get_lock(board_id)
+        logger.info(f"[ObserverMgr] lifecycle_lock acquiring board={board_id}")
+        async with lock:
+            logger.info(f"[ObserverMgr] lifecycle_lock acquired board={board_id}")
             try:
-                await existing.close_session()
-            except Exception as e:
-                logger.debug(f"[ObserverMgr] cleanup error (ignored): {e}")
+                # ── Single observer per board: cleanup existing first ──
+                existing = self._observers.get(board_id)
+                if existing:
+                    if existing.is_open:
+                        logger.info(f"[ObserverMgr] Board {board_id} already open, returning existing")
+                        return existing
+                    # Dead/closed observer → cleanup before creating new
+                    logger.info(f"[ObserverMgr] Cleaning up dead observer for {board_id}")
+                    try:
+                        await existing.close_session()
+                    except Exception as e:
+                        logger.debug(f"[ObserverMgr] cleanup error (ignored): {e}")
 
-        obs = AutodartsObserver(board_id)
-        self._observers[board_id] = obs
-        await obs.open_session(
-            autodarts_url=autodarts_url,
-            on_game_started=on_game_started,
-            on_game_ended=on_game_ended,
-            headless=headless,
-        )
-        return obs
+                obs = AutodartsObserver(board_id)
+                self._observers[board_id] = obs
+                await obs.open_session(
+                    autodarts_url=autodarts_url,
+                    on_game_started=on_game_started,
+                    on_game_ended=on_game_ended,
+                    headless=headless,
+                )
+                return obs
+            finally:
+                logger.info(f"[ObserverMgr] lifecycle_lock released board={board_id}")
 
     async def close(self, board_id: str):
-        obs = self._observers.get(board_id)
-        if obs:
-            await obs.close_session()
-            logger.info(f"[ObserverMgr] Observer closed for board {board_id}")
+        lock = self._get_lock(board_id)
+        logger.info(f"[ObserverMgr] lifecycle_lock acquiring (close) board={board_id}")
+        async with lock:
+            logger.info(f"[ObserverMgr] lifecycle_lock acquired (close) board={board_id}")
+            try:
+                obs = self._observers.get(board_id)
+                if obs:
+                    await obs.close_session()
+                    logger.info(f"[ObserverMgr] Observer closed for board {board_id}")
+            finally:
+                logger.info(f"[ObserverMgr] lifecycle_lock released (close) board={board_id}")
 
     async def close_all(self):
         for board_id in list(self._observers.keys()):

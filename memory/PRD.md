@@ -372,6 +372,29 @@ autostart.bat:
   - Logs: AUTODARTS_WINDOW_HIDE start/success, KIOSK_FOCUS_RESTORE start/success,
           FINAL_VISIBLE_WINDOW, FINAL_FOREGROUND_WINDOW
   - ZIP: darts-kiosk-v2.7.1-windows.zip (2.1 MB)
+- v2.8.0: Observer-Lifecycle Serialisierung + Chrome-Profil-Lock (2026-03-12)
+  - PROBLEM: Race Conditions zwischen start/stop/watchdog/recovery
+  - PROBLEM: Chrome-Profil-Lock blockierte Neustart ("Wird in einer aktuellen Browsersitzung geöffnet")
+  - PROBLEM: BROWSER LAUNCH SUCCESS geloggt obwohl Health-Check danach fehlschlug
+  - FIX 1: Per-Board asyncio.Lock in ObserverManager (serialisiert open/close/recovery)
+           Logs: lifecycle_lock acquiring/acquired/released board=X
+  - FIX 2: LifecycleState enum (CLOSED/STARTING/RUNNING/STOPPING/ERROR)
+           Logs: lifecycle_state: X → Y (gen=N)
+  - FIX 3: _find_chrome_pids_for_profile + _kill_pids (via PowerShell/pgrep)
+           Erkennt + tötet Chrome-Prozesse mit exaktem user-data-dir Match
+           Logs: chrome_pid=X matched user-data-dir=Y, CHROME_KILL pid=X success
+  - FIX 4: Health-Check VOR SUCCESS-Log — SUCCESS nur bei page_alive=True
+           Bei Health-Failure → lifecycle=ERROR, cleanup
+  - FIX 5: session_generation ID — stale generation check in health loop
+  - FIX 6: Watchdog lifecycle-aware: skip STARTING/STOPPING, grace period (20s),
+           cooldown (15s base), exponential backoff (2^failures, max 16x)
+           Logs: watchdog skipped (transitional), recovery throttled
+  - Geänderte Dateien:
+    - autodarts_observer.py: LifecycleState enum, _set_lifecycle(), _find_chrome_pids_for_profile(),
+      _kill_pids(), _check_profile_locked() refactored, open_session(), close_session(),
+      ObserverManager mit per-board locks
+    - watchdog_service.py: komplett neu geschrieben (lifecycle-aware, cooldown, backoff)
+  - ZIP: darts-kiosk-v2.8.0-windows.zip (2.1 MB)
 
 ## Remaining Backlog
   - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)
