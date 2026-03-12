@@ -281,6 +281,21 @@ autostart.bat:
   - FIX 4: Observer _finalized flag on instance, reset on open_session and IN_GAME transition
   - FIX 5: Observe loop breaks IMMEDIATELY after finalize sets _stopping (no extra polls)
   - FIX 6: _cleanup logs PAGE_CLOSE_DONE, CONTEXT_CLOSE_DONE, PLAYWRIGHT_STOP_DONE
+- v2.4.0: Session Finalization Overhaul — Kiosk-tauglich (2026-03-12)
+  - NEUE BUSINESS-REGEL: Abbruch/Delete zieht jetzt auch 1 Credit ab
+  - Credit-Policy: finished=ja, aborted=ja, manual=ja, crashed=nein
+  - Lock-Logik: NUR wenn credits<=0 nach Abzug (nie bei verbleibenden Credits)
+  - 4-Sekunden Delay vor Observer-Close (Spieler sieht Ergebnis)
+  - should_teardown=True IMMER (ein Observer pro Spiel)
+  - Timeout-Schutz: asyncio.wait_for(finalize_match, timeout=15s)
+  - NEU: watchdog_service.py — Background-Task überwacht Observer-Gesundheit
+    - Auto-Restart bei Crash: Observer tot aber Session aktiv → Recovery
+    - Zombie-Cleanup: Observer offen aber keine Session → schließen
+    - Prüft alle 5 Sekunden: page alive, observer open, session consistent
+  - ObserverManager.open: Dead Observer werden vor neuem Start bereinigt
+  - Alle Tests passing: 16/16 (iteration_45)
+
+## Remaining Backlog
   - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)
   - FIX 8: Stop reason is "finalize_teardown" (not generic "stopping_flag") when finalize caused stop
   - FIX 9: FINISHED→IDLE does NOT re-trigger finalization
