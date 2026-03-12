@@ -520,6 +520,21 @@ autostart.bat:
     - README_KIOSK.md: Vollstaendige Dokumentation
   - Build-Script aktualisiert: kiosk/ Verzeichnis in Windows-Bundle integriert
   - ZIP: darts-kiosk-v3.0.0-windows.zip (2.1 MB)
+- v3.0.1: Installer Fix - Source Root + Shell Command (2026-03-12)
+  - BUG 1: SOURCE_DIR zeigte auf kiosk\ Subfolder statt Projekt-Root
+    - setup_kiosk.bat suchte backend/frontend unter kiosk\ -> Kopie schlug fehl
+    - FIX: Erkennung ob Script aus \kiosk Subfolder laeuft, dann Parent-Dir verwenden
+  - BUG 2: Winlogon Shell war raw .vbs Pfad (kein gueltiger Executable-Befehl)
+    - Windows konnte kiosk_shell.vbs nicht als Shell starten
+    - FIX: Shell = wscript.exe "C:\DartsKiosk\kiosk_shell.vbs"
+  - BUG 3: VBS startete .bat direkt (kann Probleme mit Shell-Kontext verursachen)
+    - FIX: WshShell.Run "cmd.exe /c ""darts_launcher.bat""", 0, False
+  - BUG 4: Kaputte ANSI-Escape-Sequenzen ohne ESC-Zeichen
+    - FIX: Alle ANSI-Codes entfernt, reines ASCII
+  - BUG 5: Keine Debug-Ausgabe bei Pfaderkennung + Shell-Registry
+    - FIX: [DEBUG] Logs fuer SCRIPT_DIR, SOURCE_DIR, INSTALL_DIR, Shell-Wert
+  - Geaenderte Dateien: kiosk/setup_kiosk.bat, kiosk/kiosk_shell.vbs
+  - ZIP: darts-kiosk-v3.0.1-windows.zip (2.1 MB)
 
 ## Remaining Backlog
 ### P1

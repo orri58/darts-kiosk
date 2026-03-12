@@ -1,19 +1,11 @@
 @echo off
 REM ============================================================================
-REM  DARTS KIOSK — Automated Installer
+REM  DARTS KIOSK - Automated Installer v3.0.1
 REM  Converts a Windows PC into a locked-down Darts Kiosk appliance.
 REM ============================================================================
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
-title Darts Kiosk — Installer v3.0
-
-REM === Colors via ANSI ===
-set "G=[92m"
-set "R=[91m"
-set "Y=[93m"
-set "C=[96m"
-set "B=[1m"
-set "N=[0m"
+title Darts Kiosk - Installer v3.0.1
 
 REM === Default Configuration ===
 set "INSTALL_DIR=C:\DartsKiosk"
@@ -24,31 +16,59 @@ set "BACKEND_PORT=8001"
 set "AUTODARTS_URL=https://play.autodarts.io"
 
 echo.
-echo %B%================================================================%N%
-echo %B%   DARTS KIOSK — AUTOMATED INSTALLER v3.0%N%
-echo %B%================================================================%N%
+echo ================================================================
+echo   DARTS KIOSK - AUTOMATED INSTALLER v3.0.1
+echo ================================================================
 echo.
 
 REM ============================================================================
-REM  STEP 0 — Administrator Check
+REM  STEP 0 - Administrator Check
 REM ============================================================================
-echo %C%[Step 0/10] Administrator-Rechte pruefen...%N%
+echo [Step 0/10] Administrator-Rechte pruefen...
 net session >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo %R%[FEHLER] Dieses Script muss als Administrator ausgefuehrt werden!%N%
+    echo [FEHLER] Dieses Script muss als Administrator ausgefuehrt werden!
     echo          Rechtsklick auf setup_kiosk.bat -^> "Als Administrator ausfuehren"
     echo.
     pause
     exit /b 1
 )
-echo   %G%[OK] Administrator-Rechte vorhanden%N%
+echo   [OK] Administrator-Rechte vorhanden
 
 REM ============================================================================
-REM  STEP 1 — Configuration
+REM  SOURCE ROOT DETECTION (TASK 1 + TASK 5)
+REM  Handles running from kiosk\ subfolder or project root.
+REM ============================================================================
+set "SCRIPT_DIR=%~dp0"
+if "!SCRIPT_DIR:~-1!"=="\" set "SCRIPT_DIR=!SCRIPT_DIR:~0,-1!"
+set "SOURCE_DIR=!SCRIPT_DIR!"
+
+REM If running from the kiosk subfolder, go up one level to project root
+if /i "!SOURCE_DIR:~-6!"=="\kiosk" (
+    for %%I in ("!SOURCE_DIR!\..") do set "SOURCE_DIR=%%~fI"
+)
+
+echo.
+echo   [DEBUG] SCRIPT_DIR  = !SCRIPT_DIR!
+echo   [DEBUG] SOURCE_DIR  = !SOURCE_DIR!
+echo   [DEBUG] INSTALL_DIR = !INSTALL_DIR!
+echo.
+
+REM Verify source contains backend
+if not exist "!SOURCE_DIR!\backend" (
+    echo [FEHLER] backend\ nicht gefunden in !SOURCE_DIR!
+    echo          Bitte setup_kiosk.bat aus dem entpackten Release-Ordner starten.
+    pause
+    exit /b 1
+)
+echo   [OK] Quellverzeichnis validiert: !SOURCE_DIR!
+
+REM ============================================================================
+REM  STEP 1 - Configuration
 REM ============================================================================
 echo.
-echo %C%[Step 1/10] Konfiguration%N%
+echo [Step 1/10] Konfiguration
 echo.
 echo   Standard-Werte:
 echo     Installationspfad:  %INSTALL_DIR%
@@ -90,19 +110,19 @@ if /i not "!PROCEED!"=="J" (
 )
 
 REM ============================================================================
-REM  STEP 2 — System Requirements
+REM  STEP 2 - System Requirements
 REM ============================================================================
 echo.
-echo %C%[Step 2/10] Systemanforderungen pruefen...%N%
+echo [Step 2/10] Systemanforderungen pruefen...
 
 REM Check Python
 set "PYTHON_OK=0"
 python --version >nul 2>&1
 if !ERRORLEVEL!==0 (
-    for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo   %G%[OK] %%v%N%
+    for /f "tokens=*" %%v in ('python --version 2^>^&1') do echo   [OK] %%v
     set "PYTHON_OK=1"
 ) else (
-    echo   %R%[FEHLER] Python nicht gefunden!%N%
+    echo   [FEHLER] Python nicht gefunden!
     echo            Bitte Python 3.11+ installieren: https://python.org/downloads
     pause
     exit /b 1
@@ -120,25 +140,26 @@ for %%G in (
     )
 )
 if defined CHROME_PATH (
-    echo   %G%[OK] Chrome gefunden: !CHROME_PATH!%N%
+    echo   [OK] Chrome gefunden: !CHROME_PATH!
 ) else (
-    echo   %Y%[WARN] Chrome nicht gefunden — wird nach Installation benoetigt%N%
+    echo   [WARN] Chrome nicht gefunden - wird nach Installation benoetigt
     echo          Download: https://google.com/chrome
 )
 
 REM Check curl
 curl --version >nul 2>&1
 if !ERRORLEVEL!==0 (
-    echo   %G%[OK] curl verfuegbar%N%
+    echo   [OK] curl verfuegbar
 ) else (
-    echo   %Y%[WARN] curl nicht gefunden — Health-Check eingeschraenkt%N%
+    echo   [WARN] curl nicht gefunden - Health-Check eingeschraenkt
 )
 
 REM ============================================================================
-REM  STEP 3 — Create Installation Directory + Copy Files
+REM  STEP 3 - Create Installation Directory + Copy Files
 REM ============================================================================
 echo.
-echo %C%[Step 3/10] Darts-System installieren nach !INSTALL_DIR!...%N%
+echo [Step 3/10] Darts-System installieren nach !INSTALL_DIR!...
+echo   [DEBUG] Kopiere von SOURCE_DIR=!SOURCE_DIR!
 
 if not exist "!INSTALL_DIR!" mkdir "!INSTALL_DIR!"
 mkdir "!INSTALL_DIR!\data\db" 2>nul
@@ -149,17 +170,12 @@ mkdir "!INSTALL_DIR!\data\chrome_profile\!BOARD_ID!" 2>nul
 mkdir "!INSTALL_DIR!\data\kiosk_ui_profile" 2>nul
 mkdir "!INSTALL_DIR!\logs" 2>nul
 
-REM Copy application files from the extracted release directory
-set "SOURCE_DIR=%~dp0"
-REM Remove trailing backslash
-if "!SOURCE_DIR:~-1!"=="\" set "SOURCE_DIR=!SOURCE_DIR:~0,-1!"
-
 REM Copy backend
 if exist "!SOURCE_DIR!\backend" (
     xcopy "!SOURCE_DIR!\backend" "!INSTALL_DIR!\backend\" /E /I /Y /Q >nul
-    echo   %G%[OK] Backend kopiert%N%
+    echo   [OK] Backend kopiert
 ) else (
-    echo   %R%[FEHLER] backend\ nicht gefunden in !SOURCE_DIR!%N%
+    echo   [FEHLER] backend\ nicht gefunden in !SOURCE_DIR!
     pause
     exit /b 1
 )
@@ -167,60 +183,62 @@ if exist "!SOURCE_DIR!\backend" (
 REM Copy frontend
 if exist "!SOURCE_DIR!\frontend" (
     xcopy "!SOURCE_DIR!\frontend" "!INSTALL_DIR!\frontend\" /E /I /Y /Q >nul
-    echo   %G%[OK] Frontend kopiert%N%
+    echo   [OK] Frontend kopiert
+) else (
+    echo   [WARN] frontend\ nicht gefunden - uebersprungen
 )
 
-REM Copy runtime scripts
+REM Copy runtime scripts from project root
 for %%F in (run_backend.py credits_overlay.py _run_backend.bat start.bat stop.bat updater.py VERSION) do (
     if exist "!SOURCE_DIR!\%%F" (
         copy "!SOURCE_DIR!\%%F" "!INSTALL_DIR!\%%F" /Y >nul
     )
 )
-echo   %G%[OK] Scripts kopiert%N%
+echo   [OK] Scripts kopiert
 
-REM Copy kiosk-specific files
-for %%F in (kiosk_shell.vbs darts_launcher.bat maintenance.bat uninstall_kiosk.bat) do (
+REM Copy kiosk-specific files (from kiosk subfolder or same dir as script)
+for %%F in (kiosk_shell.vbs darts_launcher.bat maintenance.bat uninstall_kiosk.bat README_KIOSK.md) do (
     if exist "!SOURCE_DIR!\kiosk\%%F" (
         copy "!SOURCE_DIR!\kiosk\%%F" "!INSTALL_DIR!\%%F" /Y >nul
-    ) else if exist "!SOURCE_DIR!\%%F" (
-        copy "!SOURCE_DIR!\%%F" "!INSTALL_DIR!\%%F" /Y >nul
+    ) else if exist "!SCRIPT_DIR!\%%F" (
+        copy "!SCRIPT_DIR!\%%F" "!INSTALL_DIR!\%%F" /Y >nul
     )
 )
-echo   %G%[OK] Kiosk-Dateien kopiert%N%
+echo   [OK] Kiosk-Dateien kopiert
 
 REM ============================================================================
-REM  STEP 4 — Python Virtual Environment
+REM  STEP 4 - Python Virtual Environment
 REM ============================================================================
 echo.
-echo %C%[Step 4/10] Python-Umgebung einrichten...%N%
+echo [Step 4/10] Python-Umgebung einrichten...
 
 if not exist "!INSTALL_DIR!\.venv\Scripts\activate.bat" (
     python -m venv "!INSTALL_DIR!\.venv"
-    echo   %G%[OK] Virtual Environment erstellt%N%
+    echo   [OK] Virtual Environment erstellt
 ) else (
-    echo   %G%[OK] Virtual Environment existiert bereits%N%
+    echo   [OK] Virtual Environment existiert bereits
 )
 
 call "!INSTALL_DIR!\.venv\Scripts\activate.bat"
 
 pip install -r "!INSTALL_DIR!\backend\requirements.txt" -q 2>nul
 if !ERRORLEVEL!==0 (
-    echo   %G%[OK] Python-Pakete installiert%N%
+    echo   [OK] Python-Pakete installiert
 ) else (
-    echo   %Y%[WARN] Einige Pakete konnten nicht installiert werden%N%
+    echo   [WARN] Einige Pakete konnten nicht installiert werden
 )
 
 REM Install Playwright browsers
 python -m playwright install chromium >nul 2>&1
-echo   %G%[OK] Playwright Chromium installiert%N%
+echo   [OK] Playwright Chromium installiert
 
 REM ============================================================================
-REM  STEP 5 — Create .env Configuration
+REM  STEP 5 - Create .env Configuration
 REM ============================================================================
 echo.
-echo %C%[Step 5/10] Konfigurationsdateien erstellen...%N%
+echo [Step 5/10] Konfigurationsdateien erstellen...
 
-REM Backend .env (only if not exists — preserve user config)
+REM Backend .env (only if not exists - preserve user config)
 if not exist "!INSTALL_DIR!\backend\.env" (
     (
         echo DATABASE_URL=sqlite+aiosqlite:///./data/db/darts.sqlite
@@ -238,15 +256,15 @@ if not exist "!INSTALL_DIR!\backend\.env" (
         echo UPDATE_CHECK_ENABLED=true
         echo UPDATE_CHECK_INTERVAL_HOURS=24
     ) > "!INSTALL_DIR!\backend\.env"
-    echo   %G%[OK] backend\.env erstellt%N%
+    echo   [OK] backend\.env erstellt
 ) else (
-    echo   %G%[OK] backend\.env existiert bereits (nicht ueberschrieben^)%N%
+    echo   [OK] backend\.env existiert bereits (nicht ueberschrieben)
 )
 
 REM Frontend .env
 if not exist "!INSTALL_DIR!\frontend\.env" (
     echo REACT_APP_BACKEND_URL=http://localhost:!BACKEND_PORT!> "!INSTALL_DIR!\frontend\.env"
-    echo   %G%[OK] frontend\.env erstellt%N%
+    echo   [OK] frontend\.env erstellt
 )
 
 REM Write kiosk config (read by launcher + maintenance)
@@ -258,39 +276,39 @@ REM Write kiosk config (read by launcher + maintenance)
     echo set "BACKEND_PORT=!BACKEND_PORT!"
     echo set "CHROME_PATH=!CHROME_PATH!"
 ) > "!INSTALL_DIR!\kiosk_config.bat"
-echo   %G%[OK] kiosk_config.bat erstellt%N%
+echo   [OK] kiosk_config.bat erstellt
 
 REM Store maintenance password hash (PowerShell SHA256)
 for /f "tokens=*" %%h in ('powershell -NoProfile -Command "[BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes('!KIOSK_PASS!'))).Replace('-','')"') do set "PASS_HASH=%%h"
 echo !PASS_HASH!> "!INSTALL_DIR!\data\.maintenance_key"
-echo   %G%[OK] Maintenance-Passwort gespeichert%N%
+echo   [OK] Maintenance-Passwort gespeichert
 
 REM ============================================================================
-REM  STEP 6 — Create Kiosk User
+REM  STEP 6 - Create Kiosk User
 REM ============================================================================
 echo.
-echo %C%[Step 6/10] Kiosk-Benutzer erstellen...%N%
+echo [Step 6/10] Kiosk-Benutzer erstellen...
 
 net user "!KIOSK_USER!" >nul 2>&1
 if !ERRORLEVEL!==0 (
-    echo   %G%[OK] Benutzer '!KIOSK_USER!' existiert bereits%N%
+    echo   [OK] Benutzer '!KIOSK_USER!' existiert bereits
     net user "!KIOSK_USER!" "!KIOSK_PASS!" >nul 2>&1
-    echo   %G%[OK] Passwort aktualisiert%N%
+    echo   [OK] Passwort aktualisiert
 ) else (
     net user "!KIOSK_USER!" "!KIOSK_PASS!" /add /comment:"Darts Kiosk Auto-Login Account" >nul
     net localgroup Users "!KIOSK_USER!" /add >nul 2>&1
-    echo   %G%[OK] Benutzer '!KIOSK_USER!' erstellt%N%
+    echo   [OK] Benutzer '!KIOSK_USER!' erstellt
 )
 
 REM Password never expires
 wmic useraccount where "name='!KIOSK_USER!'" set PasswordExpires=false >nul 2>&1
-echo   %G%[OK] Passwort-Ablauf deaktiviert%N%
+echo   [OK] Passwort-Ablauf deaktiviert
 
 REM ============================================================================
-REM  STEP 7 — Windows Auto-Login
+REM  STEP 7 - Windows Auto-Login
 REM ============================================================================
 echo.
-echo %C%[Step 7/10] Auto-Login konfigurieren...%N%
+echo [Step 7/10] Auto-Login konfigurieren...
 
 set "WINLOGON=HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
 
@@ -299,58 +317,55 @@ reg add "!WINLOGON!" /v DefaultUserName /t REG_SZ /d "!KIOSK_USER!" /f >nul
 reg add "!WINLOGON!" /v DefaultPassword /t REG_SZ /d "!KIOSK_PASS!" /f >nul
 reg add "!WINLOGON!" /v DefaultDomainName /t REG_SZ /d "%COMPUTERNAME%" /f >nul
 
-echo   %G%[OK] Auto-Login fuer '!KIOSK_USER!' konfiguriert%N%
+echo   [OK] Auto-Login fuer '!KIOSK_USER!' konfiguriert
 
 REM ============================================================================
-REM  STEP 8 — Shell Replacement
+REM  STEP 8 - Shell Replacement (TASK 2 + TASK 5)
 REM ============================================================================
 echo.
-echo %C%[Step 8/10] Shell-Ersetzung konfigurieren...%N%
+echo [Step 8/10] Shell-Ersetzung konfigurieren...
 
 REM Back up current shell value
+set "ORIG_SHELL="
 for /f "tokens=2*" %%a in ('reg query "!WINLOGON!" /v Shell 2^>nul ^| findstr /i "Shell"') do (
     set "ORIG_SHELL=%%b"
 )
 if defined ORIG_SHELL (
     echo   [INFO] Aktuelle Shell: !ORIG_SHELL!
     reg add "!WINLOGON!" /v Shell_Backup /t REG_SZ /d "!ORIG_SHELL!" /f >nul
-    echo   %G%[OK] Original-Shell gesichert als Shell_Backup%N%
+    echo   [OK] Original-Shell gesichert als Shell_Backup
 )
 
-REM Set kiosk shell for the kiosk user only (per-user Winlogon)
-REM Use HKCU-equivalent via user-specific registry loading
-REM Simpler approach: Set Shell globally but also keep admin user override
-REM
-REM For safety: We use per-user shell override via UserInit
-REM The kiosk_shell.vbs will check the username and only activate for the kiosk user
-REM This way admin accounts keep normal explorer.exe
+REM Shell must be a valid executable command, not just a .vbs path.
+REM Use wscript.exe to run the VBS script as the shell.
+set "SHELL_CMD=wscript.exe "!INSTALL_DIR!\kiosk_shell.vbs""
+reg add "!WINLOGON!" /v Shell /t REG_SZ /d "!SHELL_CMD!" /f >nul
 
-reg add "!WINLOGON!" /v Shell /t REG_SZ /d "!INSTALL_DIR!\kiosk_shell.vbs" /f >nul
-echo   %G%[OK] Shell ersetzt durch kiosk_shell.vbs%N%
+echo   [DEBUG] Shell registry value = !SHELL_CMD!
+echo   [OK] Shell ersetzt: wscript.exe kiosk_shell.vbs
 
-REM Create a registry override for all admin users to keep explorer
-REM This uses the HKLM\...\Winlogon\SpecialAccounts approach
-REM Better: Use AlternateShell for admin recovery
+REM AlternateShell for Safe Mode recovery
 reg add "!WINLOGON!" /v AlternateShell /t REG_SZ /d "cmd.exe" /f >nul
-
-echo   %G%[OK] AlternateShell=cmd.exe fuer Safe Mode gesichert%N%
+echo   [OK] AlternateShell=cmd.exe fuer Safe Mode gesichert
 
 REM ============================================================================
-REM  STEP 9 — Kiosk Hardening (User Policies)
+REM  STEP 9 - Kiosk Hardening (User Policies)
 REM ============================================================================
 echo.
-echo %C%[Step 9/10] Kiosk-Haertung...%N%
+echo [Step 9/10] Kiosk-Haertung...
 
 REM Get SID of kiosk user for per-user policies
+set "KIOSK_SID="
 for /f "tokens=2 delims==" %%s in ('wmic useraccount where "name='!KIOSK_USER!'" get sid /value 2^>nul ^| findstr /i "SID"') do (
     set "KIOSK_SID=%%s"
 )
 
 REM Apply user-specific policies via HKU registry hive
-REM First: load the user's NTUSER.DAT if not logged in
 set "KIOSK_PROFILE="
-for /f "tokens=2*" %%a in ('reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\!KIOSK_SID!" /v ProfileImagePath 2^>nul ^| findstr /i "ProfileImagePath"') do (
-    set "KIOSK_PROFILE=%%b"
+if defined KIOSK_SID (
+    for /f "tokens=2*" %%a in ('reg query "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\!KIOSK_SID!" /v ProfileImagePath 2^>nul ^| findstr /i "ProfileImagePath"') do (
+        set "KIOSK_PROFILE=%%b"
+    )
 )
 
 set "HKU_PATH=HKU\DartsKiosk_Temp"
@@ -367,29 +382,29 @@ if !POLICY_LOADED!==1 (
 
     REM Disable Task Manager
     reg add "!POL!\System" /v DisableTaskMgr /t REG_DWORD /d 1 /f >nul
-    echo   %G%[OK] Task-Manager deaktiviert (nur Kiosk-User)%N%
+    echo   [OK] Task-Manager deaktiviert (nur Kiosk-User)
 
     REM Disable Lock Workstation
     reg add "!POL!\System" /v DisableLockWorkstation /t REG_DWORD /d 1 /f >nul
-    echo   %G%[OK] Lock-Workstation deaktiviert%N%
+    echo   [OK] Lock-Workstation deaktiviert
 
     REM Disable Change Password
     reg add "!POL!\System" /v DisableChangePassword /t REG_DWORD /d 1 /f >nul
-    echo   %G%[OK] Passwort-Aenderung deaktiviert%N%
+    echo   [OK] Passwort-Aenderung deaktiviert
 
-    REM Explorer policies (no right-click, no desktop, etc.)
+    REM Explorer policies
     reg add "!POL!\Explorer" /v NoDesktop /t REG_DWORD /d 1 /f >nul
     reg add "!POL!\Explorer" /v NoStartMenuMorePrograms /t REG_DWORD /d 1 /f >nul
     reg add "!POL!\Explorer" /v NoRun /t REG_DWORD /d 1 /f >nul
     reg add "!POL!\Explorer" /v NoViewContextMenu /t REG_DWORD /d 1 /f >nul
     reg add "!POL!\Explorer" /v NoWinKeys /t REG_DWORD /d 1 /f >nul
     reg add "!POL!\Explorer" /v NoClose /t REG_DWORD /d 0 /f >nul
-    echo   %G%[OK] Explorer-Einschraenkungen gesetzt%N%
+    echo   [OK] Explorer-Einschraenkungen gesetzt
 
     REM Unload hive
     reg unload "!HKU_PATH!" >nul 2>&1
 ) else (
-    echo   %Y%[WARN] Kiosk-User-Profil nicht geladen — Policies werden beim ersten Login angewendet%N%
+    echo   [WARN] Kiosk-User-Profil nicht geladen - Policies werden beim ersten Login angewendet
     echo          Starte ggf. das System neu und fuehre den Installer erneut aus.
 )
 
@@ -399,9 +414,9 @@ echo   Firewall konfigurieren...
 netsh advfirewall firewall show rule name="DartsKiosk Backend" >nul 2>&1
 if !ERRORLEVEL! NEQ 0 (
     netsh advfirewall firewall add rule name="DartsKiosk Backend" dir=in action=allow protocol=TCP localport=!BACKEND_PORT! >nul
-    echo   %G%[OK] Firewall-Regel erstellt (Port !BACKEND_PORT!)%N%
+    echo   [OK] Firewall-Regel erstellt (Port !BACKEND_PORT!)
 ) else (
-    echo   %G%[OK] Firewall-Regel existiert bereits%N%
+    echo   [OK] Firewall-Regel existiert bereits
 )
 
 REM === Power Management ===
@@ -412,35 +427,36 @@ powercfg -change -monitor-timeout-ac 0 >nul
 powercfg -change -hibernate-timeout-ac 0 >nul
 powercfg -change -standby-timeout-dc 0 >nul
 powercfg -change -monitor-timeout-dc 0 >nul
-echo   %G%[OK] Sleep/Standby/Bildschirmschoner deaktiviert%N%
+echo   [OK] Sleep/Standby/Bildschirmschoner deaktiviert
 
 REM === Disable Notifications ===
 echo.
 echo   Benachrichtigungen deaktivieren...
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Explorer" /v DisableNotificationCenter /t REG_DWORD /d 1 /f >nul 2>&1
 reg add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Notifications\Settings" /v NOC_GLOBAL_SETTING_TOASTS_ENABLED /t REG_DWORD /d 0 /f >nul 2>&1
-echo   %G%[OK] Windows-Benachrichtigungen deaktiviert%N%
+echo   [OK] Windows-Benachrichtigungen deaktiviert
 
 REM === Disable Windows Update Restart Prompts ===
 reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoRebootWithLoggedOnUsers /t REG_DWORD /d 1 /f >nul 2>&1
-echo   %G%[OK] Auto-Restart bei Updates deaktiviert%N%
+echo   [OK] Auto-Restart bei Updates deaktiviert
 
 REM ============================================================================
-REM  STEP 10 — Finalize
+REM  STEP 10 - Finalize
 REM ============================================================================
 echo.
-echo %C%[Step 10/10] Installation abschliessen...%N%
+echo [Step 10/10] Installation abschliessen...
 
 REM Create install marker
 (
     echo installed=%date% %time%
-    echo version=3.0
+    echo version=3.0.1
     echo install_dir=!INSTALL_DIR!
     echo kiosk_user=!KIOSK_USER!
     echo board_id=!BOARD_ID!
     echo backend_port=!BACKEND_PORT!
+    echo source_dir=!SOURCE_DIR!
 ) > "!INSTALL_DIR!\data\.install_info"
-echo   %G%[OK] Installationsinfo gespeichert%N%
+echo   [OK] Installationsinfo gespeichert
 
 REM Create desktop shortcut for maintenance (for admin user)
 set "ADMIN_DESKTOP=%USERPROFILE%\Desktop"
@@ -450,13 +466,13 @@ if exist "!ADMIN_DESKTOP!" (
         echo cd /d "!INSTALL_DIR!"
         echo call maintenance.bat
     ) > "!ADMIN_DESKTOP!\DartsKiosk Maintenance.bat"
-    echo   %G%[OK] Maintenance-Shortcut auf Admin-Desktop erstellt%N%
+    echo   [OK] Maintenance-Shortcut auf Admin-Desktop erstellt
 )
 
 echo.
-echo %G%================================================================%N%
-echo %G%%B%   INSTALLATION ABGESCHLOSSEN!%N%
-echo %G%================================================================%N%
+echo ================================================================
+echo   INSTALLATION ABGESCHLOSSEN!
+echo ================================================================
 echo.
 echo   Installiert in:       !INSTALL_DIR!
 echo   Kiosk-Benutzer:       !KIOSK_USER!
@@ -480,7 +496,7 @@ set /p "REBOOT=System jetzt neu starten? (J/N) [N]: "
 if /i "!REBOOT!"=="J" (
     echo.
     echo System startet in 10 Sekunden neu...
-    shutdown /r /t 10 /c "Darts Kiosk Installation — Neustart"
+    shutdown /r /t 10 /c "Darts Kiosk Installation - Neustart"
 ) else (
     echo.
     echo   Bitte starten Sie das System manuell neu,
