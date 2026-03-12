@@ -1,10 +1,12 @@
 """
-Kiosk Action Routes — Observer MVP (v2.6.0)
+Kiosk Action Routes — Observer MVP (v2.7.0)
 
 Central finalization via finalize_match(board_id, trigger):
   - Single entry point for ALL match-end scenarios
   - Observer teardown ONLY when should_lock (credits exhausted)
   - Observer KEPT ALIVE when credits remain (next game ready)
+  - After finish with credits: navigate Autodarts to home/lobby
+  - Duplicate match-ID guard: credit deducted exactly ONCE per match
   - Credit deduction for finished, aborted, manual (not for crashed/unknown)
   - Lock ONLY when credits <= 0 after deduction
   - Delay ONLY for trigger="finished" (player sees result)
@@ -44,6 +46,7 @@ router = APIRouter()
 # ── Idempotency guards (module-level, per board_id) ──
 _finalizing: set = set()          # True WHILE finalize_match is running
 _finalized: dict = {}             # True AFTER finalize completed (until next game start)
+_last_finalized_match: dict = {}  # board_id -> match_id (prevents duplicate credit deduction)
 
 
 # =====================================================================
@@ -138,7 +141,15 @@ async def _finalize_match_inner(board_id: str, trigger: str,
 
     if _finalized.get(board_id) and trigger != "manual":
         logger.info(f"[SESSION] finalize skipped (already finalized) board={board_id} trigger={trigger}")
-        return {"should_lock": False, "should_teardown": True,
+        return {"should_lock": False, "should_teardown": False,
+                "credits_remaining": -1, "board_status": "unknown"}
+
+    # ── Duplicate match-ID guard (defense-in-depth) ──
+    obs = observer_manager.get(board_id)
+    current_match_id = obs._ws_state.last_match_id if obs and hasattr(obs, '_ws_state') else None
+    if current_match_id and _last_finalized_match.get(board_id) == current_match_id and trigger != "manual":
+        logger.info(f"[SESSION] SKIP_DUPLICATE_FINALIZE match_id={current_match_id} board={board_id}")
+        return {"should_lock": False, "should_teardown": False,
                 "credits_remaining": -1, "board_status": "unknown"}
 
     _finalizing.add(board_id)
@@ -189,6 +200,11 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                     logger.info(f"[SESSION] credit_after={session.credits_remaining}")
 
                     credits_remaining = session.credits_remaining
+
+                    # ── Store match_id for duplicate prevention ──
+                    if current_match_id:
+                        _last_finalized_match[board_id] = current_match_id
+                        logger.info(f"[SESSION] MATCH_FINALIZED_ONCE match_id={current_match_id}")
 
                     # ── Lock decision: ONLY when credits <= 0 ──
                     if session.pricing_mode == PricingMode.PER_GAME.value:
@@ -359,6 +375,7 @@ async def _on_game_started(board_id: str):
     """Observer detected match start. Set board to IN_GAME. Reset finalized flag."""
     logger.info(f"[Observer->Kiosk] === GAME STARTED === board={board_id}")
     _finalized.pop(board_id, None)
+    _last_finalized_match.pop(board_id, None)
     try:
         async with AsyncSessionLocal() as db:
             async with db.begin():

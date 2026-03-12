@@ -64,26 +64,38 @@ Previous approach (BROKEN, replaced):
   was already established before the injection script ran.
 ```
 
-## Finalization Chain (v2.6.0)
+## Finalization Chain (v2.7.0)
 ```
 finalize_match(board_id, trigger):
-  1. [GUARD]     Idempotency check (_finalizing, _finalized)
-  2. [CREDIT]    Deduct credit (finished/aborted/manual=yes, crashed=no)
-  3. [LOCK]      should_lock = credits_remaining <= 0
-  4. [TEARDOWN]  should_teardown = should_lock
-  5. [DELAY]     ONLY for trigger="finished" (4s player sees result)
-  6. [OBSERVER]  Close browser ONLY if should_teardown
-                 Otherwise: OBSERVER_KEPT_ALIVE (next game ready)
-  7. [BROADCAST] Sound + credit_update events
-  8. [FINALIZED] Mark as finalized
-  FINALLY:
-  9. [KIOSK_UI]  return_to_kiosk_ui() GUARANTEED (try...finally)
-                 Logs: "finally: restoring kiosk UI" → "finally: kiosk UI restored OK"
+  GUARDS:
+    1. _finalizing guard (in-flight)
+    2. _finalized guard (already done)
+    3. _last_finalized_match guard (same match_id → SKIP_DUPLICATE_FINALIZE)
+  LOGIC:
+    4. [CREDIT]    Deduct credit (finished/aborted/manual=yes, crashed=no)
+    5. [MATCH_ID]  Store match_id → _last_finalized_match[board_id]
+    6. [LOCK]      should_lock = credits_remaining <= 0
+    7. [TEARDOWN]  should_teardown = should_lock
+    8. [DELAY]     ONLY for trigger="finished" (4s player sees result)
+    9. [OBSERVER]  if should_teardown: close browser
+                   else: OBSERVER_KEPT_ALIVE (next game ready)
+    10.[BROADCAST] Sound + credit_update events
+    11.[FINALIZED] Mark as finalized
+  FINALLY (guaranteed):
+    12.[KIOSK_UI]  return_to_kiosk_ui() ALWAYS runs
 
-Observer Abort Fast-Path (autodarts_observer._observe_loop):
-  - _abort_detected check at TOP of while loop (BEFORE asyncio.sleep)
-  - Zero delay: immediate finalize on delete event
-  - Log: "ABORT_FAST_PATH — immediate finalize, zero delay"
+Observer Post-Finalize (credits > 0):
+  1. MATCH_FINALIZED_ONCE match_id=...
+  2. AUTODARTS_RETURN_TO_HOME → navigate to lobby (3 fallbacks)
+  3. Full state reset: ws_state, stable_state=IDLE, all flags cleared
+  4. OBSERVER_RESET_FOR_NEXT_GAME done
+  5. READY_FOR_NEXT_GAME match_id=...
+
+Observer Duplicate Prevention:
+  - _last_finalized_match_id checked in _update_ws_state
+  - Match END signals for same match → SKIP_DUPLICATE_FINALIZE
+  - Abort signals for same match → SKIP_DUPLICATE_FINALIZE
+  - Reset on open_session and new game start
 ```
 
 ## Update System (v1.7.2)
@@ -324,6 +336,24 @@ autostart.bat:
   - Entscheidungslogik: should_teardown=should_lock (nur bei credits=0 oder Crash)
   - Getestet: 3-Spiel-Zyklus (3→2→1→0) mit korrektem Credit-Abzug und Teardown
   - ZIP neu gebaut: darts-kiosk-v2.6.0-windows.zip (2.1 MB)
+- v2.7.0: Navigate-to-Home + Duplicate Match Guard + Full Observer Reset (2026-03-12)
+  - BUG 1: Nach Finish mit Credits blieb Autodarts auf der /matches/{id} Ergebnis-Seite
+  - BUG 2: Doppelfinalisierung möglich (gleiche Match-ID → zweiter Kreditabzug)
+  - BUG 3: Observer-State (ws_match_finished, stable_state) nach Finish nicht vollständig zurückgesetzt
+  - FIX 1: _navigate_to_home() — navigiert Autodarts-Page zurück zu Home/Lobby nach Spielende
+           3-stufiger Fallback: Autodarts-URL → Base-URL → Page-Reload
+  - FIX 2: _last_finalized_match_id (Observer) + _last_finalized_match (kiosk.py)
+           → SKIP_DUPLICATE_FINALIZE wenn gleiche Match-ID nochmal finished/delete liefert
+           → Kredit wird pro Match genau 1x abgezogen
+  - FIX 3: Observer-Reset nach credits>0 Finish: alle WS-Flags, stable_state=IDLE,
+           exit_polls=0, abort_detected=False, ws_state.reset()
+  - Logs: MATCH_FINALIZED_ONCE, SKIP_DUPLICATE_FINALIZE, AUTODARTS_RETURN_TO_HOME (start/success/fallback),
+          OBSERVER_RESET_FOR_NEXT_GAME, READY_FOR_NEXT_GAME
+  - Geänderte Funktionen:
+    - kiosk.py: _finalize_match_inner(), _on_game_started()
+    - autodarts_observer.py: _navigate_to_home() [NEU], _update_ws_state(), _observe_loop()
+  - Getestet: 3-Spiel-Zyklus + Doppelfinalisierung-Prävention
+  - ZIP: darts-kiosk-v2.7.0-windows.zip (2.1 MB)
 
 ## Remaining Backlog
   - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)

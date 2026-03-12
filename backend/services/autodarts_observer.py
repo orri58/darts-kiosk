@@ -217,6 +217,7 @@ class AutodartsObserver:
         self._closing = False  # Guard against concurrent close_session calls
         self._finalized = False  # True after finalize_match completed for this game
         self._abort_detected = False  # Set by WS delete handler, triggers immediate finalize
+        self._last_finalized_match_id: Optional[str] = None  # Prevents double-finalize for same match
 
         # Stable confirmed state (only changes after debounce)
         self._stable_state: ObserverState = ObserverState.CLOSED
@@ -361,6 +362,7 @@ class AutodartsObserver:
         self._closing = False
         self._finalized = False
         self._abort_detected = False
+        self._last_finalized_match_id = None
         self._stable_state = ObserverState.CLOSED
         self._exit_polls = 0
         self._exit_saw_finished = False
@@ -369,7 +371,8 @@ class AutodartsObserver:
         self._ws_frames.clear()
 
         logger.info(f"[Observer:{self.board_id}] ALL_FLAGS_RESET: "
-                    f"stopping=False closing=False finalized=False abort_detected=False")
+                    f"stopping=False closing=False finalized=False abort_detected=False "
+                    f"last_finalized_match_id=None")
 
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
@@ -899,6 +902,13 @@ class AutodartsObserver:
         # ═══ MATCH END (authoritative) ═══
         elif interpretation in ("match_end_gameshot_match", "match_end_state_finished",
                                 "match_end_game_finished", "match_finished_matchshot"):
+            # Duplicate match-ID guard: ignore repeat finish signals for already-finalized match
+            current_mid = ws.last_match_id
+            if current_mid and current_mid == self._last_finalized_match_id:
+                logger.info(
+                    f"[Observer:{self.board_id}] SKIP_DUPLICATE_FINALIZE "
+                    f"match_id={current_mid} (finish signal for already-finalized match)")
+                return
             ws.match_finished = True
             ws.match_active = False
             ws.winner_detected = True
@@ -915,6 +925,13 @@ class AutodartsObserver:
             old_match_id = ws.last_match_id
 
             if was_active and not was_finished:
+                # Duplicate match-ID guard: ignore abort for already-finalized match
+                if old_match_id and old_match_id == self._last_finalized_match_id:
+                    logger.info(
+                        f"[Observer:{self.board_id}] SKIP_DUPLICATE_FINALIZE "
+                        f"match_id={old_match_id} (abort signal for already-finalized match)")
+                    ws.reset()
+                    return
                 # ── DELETE during active match = ABORT ──
                 # Match was manually cancelled in Autodarts UI.
                 # Set abort_detected for IMMEDIATE finalize (bypass debounce).
@@ -1015,6 +1032,50 @@ class AutodartsObserver:
         logger.info(f"[AUTODARTS] CLEANUP_COMPLETE board={self.board_id}")
 
     # ═══════════════════════════════════════════════════════════════
+    # NAVIGATE BACK TO HOME/LOBBY (after game ends, credits remain)
+    # ═══════════════════════════════════════════════════════════════
+
+    async def _navigate_to_home(self):
+        """
+        Navigate the Autodarts page back to home/lobby after a game ends.
+        Prevents the browser from staying on the finished match result page.
+        Returns True on success, False on failure.
+        """
+        logger.info(f"[Observer:{self.board_id}] AUTODARTS_RETURN_TO_HOME start")
+        if not self._page_alive():
+            logger.warning(f"[Observer:{self.board_id}] AUTODARTS_RETURN_TO_HOME skip (page not alive)")
+            return False
+
+        home_url = self.status.autodarts_url or AUTODARTS_URL
+
+        # Primary: navigate to the configured Autodarts URL (home/lobby)
+        try:
+            await self._page.goto(home_url, wait_until="domcontentloaded", timeout=10000)
+            current_url = self._page.url
+            logger.info(f"[Observer:{self.board_id}] AUTODARTS_RETURN_TO_HOME success url={current_url}")
+            return True
+        except Exception as e:
+            logger.error(f"[Observer:{self.board_id}] AUTODARTS_RETURN_TO_HOME failed: {e}")
+
+        # Fallback 1: try base Autodarts URL
+        try:
+            await self._page.goto(AUTODARTS_URL, wait_until="domcontentloaded", timeout=10000)
+            logger.info(f"[Observer:{self.board_id}] AUTODARTS_RETURN_TO_HOME fallback success")
+            return True
+        except Exception as e2:
+            logger.error(f"[Observer:{self.board_id}] AUTODARTS_RETURN_TO_HOME fallback failed: {e2}")
+
+        # Fallback 2: force reload current page
+        try:
+            await self._page.reload(wait_until="domcontentloaded", timeout=10000)
+            logger.info(f"[Observer:{self.board_id}] AUTODARTS_RETURN_TO_HOME reload-fallback success")
+            return True
+        except Exception as e3:
+            logger.error(f"[Observer:{self.board_id}] AUTODARTS_RETURN_TO_HOME reload-fallback failed: {e3}")
+
+        return False
+
+    # ═══════════════════════════════════════════════════════════════
     # OBSERVE LOOP
     # ═══════════════════════════════════════════════════════════════
 
@@ -1061,10 +1122,23 @@ class AutodartsObserver:
                         logger.info(f"[Observer:{self.board_id}] _stopping=True after abort finalize")
                         break
 
+                    # Credits remain — save match ID, navigate home, full reset
+                    old_match_id = self._ws_state.last_match_id
+                    self._last_finalized_match_id = old_match_id
+                    logger.info(f"[Observer:{self.board_id}] MATCH_FINALIZED_ONCE match_id={old_match_id}")
+
+                    await self._navigate_to_home()
+
                     self._finalized = False
                     self._credit_consumed = False
+                    self._abort_detected = False
+                    self._exit_polls = 0
+                    self._exit_saw_finished = False
                     self._ws_state.reset()
-                    logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME after abort")
+                    self._stable_state = ObserverState.IDLE
+                    self._set_state(ObserverState.IDLE)
+                    logger.info(f"[Observer:{self.board_id}] OBSERVER_RESET_FOR_NEXT_GAME done")
+                    logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME match_id={old_match_id}")
                     continue
 
                 interval = DEBOUNCE_POLL_INTERVAL if self._exit_polls > 0 else OBSERVER_POLL_INTERVAL
@@ -1204,11 +1278,23 @@ class AutodartsObserver:
                         logger.info(f"[Observer:{self.board_id}] _stopping=True after finalize, exiting loop")
                         break
 
-                    # Credits remain — reset for next game
+                    # Credits remain — save match ID, navigate home, full reset
+                    old_match_id = self._ws_state.last_match_id
+                    self._last_finalized_match_id = old_match_id
+                    logger.info(f"[Observer:{self.board_id}] MATCH_FINALIZED_ONCE match_id={old_match_id}")
+
+                    await self._navigate_to_home()
+
                     self._finalized = False
                     self._credit_consumed = False
+                    self._abort_detected = False
+                    self._exit_polls = 0
+                    self._exit_saw_finished = False
                     self._ws_state.reset()
-                    logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME (observer stays alive)")
+                    self._stable_state = ObserverState.IDLE
+                    self._set_state(ObserverState.IDLE)
+                    logger.info(f"[Observer:{self.board_id}] OBSERVER_RESET_FOR_NEXT_GAME done")
+                    logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME match_id={old_match_id}")
 
                 # ═══════════════════════════════════════════
                 # CASE B: NOT in_game
