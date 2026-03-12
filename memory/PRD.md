@@ -570,6 +570,18 @@ autostart.bat:
     - If Chrome not detected: explicit fallback path (never silent failure)
   - Geaenderte Dateien: alle 4 kiosk/ Dateien komplett ueberarbeitet
   - ZIP: darts-kiosk-v3.0.2-windows.zip (2.1 MB)
+- v3.0.3: VBScript Syntax Fix + Safe Shell Fallback (2026-03-13)
+  - ROOT CAUSE: kiosk_shell.vbs used standalone "GoTo" which is invalid in VBScript
+    (only valid in VBA). Windows Script Host error 800A0400 at line 246.
+    Because Shell=kiosk_shell.vbs and explorer was replaced, result = black screen.
+  - FIX: Complete VBS rewrite - minimal, linear flow, no GoTo, no Sub mid-flow
+  - TASK 1 (Syntax): Pure VBScript, all Dim at top, linear control flow, proper quote escaping
+  - TASK 2 (Logging): kiosk_shell.log with [KIOSK_SHELL] prefixed entries for every stage
+  - TASK 3 (Failsafe): If launcher missing -> log + explorer.exe, never black screen
+  - TASK 4 (Debug): KIOSK_DEBUG=1 in kiosk_config.bat -> launcher runs visible (cmd /k, window=1)
+  - TASK 5 (Encoding): ASCII only, no non-ASCII characters, no BOM
+  - Geaenderte Dateien: kiosk/kiosk_shell.vbs (rewrite), kiosk/setup_kiosk.bat (KIOSK_DEBUG config)
+  - ZIP: darts-kiosk-v3.0.3-windows.zip (2.1 MB)
 
 ## Remaining Backlog
 ### P1

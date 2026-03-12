@@ -282,6 +282,7 @@ REM Write kiosk config (read by launcher + maintenance + shell)
     echo set "CHROME_PATH=!CHROME_PATH!"
     echo set "PYTHON_PATH=!PYTHON_PATH!"
     echo set "VENV_PYTHON=!VENV_PYTHON!"
+    echo set "KIOSK_DEBUG=0"
 ) > "!INSTALL_DIR!\kiosk_config.bat"
 echo   [OK] kiosk_config.bat erstellt
 
