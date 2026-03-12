@@ -735,6 +735,8 @@ class AutodartsObserver:
                         health_ok = False
                         self.status.last_error = f"auth_required: {alive_url}"
                         self._close_reason = "auth_required"
+                        self._set_state(ObserverState.ERROR)
+                        self.status.browser_open = False
                         self._set_lifecycle(LifecycleState.AUTH_REQUIRED)
                         break
                     logger.info(
@@ -1825,6 +1827,10 @@ class ObserverManager:
                     on_game_ended=on_game_ended,
                     headless=headless,
                 )
+                # Propagate close_reason from observer to manager
+                # (auth_required sets close_reason on the instance, not via close())
+                if obs._close_reason:
+                    self._close_reasons[board_id] = obs._close_reason
                 return obs
             finally:
                 logger.info(f"[ObserverMgr] lifecycle_lock released board={board_id}")
