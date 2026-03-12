@@ -216,6 +216,7 @@ class AutodartsObserver:
         self._stopping = False
         self._closing = False  # Guard against concurrent close_session calls
         self._finalized = False  # True after finalize_match completed for this game
+        self._abort_detected = False  # Set by WS delete handler, triggers immediate finalize
 
         # Stable confirmed state (only changes after debounce)
         self._stable_state: ObserverState = ObserverState.CLOSED
@@ -359,6 +360,7 @@ class AutodartsObserver:
         self._stopping = False
         self._closing = False
         self._finalized = False
+        self._abort_detected = False
         self._stable_state = ObserverState.CLOSED
         self._exit_polls = 0
         self._exit_saw_finished = False
@@ -367,7 +369,7 @@ class AutodartsObserver:
         self._ws_frames.clear()
 
         logger.info(f"[Observer:{self.board_id}] ALL_FLAGS_RESET: "
-                    f"stopping=False closing=False finalized=False")
+                    f"stopping=False closing=False finalized=False abort_detected=False")
 
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
@@ -915,13 +917,14 @@ class AutodartsObserver:
             if was_active and not was_finished:
                 # ── DELETE during active match = ABORT ──
                 # Match was manually cancelled in Autodarts UI.
-                # Do NOT set match_finished (that would trigger credit deduction).
-                # Set finish_trigger to fast-track debounce (1 poll instead of N).
+                # Set abort_detected for IMMEDIATE finalize (bypass debounce).
                 ws.match_active = False
                 ws.finish_trigger = "match_abort_delete"
+                self._abort_detected = True
                 logger.info(
                     f"[Observer:{self.board_id}] *** MATCH ABORT DETECTED *** "
-                    f"(delete event during active match) | match_id={old_match_id}"
+                    f"(delete event during active match) | match_id={old_match_id} | "
+                    f"abort_detected=True (IMMEDIATE finalize)"
                 )
             else:
                 # Post-match cleanup or delete without active game → full reset
@@ -1048,6 +1051,36 @@ class AutodartsObserver:
                     )
                     break
 
+                # ── IMMEDIATE ABORT: delete event detected, bypass all debounce ──
+                if self._abort_detected and not self._finalized:
+                    logger.info(f"[Observer:{self.board_id}] ABORT DETECTED IMMEDIATE — "
+                                f"bypassing debounce, calling finalize_match(aborted)")
+                    self._finalized = True
+                    self._abort_detected = False
+                    self._stable_state = ObserverState.IDLE
+                    self._set_state(ObserverState.IDLE)
+                    self._exit_polls = 0
+                    self._exit_saw_finished = False
+
+                    if self._on_game_ended:
+                        try:
+                            result = await self._on_game_ended(self.board_id, "aborted")
+                            logger.info(f"[Observer:{self.board_id}] abort finalize returned: "
+                                        f"teardown={result.get('should_teardown') if result else '?'}")
+                        except Exception as e:
+                            logger.error(f"[Observer:{self.board_id}] on_game_ended(aborted) ERROR: {e}",
+                                         exc_info=True)
+
+                    if self._stopping:
+                        logger.info(f"[Observer:{self.board_id}] _stopping=True after abort finalize")
+                        break
+
+                    self._finalized = False
+                    self._credit_consumed = False
+                    self._ws_state.reset()
+                    logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME after abort")
+                    continue
+
                 # ── Browser health check ──
                 try:
                     _ = self._page.url
@@ -1109,6 +1142,12 @@ class AutodartsObserver:
                         continue
 
                     # ─── IDLE or FINISHED: exit candidate ─────
+                    # Skip if already finalized/aborted (prevent double finalize)
+                    if self._finalized or self._abort_detected:
+                        logger.info(f"[Observer:{self.board_id}] exit debounce skipped "
+                                    f"(finalized={self._finalized} abort_detected={self._abort_detected})")
+                        continue
+
                     self._exit_polls += 1
                     if raw == ObserverState.FINISHED:
                         self._exit_saw_finished = True
@@ -1192,6 +1231,7 @@ class AutodartsObserver:
                         self._set_state(ObserverState.IN_GAME)
                         self._credit_consumed = True
                         self._finalized = False  # Reset for new game
+                        self._abort_detected = False  # Reset for new game
                         self._exit_polls = 0
                         self._exit_saw_finished = False
                         self.status.games_observed += 1
