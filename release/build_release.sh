@@ -120,6 +120,15 @@ cp "${SCRIPT_DIR}/windows/credits_overlay.py" "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/setup_profile.bat" "${WIN_DIR}/" 2>/dev/null || true
 cp "${SCRIPT_DIR}/windows/README.md" "${WIN_DIR}/"
 
+# Copy kiosk deployment files
+mkdir -p "${WIN_DIR}/kiosk"
+if [[ -d "${APP_DIR}/kiosk" ]]; then
+    cp "${APP_DIR}/kiosk/"*.bat "${WIN_DIR}/kiosk/" 2>/dev/null || true
+    cp "${APP_DIR}/kiosk/"*.vbs "${WIN_DIR}/kiosk/" 2>/dev/null || true
+    cp "${APP_DIR}/kiosk/README_KIOSK.md" "${WIN_DIR}/kiosk/" 2>/dev/null || true
+    log "Kiosk-Deployment-Dateien kopiert"
+fi
+
 # Copy VERSION file (single source of truth)
 cp "${APP_DIR}/VERSION" "${WIN_DIR}/"
 

@@ -493,21 +493,33 @@ autostart.bat:
     - backend/services/window_manager.py: ensure_autodarts_foreground(), _win32_foreground_autodarts()
     - backend/services/autodarts_observer.py: ObserverManager.clear_close_reason()
   - ZIP: darts-kiosk-v2.9.4-windows.zip (2.1 MB)
-
-## Remaining Backlog
-  - FIX 7: _should_deduct_credit accepts match_end_* WS triggers (e.g. match_end_gameshot_match)
-  - FIX 8: Stop reason is "finalize_teardown" (not generic "stopping_flag") when finalize caused stop
-  - FIX 9: FINISHED→IDLE does NOT re-trigger finalization
-  - FIX 10: Observe loop logs READY_FOR_NEXT_GAME when credits remain (observer stays alive)
-  - All tests passing: 58/58 (iteration_43)
-- v2.3.1: Delete Event = Aborted Match End (2026-03-11)
-  - PROBLEM: Autodarts sendet bei Spiel-Abbruch nur event="delete", kein finished/gameFinished
-  - Observer behandelte delete nur als Reset → Browser blieb offen, UI hing, Session nicht finalisiert
-  - FIX 1: _update_ws_state: delete während match_active=True → finish_trigger="match_abort_delete" (fast-track Debounce)
-  - FIX 2: finalize_match: trigger="aborted" setzt should_teardown=True (Observer schließen, UI reset)
-  - FIX 3: Bei abort: KEIN Credit-Abzug, Board bleibt unlocked, Session bleibt aktiv
-  - 3 Spielende-Typen: finished (credit-=1), manual (credit-=1, lock), aborted (kein Abzug, teardown)
-  - All tests passing: 18/18 (iteration_44)
+- v3.0.0: Hard-Kiosk Deployment + Automated Installer (2026-03-12)
+  - FEATURE: Windows Hard-Kiosk Modus — PC bootet direkt ins Darts-System
+  - Erstellt:
+    - setup_kiosk.bat: Vollautomatischer Installer (10-Schritte-Prozess)
+      - Admin-Check, Python/Chrome-Pruefung, Datei-Kopie, venv-Setup
+      - Erstellt Kiosk-User, konfiguriert Auto-Login
+      - Shell-Ersetzung (explorer.exe → kiosk_shell.vbs)
+      - User-spezifische Haertung (DisableTaskMgr, NoDesktop, NoRun, NoWinKeys)
+      - Firewall-Regel, Power-Management, Benachrichtigungen deaktiviert
+    - kiosk_shell.vbs: Shell-Ersetzung (User-spezifisch)
+      - Kiosk-User → startet Launcher unsichtbar
+      - Admin-User → startet explorer.exe normal
+      - Bleibt alive (Windows loggt sonst aus)
+    - darts_launcher.bat: Service-Supervisor
+      - Startet Backend + Chrome Kiosk + Credits-Overlay
+      - Watchdog-Loop alle 10s: Backend-Health + Chrome-Prozesscheck
+      - Auto-Restart bei Absturz (max 10, dann 60s Cooldown)
+    - maintenance.bat: Wartungs-Tool
+      - Passwort-geschuetzt (SHA256-Hash via PowerShell)
+      - Explorer temporaer starten, Dienste stoppen/starten
+      - Logs anzeigen, Update, Deinstallation, Reboot
+    - uninstall_kiosk.bat: Vollstaendiger Rollback
+      - Shell → explorer.exe, Auto-Login aus, Policies entfernt
+      - Firewall-Regel entfernt, Optional: User loeschen
+    - README_KIOSK.md: Vollstaendige Dokumentation
+  - Build-Script aktualisiert: kiosk/ Verzeichnis in Windows-Bundle integriert
+  - ZIP: darts-kiosk-v3.0.0-windows.zip (2.1 MB)
 
 ## Remaining Backlog
 ### P1
@@ -516,3 +528,4 @@ autostart.bat:
 ### P2
 - [ ] Chromium Extension as alternative to Playwright observer
 - [ ] PWA Install Prompt for public leaderboard page
+- [ ] Persist runtime state to JSON file
