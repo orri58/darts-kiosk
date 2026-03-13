@@ -582,10 +582,32 @@ autostart.bat:
   - TASK 5 (Encoding): ASCII only, no non-ASCII characters, no BOM
   - Geaenderte Dateien: kiosk/kiosk_shell.vbs (rewrite), kiosk/setup_kiosk.bat (KIOSK_DEBUG config)
   - ZIP: darts-kiosk-v3.0.3-windows.zip (2.1 MB)
+- v3.1.0: Manual-First Deployment (Installer Deprecated) (2026-03-13)
+  - DECISION: Automated kiosk installer creates more problems than it solves.
+    Shell-Ersetzung, Policy-Haertung und VBS-Startup sind zu fragil.
+    Neuer Ansatz: Manuelle Installation zuerst, Haertung spaeter.
+  - CHANGE 1: kiosk/ -> kiosk_experimental/ im Release-Bundle
+    - Alle Installer-Dateien als EXPERIMENTAL markiert
+    - EXPERIMENTAL_WARNING.txt hinzugefuegt
+    - Nicht mehr im primaeren Deployment-Pfad
+  - CHANGE 2: MANUAL_DEPLOYMENT.md erstellt (Top-Level im Windows-ZIP)
+    - Schritt-fuer-Schritt Anleitung: Entpacken, Setup, Start
+    - Task Scheduler Guide (GUI + Kommandozeile)
+    - Chrome Kiosk-Modus manuell
+    - Backend manuell starten
+    - LAN-Zugriff + Firewall
+    - Energieoptionen
+    - Troubleshooting
+  - CHANGE 3: Build-Script aktualisiert
+    - kiosk_experimental/ statt kiosk/
+    - MANUAL_DEPLOYMENT.md als Top-Level-Datei
+  - Empfohlener Deployment-Pfad: setup_windows.bat -> start.bat -> Task Scheduler
+  - ZIP: darts-kiosk-v3.1.0-windows.zip (2.1 MB)
 
 ## Remaining Backlog
 ### P1
 - [ ] Autodarts DOM Selector Tests (validate selectors against live Autodarts site)
+- [ ] Hard-Kiosk-Modus als optionaler separater Schritt (nach stabiler Runtime)
 
 ### P2
 - [ ] Chromium Extension as alternative to Playwright observer

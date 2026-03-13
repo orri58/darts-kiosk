@@ -119,14 +119,35 @@ cp "${SCRIPT_DIR}/windows/run_backend.py" "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/credits_overlay.py" "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/setup_profile.bat" "${WIN_DIR}/" 2>/dev/null || true
 cp "${SCRIPT_DIR}/windows/README.md" "${WIN_DIR}/"
+cp "${SCRIPT_DIR}/windows/MANUAL_DEPLOYMENT.md" "${WIN_DIR}/" 2>/dev/null || true
 
-# Copy kiosk deployment files
-mkdir -p "${WIN_DIR}/kiosk"
+# Copy kiosk deployment files (EXPERIMENTAL — not recommended for production)
+mkdir -p "${WIN_DIR}/kiosk_experimental"
 if [[ -d "${APP_DIR}/kiosk" ]]; then
-    cp "${APP_DIR}/kiosk/"*.bat "${WIN_DIR}/kiosk/" 2>/dev/null || true
-    cp "${APP_DIR}/kiosk/"*.vbs "${WIN_DIR}/kiosk/" 2>/dev/null || true
-    cp "${APP_DIR}/kiosk/README_KIOSK.md" "${WIN_DIR}/kiosk/" 2>/dev/null || true
-    log "Kiosk-Deployment-Dateien kopiert"
+    cp "${APP_DIR}/kiosk/"*.bat "${WIN_DIR}/kiosk_experimental/" 2>/dev/null || true
+    cp "${APP_DIR}/kiosk/"*.vbs "${WIN_DIR}/kiosk_experimental/" 2>/dev/null || true
+    cp "${APP_DIR}/kiosk/README_KIOSK.md" "${WIN_DIR}/kiosk_experimental/" 2>/dev/null || true
+    # Add deprecation notice
+    cat > "${WIN_DIR}/kiosk_experimental/EXPERIMENTAL_WARNING.txt" << 'EXPEOF'
+=== EXPERIMENTELL / DEPRECATED ===
+
+Diese Dateien enthalten das automatisierte Hard-Kiosk-Setup
+(Shell-Ersetzung, Policy-Haertung, Auto-Login).
+
+STATUS: EXPERIMENTELL - Nicht fuer Produktion empfohlen.
+
+Das empfohlene Deployment ist die manuelle Installation:
+  -> Siehe MANUAL_DEPLOYMENT.md im Hauptverzeichnis.
+
+Bei Verwendung dieser Dateien besteht das Risiko,
+dass das Windows-System nicht mehr normal startet.
+
+Nur verwenden mit:
+- Funktionierendem Backup
+- Zugang zum abgesicherten Modus
+- Verstaendnis der Registry-Aenderungen
+EXPEOF
+    log "Kiosk-Experimental-Dateien kopiert"
 fi
 
 # Copy VERSION file (single source of truth)
