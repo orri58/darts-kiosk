@@ -227,15 +227,102 @@ C:\DartsKiosk\
 
 ---
 
-## Spaetere Haertung (optional, nicht empfohlen fuer Test)
+## Spaetere Haertung (optional, nicht fuer Erstbetrieb)
 
-Die Dateien im Ordner `kiosk_experimental\` enthalten ein experimentelles
-Hard-Kiosk-System mit Shell-Ersetzung und Policy-Haertung.
+Die folgenden Schritte sind OPTIONAL und sollten erst durchgefuehrt werden,
+wenn die Runtime stabil laeuft und manuell verifiziert wurde.
 
-ACHTUNG: Diese Dateien sind EXPERIMENTELL und koennen das System
-in einen nicht-bootfaehigen Zustand versetzen.
+### 1. Dedizierter Kiosk-Benutzer erstellen (als Administrator)
 
-Nur verwenden wenn:
-- Runtime vollstaendig stabil laeuft
-- Backup des Systems vorhanden ist
-- Zugang zum Safe Mode sichergestellt ist
+```cmd
+net user DartsKiosk <PASSWORT> /add
+net localgroup Users DartsKiosk /add
+wmic useraccount where "name='DartsKiosk'" set PasswordExpires=false
+```
+
+Berechtigungen fuer den Kiosk-User setzen:
+```cmd
+icacls "C:\DartsKiosk" /grant "DartsKiosk:(OI)(CI)F" /T
+```
+
+### 2. Windows Auto-Login (als Administrator)
+
+```cmd
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d "1" /f
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultUserName /t REG_SZ /d "DartsKiosk" /f
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultPassword /t REG_SZ /d "<PASSWORT>" /f
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultDomainName /t REG_SZ /d "%COMPUTERNAME%" /f
+```
+
+Auto-Login deaktivieren:
+```cmd
+reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d "0" /f
+```
+
+### 3. Taskleiste automatisch ausblenden
+
+Rechtsklick auf Taskleiste -> Taskleisteneinstellungen:
+- "Taskleiste automatisch ausblenden" aktivieren
+
+Oder per Registry (erfordert Ab-/Anmeldung):
+```cmd
+reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3" /v Settings /t REG_BINARY /d ... /f
+```
+(Manuelle Einstellung per GUI ist zuverlaessiger)
+
+### 4. Windows Update Neustart verhindern (als Administrator)
+
+```cmd
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoRebootWithLoggedOnUsers /t REG_DWORD /d 1 /f
+```
+
+### 5. Benachrichtigungen reduzieren
+
+```cmd
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Explorer" /v DisableNotificationCenter /t REG_DWORD /d 1 /f
+```
+
+### 6. Energieoptionen (ausfuehrlich)
+
+```cmd
+powercfg -change -standby-timeout-ac 0
+powercfg -change -monitor-timeout-ac 0
+powercfg -change -hibernate-timeout-ac 0
+powercfg -change -standby-timeout-dc 0
+powercfg -change -monitor-timeout-dc 0
+```
+
+### 7. Firewall fuer LAN-Zugriff (als Administrator)
+
+```cmd
+netsh advfirewall firewall add rule name="DartsKiosk Backend" dir=in action=allow protocol=TCP localport=8001
+```
+
+Regel entfernen:
+```cmd
+netsh advfirewall firewall delete rule name="DartsKiosk Backend"
+```
+
+### 8. Chrome immer im Vollbild starten
+
+Chrome mit `--kiosk` Flag startet automatisch im Vollbild-Modus.
+Die start.bat macht das bereits. Kiosk-Modus beenden: `Alt+F4`.
+
+---
+
+## NICHT empfohlen (experimentell)
+
+Die folgenden Massnahmen sind EXPERIMENTELL und koennen das System
+in einen nicht-bootfaehigen Zustand versetzen:
+
+- Windows Shell ersetzen (explorer.exe -> custom script)
+- Task-Manager per Policy komplett deaktivieren
+- Desktop/Explorer per Policy komplett deaktivieren
+- Globale Kiosk-Policies anwenden
+
+Dateien dafuer finden sich unter `kiosk_experimental\`.
+NUR verwenden mit:
+- Funktionierendem System-Backup / Recovery-Medium
+- Zugang zum abgesicherten Modus
+- Verstaendnis der Registry-Aenderungen
+- Getesteter Runtime (alle Flows stabil)

@@ -603,6 +603,21 @@ autostart.bat:
     - MANUAL_DEPLOYMENT.md als Top-Level-Datei
   - Empfohlener Deployment-Pfad: setup_windows.bat -> start.bat -> Task Scheduler
   - ZIP: darts-kiosk-v3.1.0-windows.zip (2.1 MB)
+- v3.1.1: Final Manual-First Deployment Stabilization (2026-03-13)
+  - TASK 1-3: v3.1.0 bereits erledigt (manueller Pfad, kiosk_experimental isoliert)
+  - TASK 4: MANUAL_DEPLOYMENT.md finalisiert (328 Zeilen)
+  - TASK 5: Optionale Haertung als separate Schritte dokumentiert:
+    - Kiosk-User erstellen + Berechtigungen
+    - Auto-Login per Registry
+    - Taskleiste ausblenden
+    - Windows Update Neustart verhindern
+    - Benachrichtigungen reduzieren
+    - Energieoptionen, Firewall, Chrome Vollbild
+    - Klare Trennung: empfohlen vs. experimentell (NICHT empfohlen)
+  - TASK 6: Runtime-Integritaet verifiziert (observer, watchdog, kiosk router unberuehrt)
+  - Geaenderte Dateien: release/windows/MANUAL_DEPLOYMENT.md
+  - Nicht geaendert: observer, watchdog, kiosk router, window_manager, start.bat, setup_windows.bat
+  - ZIP: darts-kiosk-v3.1.1-windows.zip (2.1 MB)
 
 ## Remaining Backlog
 ### P1
