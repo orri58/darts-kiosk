@@ -640,6 +640,15 @@ autostart.bat:
   - Neue i18n-Keys fuer Admin-Panel: post_match_delay, autodarts_desktop, etc. (DE + EN)
   - Alle Tests bestanden: 15/15 Backend, Frontend verifiziert
   - Keine Refactoring-Aenderungen an bestehender Logik (observer, watchdog, kiosk-chain)
+- v3.2.1: Autodarts Desktop Auto-Start (2026-03-18)
+  - ensure_running() Methode mit 60s Cooldown (time.monotonic)
+  - Server-Startup: einmaliger Auto-Start-Check wenn auto_start=true
+  - Board-Unlock: ensure_running() Check nach Observer-Start, non-blocking try/except
+  - SW_SHOWMINNOACTIVE (7) + CREATE_NO_WINDOW: kein Fokus-Steal
+  - Max 1 Start-Versuch pro Trigger, 60s Cooldown gegen Loops
+  - Status-API erweitert um auto_start_cooldown_s
+  - Keine Aenderungen an observer/watchdog/finalize/match-chain
+  - Alle Tests bestanden: 13/13 Backend
 
 ## Remaining Backlog
 ### P1
