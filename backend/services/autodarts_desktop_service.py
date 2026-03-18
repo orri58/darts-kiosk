@@ -1,18 +1,24 @@
 """
-Autodarts Desktop Supervision Service (v3.2.0 — Minimal)
+Autodarts Desktop Supervision Service (v3.2.0 — Minimal, v3.2.1 — Auto-Start)
 
 Detects if Autodarts.exe is running, can start/restart it.
 The exe path is configurable via the settings DB.
 This service only runs on Windows.
+
+v3.2.1: Added ensure_running() with cooldown to safely auto-start on
+         server boot and board unlock without focus-stealing or loops.
 """
-import asyncio
 import logging
 import platform
 import subprocess
+import time
 
 logger = logging.getLogger(__name__)
 
 IS_WINDOWS = platform.system() == "Windows"
+
+# Cooldown between auto-start attempts (seconds)
+_AUTO_START_COOLDOWN = 60
 
 
 class AutodartsDesktopService:
@@ -20,6 +26,7 @@ class AutodartsDesktopService:
 
     def __init__(self):
         self._process_name = "Autodarts.exe"
+        self._last_auto_start_ts: float = 0.0
 
     def is_running(self) -> bool:
         """Check if Autodarts.exe is currently running."""
@@ -94,6 +101,56 @@ class AutodartsDesktopService:
         time.sleep(1)
         return self.start_process(exe_path)
 
+    def ensure_running(self, exe_path: str, trigger: str = "unknown") -> dict:
+        """Single guarded attempt to start Autodarts.exe if not running.
+
+        - Returns immediately if already running.
+        - Respects a 60-second cooldown between attempts.
+        - Never steals focus (SW_SHOWMINNOACTIVE = 7).
+        - Logs outcome; never raises.
+        """
+        if not IS_WINDOWS:
+            return {"action": "skip", "reason": "not_windows"}
+
+        if not exe_path:
+            logger.warning(f"[AUTODARTS_DESKTOP] ensure_running({trigger}): no exe_path configured")
+            return {"action": "skip", "reason": "no_exe_path"}
+
+        if self.is_running():
+            return {"action": "skip", "reason": "already_running"}
+
+        now = time.monotonic()
+        elapsed = now - self._last_auto_start_ts
+        if elapsed < _AUTO_START_COOLDOWN:
+            remaining = int(_AUTO_START_COOLDOWN - elapsed)
+            logger.info(f"[AUTODARTS_DESKTOP] ensure_running({trigger}): cooldown active ({remaining}s left)")
+            return {"action": "skip", "reason": "cooldown", "remaining_s": remaining}
+
+        self._last_auto_start_ts = now
+        logger.info(f"[AUTODARTS_DESKTOP] ensure_running({trigger}): attempting start")
+        return self._start_no_focus(exe_path)
+
+    def _start_no_focus(self, exe_path: str) -> dict:
+        """Start Autodarts.exe minimized WITHOUT stealing focus."""
+        import os
+        if not os.path.isfile(exe_path):
+            logger.warning(f"[AUTODARTS_DESKTOP] exe not found: {exe_path}")
+            return {"action": "failed", "error": f"Datei nicht gefunden: {exe_path}"}
+        try:
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = 7  # SW_SHOWMINNOACTIVE — minimized, no focus steal
+            subprocess.Popen(
+                [exe_path],
+                startupinfo=si,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW,
+            )
+            logger.info(f"[AUTODARTS_DESKTOP] auto-started (no focus): {exe_path}")
+            return {"action": "started", "exe_path": exe_path}
+        except Exception as e:
+            logger.warning(f"[AUTODARTS_DESKTOP] auto-start failed: {e}")
+            return {"action": "failed", "error": str(e)}
+
     def get_status(self) -> dict:
         """Return current status of Autodarts Desktop."""
         running = self.is_running()
@@ -102,6 +159,7 @@ class AutodartsDesktopService:
             "process_name": self._process_name,
             "platform": platform.system(),
             "supported": IS_WINDOWS,
+            "auto_start_cooldown_s": _AUTO_START_COOLDOWN,
         }
 
 

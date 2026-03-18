@@ -190,6 +190,21 @@ async def lifespan(app: FastAPI):
     from backend.services.watchdog_service import start_watchdog, stop_watchdog
     await start_watchdog()
 
+    # v3.2.1: One-shot Autodarts Desktop auto-start check
+    try:
+        from backend.services.autodarts_desktop_service import autodarts_desktop
+        from backend.models import DEFAULT_AUTODARTS_DESKTOP
+        async with AsyncSessionLocal() as _ad_db:
+            ad_cfg = await get_or_create_setting(_ad_db, "autodarts_desktop", DEFAULT_AUTODARTS_DESKTOP)
+            await _ad_db.commit()
+        if ad_cfg.get("auto_start"):
+            result = autodarts_desktop.ensure_running(ad_cfg.get("exe_path", ""), trigger="server_startup")
+            logger.info(f"Autodarts Desktop auto-start on boot: {result}")
+        else:
+            logger.info("Autodarts Desktop auto-start disabled (auto_start=false)")
+    except Exception as exc:
+        logger.warning(f"Autodarts Desktop startup check failed (non-critical): {exc}")
+
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
     logger.info(f"Autodarts mode: {os.environ.get('AUTODARTS_MODE', 'observer')}")

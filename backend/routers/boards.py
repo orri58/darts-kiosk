@@ -179,6 +179,17 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
         observer_manager.set_desired_state(board_id, "running")
         asyncio.create_task(start_observer_for_board(board_id, board.autodarts_target_url))
 
+    # v3.2.1: Ensure Autodarts Desktop is running on board unlock
+    try:
+        from backend.services.autodarts_desktop_service import autodarts_desktop
+        from backend.models import DEFAULT_AUTODARTS_DESKTOP
+        from backend.dependencies import get_or_create_setting as _gocs
+        ad_cfg = await _gocs(db, "autodarts_desktop", DEFAULT_AUTODARTS_DESKTOP)
+        if ad_cfg.get("auto_start"):
+            autodarts_desktop.ensure_running(ad_cfg.get("exe_path", ""), trigger=f"board_unlock:{board_id}")
+    except Exception:
+        pass  # non-critical, logged inside ensure_running
+
     return SessionResponse(
         id=session.id, board_id=session.board_id, pricing_mode=session.pricing_mode,
         game_type=session.game_type, credits_total=session.credits_total,
