@@ -164,6 +164,8 @@ async def test_open_session_blocked_during_finalize():
     obs.board_id = "TEST-4"
     obs._lifecycle_state = LifecycleState.CLOSED
     obs._finalize_dispatching = True
+    obs._closing = False
+    obs._stopping = False
     obs._session_generation = 0
     obs._context = None
     obs.status = MagicMock()

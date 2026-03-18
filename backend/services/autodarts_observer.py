@@ -402,6 +402,40 @@ class AutodartsObserver:
         except RuntimeError:
             pass  # No event loop — can't schedule (e.g., during shutdown)
 
+
+    def _schedule_immediate_finalize(self, trigger: str, match_id: str):
+        """
+        v3.2.5: Immediate finalize dispatch via asyncio task.
+        Fires within the current event loop tick (no sleep).
+        Single-flight guard in _dispatch_finalize ensures exactly-once.
+        """
+        async def _immediate():
+            # Tiny yield to allow both WS signals to land (gameshot + state_finished)
+            await asyncio.sleep(0.05)
+            if self._finalized or self._finalize_dispatching:
+                logger.info(
+                    f"[Observer:{self.board_id}] FINALIZE_PRIMARY_SKIPPED "
+                    f"reason={'already_finalized' if self._finalized else 'already_dispatching'} "
+                    f"trigger={trigger}"
+                )
+                return
+            logger.info(
+                f"[Observer:{self.board_id}] FINALIZE_PRIMARY_DISPATCH "
+                f"trigger={trigger} match_id={match_id} source=ws_primary"
+            )
+            try:
+                await self._dispatch_finalize(trigger, source="ws_primary")
+            except Exception as e:
+                logger.error(
+                    f"[Observer:{self.board_id}] FINALIZE_PRIMARY_DISPATCH failed: {e}",
+                    exc_info=True,
+                )
+
+        try:
+            asyncio.get_event_loop().create_task(_immediate())
+        except RuntimeError:
+            pass
+
     def _check_profile_locked(self, profile_dir: str) -> bool:
         """
         Safety check: detect if another Chrome instance is already using this
@@ -562,24 +596,40 @@ class AutodartsObserver:
         headless: bool = False,
     ):
         """Open Chrome with persistent profile and start the observer loop."""
-        # ── Lifecycle guard: block if already starting or stopping ──
-        if self._lifecycle_state in (LifecycleState.STARTING, LifecycleState.STOPPING):
+        # ═══ v3.2.5: COMPREHENSIVE START GUARD ═══
+        # Abort if ANY close/finalize path is active or reserved
+        if self._lifecycle_state in (LifecycleState.STARTING, LifecycleState.STOPPING, LifecycleState.CLOSED):
+            if self._closing or self._stopping or self._finalize_dispatching:
+                logger.warning(
+                    f"[Observer:{self.board_id}] START_ABORTED reason=close_in_progress "
+                    f"lifecycle={self._lifecycle_state.value} closing={self._closing} "
+                    f"stopping={self._stopping} dispatching={self._finalize_dispatching} "
+                    f"gen={self._session_generation}"
+                )
+                return
+            if self._lifecycle_state in (LifecycleState.STARTING, LifecycleState.STOPPING):
+                logger.warning(
+                    f"[Observer:{self.board_id}] open_session BLOCKED — "
+                    f"lifecycle={self._lifecycle_state.value} (gen={self._session_generation})"
+                )
+                return
+
+        if self._closing or self._stopping:
             logger.warning(
-                f"[Observer:{self.board_id}] open_session BLOCKED — "
-                f"lifecycle={self._lifecycle_state.value} (gen={self._session_generation})"
+                f"[Observer:{self.board_id}] START_ABORTED reason=close_in_progress "
+                f"lifecycle={self._lifecycle_state.value} gen={self._session_generation}"
+            )
+            return
+
+        if self._finalize_dispatching:
+            logger.warning(
+                f"[Observer:{self.board_id}] START_ABORTED reason=finalize_in_progress "
+                f"gen={self._session_generation}"
             )
             return
 
         if self.is_open:
             logger.info(f"[Observer:{self.board_id}] Browser already open, skipping")
-            return
-
-        # ── v3.2.3: Block open during active finalize dispatch ──
-        if self._finalize_dispatching:
-            logger.warning(
-                f"[Observer:{self.board_id}] open_session BLOCKED — "
-                f"finalize_dispatching=True (gen={self._session_generation})"
-            )
             return
 
         # ── Transition to STARTING ──
@@ -771,7 +821,7 @@ class AutodartsObserver:
             logger.info(f"[Observer:{self.board_id}]   Navigating to {url}...")
             response = await self._page.goto(url, wait_until="domcontentloaded", timeout=30000)
             nav_status = response.status if response else "no_response"
-            current_url = self._page.url
+            current_url = self._page.url if self._page else "page_none"
             logger.info(f"[Observer:{self.board_id}]   Navigation complete: status={nav_status}, url={current_url}")
 
             # ── Close old/stale pages (about:blank, restored tabs) ──
@@ -798,7 +848,8 @@ class AutodartsObserver:
                 logger.info(f"[Observer:{self.board_id}]     page[{i}]: {p_url}{is_ours}")
 
             # ── Verify we're on Autodarts, not about:blank ──
-            if 'about:blank' in self._page.url:
+            _current_url = self._page.url if self._page else ""
+            if 'about:blank' in _current_url:
                 logger.error(
                     f"[Observer:{self.board_id}] *** NAVIGATION FAILED *** "
                     f"Page is still on about:blank after goto({url}). "
@@ -806,7 +857,7 @@ class AutodartsObserver:
                 )
 
             # ── Auth redirect detection ──
-            final_url = self._page.url.lower()
+            final_url = _current_url.lower()
             is_auth_redirect = (
                 'login.autodarts.io' in final_url
                 or '/login' in final_url
@@ -816,11 +867,11 @@ class AutodartsObserver:
             if is_auth_redirect:
                 logger.error(
                     f"[Observer:{self.board_id}] *** AUTH_REQUIRED *** "
-                    f"Browser landed on login page: {self._page.url}  "
+                    f"Browser landed on login page: {_current_url}  "
                     f"Session/cookies for profile {profile_dir_abs} are invalid or expired. "
                     f"Please log in manually once, then restart the observer."
                 )
-                self.status.last_error = f"auth_required: {self._page.url}"
+                self.status.last_error = f"auth_required: {_current_url}"
                 self._close_reason = "auth_required"
                 self._set_state(ObserverState.ERROR)
                 self._set_lifecycle(LifecycleState.AUTH_REQUIRED)
@@ -863,6 +914,8 @@ class AutodartsObserver:
                     health_ok = False
                     break
                 try:
+                    if not self._page:
+                        raise RuntimeError("page is None")
                     alive_url = self._page.url
                     page_count = len(self._context.pages) if self._context else 0
                     # Auth redirect detection during health check
@@ -1280,9 +1333,11 @@ class AutodartsObserver:
                 f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED "
                 f"trigger={interpretation} match_id={ws.last_match_id}"
             )
-            # v3.2.3: Schedule deferred finalize safety net.
-            # If the observe loop doesn't dispatch finalize within the poll interval + margin,
-            # this task will do it. The single-flight guard prevents double dispatch.
+            # v3.2.5: IMMEDIATE finalize dispatch (primary path).
+            # Do NOT wait for observe loop — it may have already exited.
+            # The single-flight guard in _dispatch_finalize ensures exactly-once.
+            self._schedule_immediate_finalize(interpretation, ws.last_match_id)
+            # Safety net as true backup only (7s)
             self._schedule_finalize_safety(interpretation, ws.last_match_id)
 
         # ═══ POST-MATCH RESET (delete = match removed) ═══
@@ -1472,7 +1527,7 @@ class AutodartsObserver:
         # Primary: navigate to the configured Autodarts URL (home/lobby)
         try:
             await self._page.goto(home_url, wait_until="domcontentloaded", timeout=10000)
-            current_url = self._page.url
+            current_url = self._page.url if self._page else "page_gone"
             logger.info(f"[Observer:{self.board_id}] AUTODARTS_RETURN_TO_HOME success url={current_url}")
             return True
         except Exception as e:
@@ -1602,7 +1657,11 @@ class AutodartsObserver:
                     )
                     break
 
-                # ── Browser health check ──
+                # ── Browser health check (null-safe) ──
+                if not self._page:
+                    stop_reason = "page_is_none"
+                    logger.warning(f"[Observer:{self.board_id}] page is None during health check, breaking")
+                    break
                 try:
                     _ = self._page.url
                 except Exception as health_err:

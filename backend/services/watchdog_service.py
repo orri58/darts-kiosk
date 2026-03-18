@@ -100,6 +100,10 @@ def _should_attempt_recovery(board_id: str) -> tuple:
     if desired != "running":
         return False, f"desired_state_{desired}"
 
+    # v3.2.5: Block recovery if close/finalize is in progress
+    if obs._closing or obs._finalize_dispatching:
+        return False, "close_or_finalize_in_progress"
+
     # Rule 2: transitional states — wait
     if lifecycle in ("starting", "stopping"):
         return False, f"lifecycle_{lifecycle}"
@@ -214,7 +218,13 @@ async def _recover_observer(board_id: str, autodarts_url: str):
 
     headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
 
-    await observer_manager.close(board_id, reason="watchdog_recovery")
+    try:
+        await asyncio.wait_for(
+            observer_manager.close(board_id, reason="watchdog_recovery"),
+            timeout=10.0,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"[WATCHDOG] close timeout for {board_id}, proceeding with open")
     await asyncio.sleep(2)
     await observer_manager.open(
         board_id=board_id,

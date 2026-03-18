@@ -721,6 +721,23 @@ autostart.bat:
   - TASK 6: close_reason preservation — once set, never degrades to 'unknown'
   - 24/24 tests passed (v3.2.2 + v3.2.3 + v3.2.4)
   - Release: darts-kiosk-v3.2.4-windows.zip (2.1 MB), verifiziert
+- v3.2.5: Immediate Finalize Dispatch + Start/Close Race Fix (2026-03-18)
+  - WHY PRIMARY DISPATCH FAILED: Match-end WS signal arrived AFTER observe loop already
+    exited (page died). Loop's priority check never saw ws.match_finished. Only the 7s
+    deferred safety net eventually dispatched finalize.
+  - HOW RACE ELIMINATED: _schedule_immediate_finalize() creates an asyncio task that
+    dispatches finalize within 50ms of MATCH_FINISH_ACCEPTED. Single-flight guard ensures
+    exactly-once. Safety net becomes true backup only.
+  - TASK 1: _schedule_immediate_finalize() — fires within 50ms of WS match-end
+  - TASK 2: Safety net logs 'skipped reason=already_reserved' when primary already ran
+  - TASK 3: open_session comprehensive START_ABORTED guard (closing/stopping/finalize)
+  - TASK 4: All self._page.url references null-safe, page_is_none health check
+  - TASK 5: Watchdog _should_attempt_recovery blocks during close_or_finalize_in_progress,
+    watchdog close bounded to 10s timeout
+  - TASK 6: observer_manager.open() blocks if obs._closing (START_PATH_BLOCKED)
+  - NEW EXPECTED TIMING: ~3-5s (50ms dispatch + 3s delay + close) vs ~12s before
+  - 31/31 tests passed (v3.2.2-v3.2.5)
+  - Release: darts-kiosk-v3.2.5-windows.zip (2.1 MB), verifiziert
 
 ## Remaining Backlog
 ### P1
