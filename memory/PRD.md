@@ -618,9 +618,34 @@ autostart.bat:
   - Geaenderte Dateien: release/windows/MANUAL_DEPLOYMENT.md
   - Nicht geaendert: observer, watchdog, kiosk router, window_manager, start.bat, setup_windows.bat
   - ZIP: darts-kiosk-v3.1.1-windows.zip (2.1 MB)
+- v3.2.0: Phase 1 — Kiosk Control Features (2026-03-18)
+  - FEATURE 1: Autodarts Desktop Supervision (Minimal)
+    - Neuer Service: backend/services/autodarts_desktop_service.py
+    - Erkennt ob Autodarts.exe laeuft (Windows tasklist)
+    - Startet Autodarts.exe minimiert wenn nicht aktiv
+    - Kill/Restart-Funktion
+    - Admin-API: GET /api/admin/system/autodarts-desktop-status
+    - Admin-API: POST /api/admin/system/restart-autodarts-desktop
+    - Settings-API: GET/PUT /api/settings/autodarts-desktop (exe_path, auto_start)
+    - Admin UI: Status-Karte auf System > Details-Tab mit Restart-Button
+    - Admin UI: Konfiguration auf Einstellungen > Kiosk-Tab (Pfad + Auto-Start)
+  - FEATURE 2: Konfigurierbarer Post-Match Delay
+    - Neues DB-Setting: post_match_delay (Default: {delay_ms: 5000})
+    - Settings-API: GET/PUT /api/settings/post-match-delay
+    - kiosk.py _finalize_match_inner() liest Delay aus DB statt Umgebungsvariable
+    - Admin UI: Slider (0-15000ms) + numerisches Input auf Einstellungen > Kiosk-Tab
+  - FEATURE 3: UI Credit Display Fix — "Letztes Spiel"
+    - SetupScreen.js: Zeigt "Letztes Spiel" / "Last Game" wenn credits_remaining === 1
+    - Neue i18n-Keys: last_game (DE: Letztes Spiel, EN: Last Game)
+  - Neue i18n-Keys fuer Admin-Panel: post_match_delay, autodarts_desktop, etc. (DE + EN)
+  - Alle Tests bestanden: 15/15 Backend, Frontend verifiziert
+  - Keine Refactoring-Aenderungen an bestehender Logik (observer, watchdog, kiosk-chain)
 
 ## Remaining Backlog
 ### P1
+- [ ] v3.2.0 Phase 2: Erweiterte Desktop-Ueberwachung (Standby/Wake/Reconnect)
+- [ ] v3.2.0 Phase 2: Admin Dashboard OS-Steuerung (Reboot, Shutdown, Shell-Switching)
+- [ ] v3.2.0 Phase 2: Erweiterte Watchdog Self-Healing
 - [ ] Autodarts DOM Selector Tests (validate selectors against live Autodarts site)
 - [ ] Hard-Kiosk-Modus als optionaler separater Schritt (nach stabiler Runtime)
 
