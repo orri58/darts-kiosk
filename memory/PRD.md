@@ -649,6 +649,12 @@ autostart.bat:
   - Status-API erweitert um auto_start_cooldown_s
   - Keine Aenderungen an observer/watchdog/finalize/match-chain
   - Alle Tests bestanden: 13/13 Backend
+- v3.2.1-release: Windows Release Build (2026-03-18)
+  - darts-kiosk-v3.2.1-windows.zip (2.1 MB)
+  - darts-kiosk-v3.2.1-linux.tar.gz (1.7 MB)
+  - darts-kiosk-v3.2.1-source.zip (21 MB)
+  - autodarts_desktop_service.py im Bundle verifiziert
+  - VERSION=3.2.1 im Bundle verifiziert
 
 ## Remaining Backlog
 ### P1
