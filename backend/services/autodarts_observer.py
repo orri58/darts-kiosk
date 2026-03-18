@@ -1297,7 +1297,21 @@ class AutodartsObserver:
 
         # ═══ MATCH START ═══
         if interpretation in ("match_start_turn_start", "match_start_throw"):
-            if not ws.match_active and not ws.match_finished:
+            # v3.3.1: Revoke false finish if in-game signal arrives after premature match_finished
+            if ws.match_finished:
+                old_trigger = ws.finish_trigger
+                logger.warning(
+                    f"[Observer:{self.board_id}] *** FALSE_FINISH_REVOKED *** "
+                    f"reason={interpretation} after premature trigger={old_trigger} "
+                    f"match_id={ws.last_match_id} — match is still active"
+                )
+                ws.match_finished = False
+                ws.winner_detected = False
+                ws.finish_trigger = None
+                ws.match_active = True
+                self._finalized = False
+                self._finalize_dispatching = False
+            elif not ws.match_active:
                 ws.match_active = True
                 logger.info(
                     f"[Observer:{self.board_id}] *** MATCH START DETECTED *** "
@@ -1314,30 +1328,52 @@ class AutodartsObserver:
                     f"[Observer:{self.board_id}] MATCH_FINISH_DUPLICATE_IGNORED "
                     f"trigger={interpretation} match_id={current_mid} reason=match_already_finalized")
                 return
-            # Duplicate finish signal guard: if already marked finished, ignore
+
+            # v3.3.1: Separate confirmed (state frame) from pending (gameshot) signals
+            is_confirmed = interpretation in ("match_end_state_finished", "match_end_game_finished")
+
             if ws.match_finished:
-                logger.info(
-                    f"[Observer:{self.board_id}] MATCH_FINISH_DUPLICATE_IGNORED "
-                    f"trigger={interpretation} match_id={current_mid} reason=already_marked_finished "
-                    f"first_trigger={ws.finish_trigger}")
+                if is_confirmed and ws.finish_trigger not in ("match_end_state_finished", "match_end_game_finished"):
+                    # State frame CONFIRMS a pending gameshot finish — upgrade trigger and dispatch
+                    logger.info(
+                        f"[Observer:{self.board_id}] MATCH_FINISH_CONFIRMED "
+                        f"trigger={interpretation} match_id={current_mid} "
+                        f"(upgrades pending trigger={ws.finish_trigger})")
+                    ws.finish_trigger = interpretation
+                    self._schedule_immediate_finalize(interpretation, ws.last_match_id)
+                else:
+                    logger.info(
+                        f"[Observer:{self.board_id}] MATCH_FINISH_DUPLICATE_IGNORED "
+                        f"trigger={interpretation} match_id={current_mid} reason=already_marked_finished "
+                        f"first_trigger={ws.finish_trigger}")
                 return
+
             ws.match_finished = True
             ws.match_active = False
             ws.winner_detected = True
             ws.finish_trigger = interpretation
             logger.info(
                 f"[Observer:{self.board_id}] *** MATCH FINISH DETECTED *** "
-                f"trigger={interpretation} | match_id={ws.last_match_id}"
+                f"trigger={interpretation} | match_id={ws.last_match_id} | "
+                f"confirmed={is_confirmed}"
             )
             logger.info(
                 f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED "
                 f"trigger={interpretation} match_id={ws.last_match_id}"
             )
-            # v3.2.5: IMMEDIATE finalize dispatch (primary path).
-            # Do NOT wait for observe loop — it may have already exited.
-            # The single-flight guard in _dispatch_finalize ensures exactly-once.
-            self._schedule_immediate_finalize(interpretation, ws.last_match_id)
-            # Safety net as true backup only (7s)
+
+            if is_confirmed:
+                # State frame (finished=true) = authoritative → immediate finalize
+                self._schedule_immediate_finalize(interpretation, ws.last_match_id)
+            else:
+                # gameshot_match/matchshot = may be premature for multi-leg matches
+                # Let debounce or state frame confirm; safety net as backup
+                logger.info(
+                    f"[Observer:{self.board_id}] MATCH_FINISH_PENDING "
+                    f"trigger={interpretation} match_id={ws.last_match_id} "
+                    f"(awaiting state frame confirmation or debounce)")
+
+            # Always schedule safety net as backup
             self._schedule_finalize_safety(interpretation, ws.last_match_id)
 
         # ═══ POST-MATCH RESET (delete = match removed) ═══
@@ -1454,9 +1490,16 @@ class AutodartsObserver:
 
         ms = int((_t.monotonic() - t0) * 1000)
         logger.info(f"[FINALIZE_TIMING] lifecycle_closed ms={ms} board={self.board_id}")
+
+        # v3.3.1: Reset guard flags after close is FULLY COMPLETE
+        # This prevents START_PATH_BLOCKED deadlock in watchdog recovery
+        self._closing = False
+        self._stopping = False
+        self._finalize_dispatching = False
+
         logger.info(
             f"[Observer:{self.board_id}] === CLOSE_SESSION_DONE === "
-            f"reason={self._close_reason}"
+            f"reason={self._close_reason} guards_reset=True"
         )
 
     async def _cleanup(self):
@@ -1614,12 +1657,13 @@ class AutodartsObserver:
                 interval = DEBOUNCE_POLL_INTERVAL if self._exit_polls > 0 else OBSERVER_POLL_INTERVAL
                 await asyncio.sleep(interval)
 
-                # ═══ v3.2.4: PRIORITY CHECK — finalize before page-alive ═══
-                # If WS already detected match end, dispatch finalize IMMEDIATELY
-                # regardless of page state. This is the primary dispatch path.
-                # The page may have died during sleep, but the WS signal is authoritative.
+                # ═══ v3.2.4+v3.3.1: PRIORITY CHECK — finalize before page-alive ═══
+                # Only dispatch for STATE-FRAME-CONFIRMED finishes (not pending gameshot)
+                # Pending gameshot triggers go through debounce for false-finish protection
                 ws_pre = self._ws_state
-                if ws_pre.match_finished and not self._finalized and not self._finalize_dispatching:
+                _confirmed_triggers = ("match_end_state_finished", "match_end_game_finished")
+                if (ws_pre.match_finished and ws_pre.finish_trigger in _confirmed_triggers
+                        and not self._finalized and not self._finalize_dispatching):
                     trigger = ws_pre.finish_trigger or "finished"
                     logger.info(
                         f"[Observer:{self.board_id}] FINALIZE_PRIMARY_DISPATCH "
@@ -1737,8 +1781,10 @@ class AutodartsObserver:
                                 f"(merged={raw.value}, saw_finished={self._exit_saw_finished}, "
                                 f"ws_trigger={ws.finish_trigger})")
 
-                    # Fast-track: authoritative finish trigger skips debounce
-                    debounce_needed = 1 if ws.finish_trigger else DEBOUNCE_EXIT_POLLS
+                    # Fast-track: only state-frame confirmed triggers skip debounce
+                    # v3.3.1: gameshot_match needs full debounce (false-finish protection)
+                    _confirmed_debounce = ("match_end_state_finished", "match_end_game_finished")
+                    debounce_needed = 1 if ws.finish_trigger in _confirmed_debounce else DEBOUNCE_EXIT_POLLS
                     if self._exit_polls < debounce_needed:
                         continue
 

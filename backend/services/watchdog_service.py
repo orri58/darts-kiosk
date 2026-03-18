@@ -112,9 +112,12 @@ def _should_attempt_recovery(board_id: str) -> tuple:
     if lifecycle == "auth_required":
         return False, "auth_required"
 
-    # Rule 4: CLOSED is ALWAYS intentional — NEVER recover
+    # Rule 4: CLOSED with intentional close reason — NEVER recover
+    # v3.3.1: Non-intentional closes (crash, watchdog_recovery) ARE recoverable
     if lifecycle == "closed":
-        return False, "lifecycle_closed"
+        if close_reason in INTENTIONAL_CLOSE_REASONS:
+            return False, f"lifecycle_closed_{close_reason}"
+        # Non-intentional close (e.g., crash recovery, failed reopen) — fall through
 
     # Rule 5: intentional close reason
     if close_reason in INTENTIONAL_CLOSE_REASONS:
@@ -218,13 +221,21 @@ async def _recover_observer(board_id: str, autodarts_url: str):
 
     headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
 
+    # v3.3.1: Close with timeout and ensure guard flags are reset
     try:
         await asyncio.wait_for(
             observer_manager.close(board_id, reason="watchdog_recovery"),
             timeout=10.0,
         )
     except asyncio.TimeoutError:
-        logger.warning(f"[WATCHDOG] close timeout for {board_id}, proceeding with open")
+        logger.warning(f"[WATCHDOG] close timeout for {board_id}, forcing flag reset")
+        # Force reset guard flags on the old observer to prevent START_PATH_BLOCKED
+        old_obs = observer_manager.get(board_id)
+        if old_obs:
+            old_obs._closing = False
+            old_obs._stopping = False
+            old_obs._finalize_dispatching = False
+
     await asyncio.sleep(2)
     await observer_manager.open(
         board_id=board_id,
