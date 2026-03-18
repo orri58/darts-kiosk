@@ -25,7 +25,10 @@ import {
   Package,
   ChevronDown,
   ChevronRight,
-  Monitor
+  Monitor,
+  Power,
+  PlayCircle,
+  Zap
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -107,6 +110,10 @@ export default function AdminSystem() {
   const [creatingAppBackup, setCreatingAppBackup] = useState(false);
   const [autodartsDesktop, setAutodartsDesktop] = useState(null);
   const [restartingAutodarts, setRestartingAutodarts] = useState(false);
+  const [restartingBackend, setRestartingBackend] = useState(false);
+  const [rebootingOS, setRebootingOS] = useState(false);
+  const [shuttingDownOS, setShuttingDownOS] = useState(false);
+  const [ensuringDesktop, setEnsuringDesktop] = useState(false);
   const headers = { Authorization: `Bearer ${token}` };
 
   const fetchAll = useCallback(async () => {
@@ -367,7 +374,6 @@ export default function AdminSystem() {
     try {
       await axios.post(`${API}/admin/system/restart-autodarts-desktop`, {}, { headers });
       toast.success(t('autodarts_desktop') + ' neugestartet');
-      // Refresh status after a brief delay
       setTimeout(async () => {
         try {
           const res = await axios.get(`${API}/admin/system/autodarts-desktop-status`, { headers });
@@ -379,6 +385,75 @@ export default function AdminSystem() {
       const detail = err.response?.data?.detail || 'Neustart fehlgeschlagen';
       toast.error(detail);
       setRestartingAutodarts(false);
+    }
+  };
+
+  const handleEnsureDesktop = async () => {
+    setEnsuringDesktop(true);
+    try {
+      const res = await axios.post(`${API}/admin/system/ensure-autodarts-desktop`, {}, { headers });
+      const d = res.data;
+      if (d.running_after) {
+        toast.success(d.message || 'Autodarts Desktop bereit');
+      } else {
+        toast.error(d.message || 'Autodarts Desktop konnte nicht gestartet werden');
+      }
+      // Refresh status
+      try {
+        const sr = await axios.get(`${API}/admin/system/autodarts-desktop-status`, { headers });
+        setAutodartsDesktop(sr.data);
+      } catch { /* ignore */ }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Sicherstellen fehlgeschlagen');
+    } finally {
+      setEnsuringDesktop(false);
+    }
+  };
+
+  const handleRestartBackend = async () => {
+    if (!window.confirm(t('restart_backend_confirm'))) return;
+    setRestartingBackend(true);
+    try {
+      await axios.post(`${API}/admin/system/restart-backend`, {}, { headers });
+      toast.success(t('action_scheduled'));
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Backend-Neustart fehlgeschlagen');
+    } finally {
+      setRestartingBackend(false);
+    }
+  };
+
+  const handleRebootOS = async () => {
+    if (!window.confirm(t('reboot_pc_confirm'))) return;
+    setRebootingOS(true);
+    try {
+      const res = await axios.post(`${API}/admin/system/reboot-os`, {}, { headers });
+      if (res.data.accepted) {
+        toast.success(res.data.message || t('action_scheduled'));
+      } else {
+        toast.error(res.data.error || t('not_supported_os'));
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || t('not_supported_os'));
+    } finally {
+      setRebootingOS(false);
+    }
+  };
+
+  const handleShutdownOS = async () => {
+    if (!window.confirm(t('shutdown_pc_confirm'))) return;
+    setShuttingDownOS(true);
+    try {
+      const res = await axios.post(`${API}/admin/system/shutdown-os`, {}, { headers });
+      if (res.data.accepted) {
+        toast.success(res.data.message || t('action_scheduled'));
+      } else {
+        toast.error(res.data.error || t('not_supported_os'));
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || t('not_supported_os'));
+    } finally {
+      setShuttingDownOS(false);
     }
   };
 
@@ -1210,7 +1285,77 @@ export default function AdminSystem() {
             </CardContent>
           </Card>
 
-          {/* Autodarts Desktop Supervision (v3.2.0) */}
+          {/* System Controls (v3.3.1) */}
+          <Card className="bg-zinc-900 border-zinc-800" data-testid="system-controls-card">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <Zap className="w-5 h-5 text-amber-500" /> {t('system_controls')}
+              </CardTitle>
+              <p className="text-sm text-zinc-400">{t('system_controls_desc')}</p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-3">
+                {/* Restart Backend */}
+                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
+                  <div>
+                    <p className="text-sm text-white font-medium">{t('restart_backend')}</p>
+                    <p className="text-xs text-zinc-500">{t('restart_backend_desc')}</p>
+                  </div>
+                  <Button
+                    onClick={handleRestartBackend}
+                    disabled={restartingBackend}
+                    variant="outline"
+                    size="sm"
+                    className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                    data-testid="restart-backend-btn"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${restartingBackend ? 'animate-spin' : ''}`} />
+                    {restartingBackend ? t('restarting') : t('restart_backend')}
+                  </Button>
+                </div>
+
+                {/* Reboot PC */}
+                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
+                  <div>
+                    <p className="text-sm text-white font-medium">{t('reboot_pc')}</p>
+                    <p className="text-xs text-zinc-500">{t('reboot_pc_desc')}</p>
+                  </div>
+                  <Button
+                    onClick={handleRebootOS}
+                    disabled={rebootingOS}
+                    variant="outline"
+                    size="sm"
+                    className="border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                    data-testid="reboot-os-btn"
+                  >
+                    <RotateCcw className={`w-3.5 h-3.5 mr-1.5 ${rebootingOS ? 'animate-spin' : ''}`} />
+                    {rebootingOS ? t('restarting') : t('reboot_pc')}
+                  </Button>
+                </div>
+
+                {/* Shutdown PC */}
+                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
+                  <div>
+                    <p className="text-sm text-white font-medium">{t('shutdown_pc')}</p>
+                    <p className="text-xs text-zinc-500">{t('shutdown_pc_desc')}</p>
+                  </div>
+                  <Button
+                    onClick={handleShutdownOS}
+                    disabled={shuttingDownOS}
+                    variant="outline"
+                    size="sm"
+                    className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+                    data-testid="shutdown-os-btn"
+                  >
+                    <Power className={`w-3.5 h-3.5 mr-1.5 ${shuttingDownOS ? 'animate-spin' : ''}`} />
+                    {shuttingDownOS ? t('restarting') : t('shutdown_pc')}
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Autodarts Desktop Supervision (v3.2.0, enhanced v3.3.1) */}
           <Card className="bg-zinc-900 border-zinc-800" data-testid="autodarts-desktop-card">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
@@ -1230,6 +1375,9 @@ export default function AdminSystem() {
                         <span className={`text-sm font-medium ${autodartsDesktop?.running ? 'text-emerald-400' : 'text-red-400'}`}>
                           {autodartsDesktop?.running ? t('autodarts_running') : t('autodarts_not_running')}
                         </span>
+                        {autodartsDesktop?.pid && (
+                          <span className="text-xs text-zinc-500 font-mono ml-1">(PID: {autodartsDesktop.pid})</span>
+                        )}
                       </>
                     ) : (
                       <span className="text-sm text-zinc-500">{t('autodarts_not_supported')}</span>
@@ -1237,17 +1385,50 @@ export default function AdminSystem() {
                   </div>
                 </div>
 
-                {/* Restart button */}
-                <Button
-                  onClick={handleRestartAutodarts}
-                  disabled={restartingAutodarts}
-                  variant="outline"
-                  className="w-full border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
-                  data-testid="restart-autodarts-btn"
-                >
-                  <RotateCcw className={`w-4 h-4 mr-2 ${restartingAutodarts ? 'animate-spin' : ''}`} />
-                  {restartingAutodarts ? t('restarting') : t('restart_autodarts')}
-                </Button>
+                {/* Config info */}
+                {autodartsDesktop && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2 bg-zinc-800/30 rounded-sm">
+                      <p className="text-xs text-zinc-500">{t('autodarts_configured')}</p>
+                      <p className="text-sm text-white">{autodartsDesktop.configured ? 'Ja' : 'Nein'}</p>
+                    </div>
+                    <div className="p-2 bg-zinc-800/30 rounded-sm">
+                      <p className="text-xs text-zinc-500">{t('autodarts_enabled')}</p>
+                      <p className="text-sm text-white">{autodartsDesktop.enabled ? 'Ja' : 'Nein'}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Error display */}
+                {autodartsDesktop?.last_error && (
+                  <div className="p-2 bg-red-500/10 border border-red-500/20 rounded-sm">
+                    <p className="text-xs text-red-400">Letzter Fehler: {autodartsDesktop.last_error}</p>
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                <div className="flex gap-2">
+                  <Button
+                    onClick={handleRestartAutodarts}
+                    disabled={restartingAutodarts || ensuringDesktop}
+                    variant="outline"
+                    className="flex-1 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                    data-testid="restart-autodarts-btn"
+                  >
+                    <RotateCcw className={`w-4 h-4 mr-2 ${restartingAutodarts ? 'animate-spin' : ''}`} />
+                    {restartingAutodarts ? t('restarting') : t('restart_autodarts')}
+                  </Button>
+                  <Button
+                    onClick={handleEnsureDesktop}
+                    disabled={ensuringDesktop || restartingAutodarts}
+                    variant="outline"
+                    className="flex-1 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                    data-testid="ensure-autodarts-btn"
+                  >
+                    <PlayCircle className={`w-4 h-4 mr-2 ${ensuringDesktop ? 'animate-spin' : ''}`} />
+                    {ensuringDesktop ? t('ensuring') : t('ensure_autodarts')}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

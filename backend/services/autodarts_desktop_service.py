@@ -69,6 +69,32 @@ class AutodartsDesktopService:
             logger.warning(f"[AUTODARTS_DESKTOP] is_running check failed: {e}")
             return False
 
+    def _get_pid(self) -> Optional[int]:
+        """Get PID of running Autodarts.exe via tasklist CSV. Returns None if not found."""
+        if not IS_WINDOWS:
+            return None
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {self._process_name}", "/NH", "/FO", "CSV"],
+                **_SUBPROCESS_SAFE,
+            )
+            stdout = result.stdout or ""
+            for line in stdout.strip().split("\n"):
+                line = line.strip()
+                if not line or self._process_name.lower() not in line.lower():
+                    continue
+                # CSV format: "Autodarts.exe","1234","Console","1","45,678 K"
+                parts = line.replace('"', "").split(",")
+                if len(parts) >= 2:
+                    try:
+                        return int(parts[1])
+                    except (ValueError, IndexError):
+                        pass
+            return None
+        except Exception as e:
+            logger.debug(f"[AUTODARTS_DESKTOP] _get_pid failed: {e}")
+            return None
+
     # ── Start / Kill / Restart ──
 
     def start_process(self, exe_path: str) -> dict:
@@ -147,7 +173,7 @@ class AutodartsDesktopService:
 
         try:
             if self.is_running():
-                logger.info(f"[AUTODARTS_DESKTOP] launch skipped reason=already_running")
+                logger.info("[AUTODARTS_DESKTOP] launch skipped reason=already_running")
                 return {"action": "skip", "reason": "already_running"}
         except Exception as e:
             logger.warning(f"[AUTODARTS_DESKTOP] ensure_running({trigger}): check failed: {e}")
@@ -259,7 +285,7 @@ class AutodartsDesktopService:
             if stdout.startswith("CORRECTED:"):
                 title = stdout.split(":", 1)[1]
                 logger.info(f"[AUTODARTS_DESKTOP] foreground_steal_detected title={title}")
-                logger.info(f"[AUTODARTS_DESKTOP] foreground_corrected action=minimize")
+                logger.info("[AUTODARTS_DESKTOP] foreground_corrected action=minimize")
             elif stdout.startswith("OK:"):
                 logger.debug(f"[AUTODARTS_DESKTOP] no focus steal detected, fg={stdout}")
             else:
@@ -269,26 +295,104 @@ class AutodartsDesktopService:
 
     # ── Status ──
 
-    def get_status(self) -> dict:
-        """Return comprehensive status of Autodarts Desktop."""
+    def get_status(self, config: Optional[dict] = None) -> dict:
+        """Return comprehensive status of Autodarts Desktop.
+        Accepts optional config dict to include enabled/configured fields.
+        """
+        logger.debug("[AUTODARTS_DESKTOP] status check start")
+        last_check_ok = True
         try:
             running = self.is_running()
-        except Exception:
+            pid = self._get_pid() if running else None
+        except Exception as e:
             running = False
+            pid = None
+            last_check_ok = False
+            logger.warning(f"[AUTODARTS_DESKTOP] status error={e}")
+
+        if running:
+            logger.debug(f"[AUTODARTS_DESKTOP] status running pid={pid}")
+        else:
+            logger.debug("[AUTODARTS_DESKTOP] status not_running")
 
         now = time.monotonic()
         cooldown_active = (now - self._last_auto_start_ts) < _AUTO_START_COOLDOWN
 
+        cfg = config or {}
+        exe_path = cfg.get("exe_path", "")
+        enabled = cfg.get("auto_start", False)
+        configured = bool(exe_path)
+
         return {
             "running": running,
+            "pid": pid,
             "process_name": self._process_name,
             "platform": platform.system(),
             "supported": IS_WINDOWS,
+            "enabled": enabled,
+            "configured": configured,
+            "exe_path": exe_path,
             "auto_start_cooldown_s": _AUTO_START_COOLDOWN,
             "cooldown_active": cooldown_active,
             "last_start_attempt_at": self._last_start_attempt_at,
             "last_error": self._last_error,
+            "last_check_ok": last_check_ok,
         }
+
+    # ── Ensure Desktop Ready (Admin Wake/Recovery) ──
+
+    def ensure_desktop_ready(self, exe_path: str) -> dict:
+        """One-shot check and start if needed. For admin wake/recovery endpoint.
+        Synchronous — caller should wrap in asyncio.to_thread if needed.
+        """
+        logger.info("[AUTODARTS_DESKTOP] ensure_desktop_ready requested")
+        was_running = False
+        try:
+            was_running = self.is_running()
+        except Exception:
+            pass
+
+        result = {"was_running_before": was_running}
+
+        if was_running:
+            pid = self._get_pid()
+            result.update({
+                "action_taken": "none",
+                "running_after": True,
+                "pid_after": pid,
+                "message": "Autodarts Desktop laeuft bereits",
+            })
+            logger.info(f"[AUTODARTS_DESKTOP] ensure_desktop_ready: already running pid={pid}")
+        else:
+            if not exe_path:
+                result.update({
+                    "action_taken": "skipped",
+                    "running_after": False,
+                    "pid_after": None,
+                    "message": "Kein exe_path konfiguriert",
+                })
+                logger.info("[AUTODARTS_DESKTOP] ensure_desktop_ready: no exe_path configured")
+                return result
+
+            start_result = self._start_no_focus(exe_path, trigger="admin_ensure")
+            # Brief wait for process to appear
+            time.sleep(2)
+            try:
+                running_after = self.is_running()
+            except Exception:
+                running_after = False
+            pid_after = self._get_pid() if running_after else None
+            action = "started" if running_after else "start_failed"
+            msg = start_result.get("exe_path", start_result.get("error", "Unbekannt"))
+            result.update({
+                "action_taken": action,
+                "running_after": running_after,
+                "pid_after": pid_after,
+                "message": f"Start {'erfolgreich' if running_after else 'fehlgeschlagen'}: {msg}",
+            })
+            logger.info(f"[AUTODARTS_DESKTOP] ensure_desktop_ready: {action} running_after={running_after} pid={pid_after}")
+
+        return result
 
 
 autodarts_desktop = AutodartsDesktopService()

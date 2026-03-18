@@ -474,26 +474,81 @@ async def remove_branding_logo(admin: User = Depends(require_admin), db: AsyncSe
 
 
 # ===================================================================
-# Autodarts Desktop Supervision (v3.2.0)
+# Autodarts Desktop Supervision (v3.2.0, enhanced v3.3.1)
 # ===================================================================
 
 @router.get("/admin/system/autodarts-desktop-status")
-async def get_autodarts_desktop_status(admin: User = Depends(require_admin)):
-    """Get current status of Autodarts Desktop application."""
-    return autodarts_desktop.get_status()
+async def get_autodarts_desktop_status(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Get current status of Autodarts Desktop application (enhanced v3.3.1)."""
+    from backend.models import DEFAULT_AUTODARTS_DESKTOP
+    config = await get_or_create_setting(db, "autodarts_desktop", DEFAULT_AUTODARTS_DESKTOP)
+    return autodarts_desktop.get_status(config=config)
 
 
 @router.post("/admin/system/restart-autodarts-desktop")
 async def restart_autodarts_desktop(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Restart the Autodarts Desktop application."""
+    import asyncio
     from backend.models import DEFAULT_AUTODARTS_DESKTOP
     setting = await get_or_create_setting(db, "autodarts_desktop", DEFAULT_AUTODARTS_DESKTOP)
     exe_path = setting.get("exe_path", "")
     if not exe_path:
         raise HTTPException(status_code=400, detail="Autodarts exe_path not configured")
-    result = autodarts_desktop.restart_process(exe_path)
+    result = await asyncio.to_thread(autodarts_desktop.restart_process, exe_path)
     await log_audit(db, admin, "restart_autodarts_desktop", "system", "autodarts_desktop",
                     details={"exe_path": exe_path, "result": result})
     if not result.get("success"):
         raise HTTPException(status_code=500, detail=result.get("error", "Unknown error"))
+    return result
+
+
+@router.post("/admin/system/ensure-autodarts-desktop")
+async def ensure_autodarts_desktop(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """One-shot ensure Autodarts Desktop is running. For wake/recovery."""
+    import asyncio
+    from backend.models import DEFAULT_AUTODARTS_DESKTOP
+    setting = await get_or_create_setting(db, "autodarts_desktop", DEFAULT_AUTODARTS_DESKTOP)
+    exe_path = setting.get("exe_path", "")
+    if not exe_path:
+        return {"action_taken": "skipped", "was_running_before": False,
+                "running_after": False, "pid_after": None,
+                "message": "Autodarts exe_path nicht konfiguriert"}
+    result = await asyncio.to_thread(autodarts_desktop.ensure_desktop_ready, exe_path)
+    await log_audit(db, admin, "ensure_autodarts_desktop", "system", "autodarts_desktop",
+                    details={"result": result})
+    return result
+
+
+# ===================================================================
+# System Controls (v3.3.1)
+# ===================================================================
+
+@router.post("/admin/system/restart-backend")
+async def restart_backend(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Schedule graceful backend restart. Returns immediately."""
+    from backend.services.system_control_service import system_control
+    result = await system_control.restart_backend()
+    await log_audit(db, admin, "restart_backend", "system", "backend", details=result)
+    return result
+
+
+@router.post("/admin/system/reboot-os")
+async def reboot_os(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Trigger OS reboot. Windows only."""
+    from backend.services.system_control_service import system_control
+    result = await system_control.reboot_os()
+    await log_audit(db, admin, "reboot_os", "system", "os", details=result)
+    if not result.get("accepted") and "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
+    return result
+
+
+@router.post("/admin/system/shutdown-os")
+async def shutdown_os(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Trigger OS shutdown. Windows only."""
+    from backend.services.system_control_service import system_control
+    result = await system_control.shutdown_os()
+    await log_audit(db, admin, "shutdown_os", "system", "os", details=result)
+    if not result.get("accepted") and "error" in result:
+        raise HTTPException(status_code=400, detail=result["error"])
     return result

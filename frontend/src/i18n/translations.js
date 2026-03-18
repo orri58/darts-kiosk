@@ -193,6 +193,26 @@ const translations = {
     autodarts_not_supported: 'Nur auf Windows verfügbar',
     restart_autodarts: 'Autodarts neustarten',
     restarting: 'Wird neugestartet...',
+    ensure_autodarts: 'Autodarts sicherstellen',
+    ensuring: 'Wird geprüft...',
+
+    // Admin - System Controls (v3.3.1)
+    system_controls: 'System-Steuerung',
+    system_controls_desc: 'Betriebssystem und Backend steuern',
+    restart_backend: 'Backend neustarten',
+    restart_backend_desc: 'Startet den Kiosk-Server neu',
+    restart_backend_confirm: 'Backend wirklich neustarten? Alle aktiven Verbindungen werden kurzzeitig unterbrochen.',
+    reboot_pc: 'PC neustarten',
+    reboot_pc_desc: 'Startet den Windows-PC neu',
+    reboot_pc_confirm: 'PC wirklich neustarten? Alle laufenden Spiele werden beendet!',
+    shutdown_pc: 'PC herunterfahren',
+    shutdown_pc_desc: 'Fährt den Windows-PC herunter',
+    shutdown_pc_confirm: 'PC wirklich herunterfahren? Das System muss manuell wieder gestartet werden!',
+    action_scheduled: 'Aktion geplant',
+    not_supported_os: 'Nur auf Windows verfügbar',
+    autodarts_pid: 'PID',
+    autodarts_configured: 'Konfiguriert',
+    autodarts_enabled: 'Auto-Start aktiv',
 
     // Admin - Language
     language_settings: 'Spracheinstellungen',
@@ -396,6 +416,26 @@ const translations = {
     autodarts_not_supported: 'Only available on Windows',
     restart_autodarts: 'Restart Autodarts',
     restarting: 'Restarting...',
+    ensure_autodarts: 'Ensure Autodarts',
+    ensuring: 'Checking...',
+
+    // Admin - System Controls (v3.3.1)
+    system_controls: 'System Controls',
+    system_controls_desc: 'Control operating system and backend',
+    restart_backend: 'Restart Backend',
+    restart_backend_desc: 'Restarts the kiosk server',
+    restart_backend_confirm: 'Really restart the backend? All active connections will be briefly interrupted.',
+    reboot_pc: 'Reboot PC',
+    reboot_pc_desc: 'Reboots the Windows PC',
+    reboot_pc_confirm: 'Really reboot the PC? All running games will be terminated!',
+    shutdown_pc: 'Shutdown PC',
+    shutdown_pc_desc: 'Shuts down the Windows PC',
+    shutdown_pc_confirm: 'Really shut down the PC? The system must be manually restarted!',
+    action_scheduled: 'Action scheduled',
+    not_supported_os: 'Only available on Windows',
+    autodarts_pid: 'PID',
+    autodarts_configured: 'Configured',
+    autodarts_enabled: 'Auto-start active',
 
     // Admin - Language
     language_settings: 'Language Settings',
