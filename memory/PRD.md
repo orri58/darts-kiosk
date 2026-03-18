@@ -795,6 +795,31 @@ autostart.bat:
   - 18/18 pytest Tests bestanden
   - Release: darts-kiosk-v3.3.1-hotfix1-windows.zip
 
+- v3.3.1-hotfix2: P0 Finalize/Lock Idempotenz-Fix (2026-03-18)
+  - ROOT CAUSE: _finalized[board_id]=True wurde gesetzt obwohl DB-Commit fehlgeschlagen oder
+    Timeout eingetreten war. Jeder Retry wurde mit "already finalized" blockiert.
+  - DREI FEHLERPFADE BEHOBEN:
+    - Pfad A (DB-Fehler): Exception in DB-Block wurde gefangen, Ausfuehrung fortgesetzt mit
+      should_lock=False, trotzdem _finalized=True gesetzt → Board blieb entsperrt
+    - Pfad B (Timeout): Timeout-Handler setzte blind _finalized=True ohne DB-Commit zu pruefen
+    - Pfad C (Fehlende Verifikation): Guard pruefte nur Flag, nicht echten Board-Status
+  - FIX 1 (db_committed Flag): Neues Flag trackt ob DB-Transaktion committed hat.
+    _finalized nur bei db_committed=True gesetzt.
+  - FIX 2 (Timeout-Recovery): Timeout-Handler macht minimalen DB-Lock-Versuch.
+    Nur bei Erfolg _finalized=True. Bei Misserfolg: Retry erlaubt.
+  - FIX 3 (Guard-Verifikation): _finalized-Guard verifiziert board.status==LOCKED UND
+    Session beendet. Stale Flags werden geloescht, Retry zugelassen.
+  - NEUE LOG-MARKER:
+    - finalize_state_before_decision
+    - db_commit_started / db_commit_succeeded / db_commit_failed
+    - finalize_marked_committed
+    - finalize_skip reason=already_committed
+    - finalize_resume_incomplete_commit
+    - stale_finalized_flag_cleared
+  - Nur backend/routers/kiosk.py geaendert. Kein Observer, kein Watchdog, kein Frontend.
+  - 10/10 pytest Tests bestanden (iteration_52)
+  - Release: darts-kiosk-v3.3.1-hotfix2-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)~~ → v3.3.1
