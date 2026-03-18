@@ -41,6 +41,7 @@ const translations = {
     add_player: 'Spieler hinzufügen',
     start: 'START',
     games_remaining: 'Spiele übrig',
+    last_game: 'Letztes Spiel',
     minutes_remaining: 'Minuten übrig',
 
     // Kiosk - Stammkunde
@@ -179,6 +180,20 @@ const translations = {
     copied_to_clipboard: 'In Zwischenablage kopiert',
     copy_failed: 'Kopieren fehlgeschlagen',
 
+    // Admin - Post-Match Delay & Autodarts Desktop (v3.2.0)
+    post_match_delay: 'Post-Match Verzögerung',
+    post_match_delay_desc: 'Pause nach Spielende bevor Sounds/Effekte beendet werden',
+    delay_ms: 'Verzögerung (ms)',
+    autodarts_desktop: 'Autodarts Desktop',
+    autodarts_desktop_desc: 'Pfad zur Autodarts Desktop-Anwendung',
+    autodarts_exe_path: 'Pfad zu Autodarts.exe',
+    autodarts_auto_start: 'Auto-Start wenn nicht aktiv',
+    autodarts_running: 'Autodarts läuft',
+    autodarts_not_running: 'Autodarts nicht aktiv',
+    autodarts_not_supported: 'Nur auf Windows verfügbar',
+    restart_autodarts: 'Autodarts neustarten',
+    restarting: 'Wird neugestartet...',
+
     // Admin - Language
     language_settings: 'Spracheinstellungen',
     language_desc: 'Standard-Sprache für Kiosk und Admin-Oberfläche',
@@ -229,6 +244,7 @@ const translations = {
     add_player: 'Add Player',
     start: 'START',
     games_remaining: 'Games left',
+    last_game: 'Last Game',
     minutes_remaining: 'Minutes left',
 
     // Kiosk - Stammkunde
@@ -366,6 +382,20 @@ const translations = {
     palette_imported: 'Palette imported',
     copied_to_clipboard: 'Copied to clipboard',
     copy_failed: 'Copy failed',
+
+    // Admin - Post-Match Delay & Autodarts Desktop (v3.2.0)
+    post_match_delay: 'Post-Match Delay',
+    post_match_delay_desc: 'Pause after game ends before sounds/effects are cut off',
+    delay_ms: 'Delay (ms)',
+    autodarts_desktop: 'Autodarts Desktop',
+    autodarts_desktop_desc: 'Path to Autodarts Desktop application',
+    autodarts_exe_path: 'Path to Autodarts.exe',
+    autodarts_auto_start: 'Auto-start when not active',
+    autodarts_running: 'Autodarts running',
+    autodarts_not_running: 'Autodarts not active',
+    autodarts_not_supported: 'Only available on Windows',
+    restart_autodarts: 'Restart Autodarts',
+    restarting: 'Restarting...',
 
     // Admin - Language
     language_settings: 'Language Settings',

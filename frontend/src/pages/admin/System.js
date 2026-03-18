@@ -24,7 +24,8 @@ import {
   ExternalLink,
   Package,
   ChevronDown,
-  ChevronRight
+  ChevronRight,
+  Monitor
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -104,6 +105,8 @@ export default function AdminSystem() {
   const [appBackups, setAppBackups] = useState([]);
   const [updateResult, setUpdateResult] = useState(null);
   const [creatingAppBackup, setCreatingAppBackup] = useState(false);
+  const [autodartsDesktop, setAutodartsDesktop] = useState(null);
+  const [restartingAutodarts, setRestartingAutodarts] = useState(false);
   const headers = { Authorization: `Bearer ${token}` };
 
   const fetchAll = useCallback(async () => {
@@ -124,6 +127,11 @@ export default function AdminSystem() {
     } finally {
       setLoading(false);
     }
+    // Fetch Autodarts Desktop status (separate, non-blocking)
+    try {
+      const adRes = await axios.get(`${API}/admin/system/autodarts-desktop-status`, { headers });
+      setAutodartsDesktop(adRes.data);
+    } catch { /* ignore — endpoint may not exist on older builds */ }
   }, [token]);
 
   useEffect(() => {
@@ -352,6 +360,26 @@ export default function AdminSystem() {
       setUpdateResult(null);
       fetchAll();
     } catch { /* ignore */ }
+  };
+
+  const handleRestartAutodarts = async () => {
+    setRestartingAutodarts(true);
+    try {
+      await axios.post(`${API}/admin/system/restart-autodarts-desktop`, {}, { headers });
+      toast.success(t('autodarts_desktop') + ' neugestartet');
+      // Refresh status after a brief delay
+      setTimeout(async () => {
+        try {
+          const res = await axios.get(`${API}/admin/system/autodarts-desktop-status`, { headers });
+          setAutodartsDesktop(res.data);
+        } catch { /* ignore */ }
+        setRestartingAutodarts(false);
+      }, 3000);
+    } catch (err) {
+      const detail = err.response?.data?.detail || 'Neustart fehlgeschlagen';
+      toast.error(detail);
+      setRestartingAutodarts(false);
+    }
   };
 
   const downloadBackup = async (filename) => {
@@ -1152,6 +1180,7 @@ export default function AdminSystem() {
 
         {/* ===== Details Tab ===== */}
         <TabsContent value="details">
+          <div className="space-y-4">
           <Card className="bg-zinc-900 border-zinc-800">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
@@ -1180,6 +1209,49 @@ export default function AdminSystem() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Autodarts Desktop Supervision (v3.2.0) */}
+          <Card className="bg-zinc-900 border-zinc-800" data-testid="autodarts-desktop-card">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <Monitor className="w-5 h-5 text-amber-500" /> {t('autodarts_desktop')}
+              </CardTitle>
+              <p className="text-sm text-zinc-400">{t('autodarts_desktop_desc')}</p>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {/* Status indicator */}
+                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
+                  <span className="text-sm text-zinc-400">Status</span>
+                  <div className="flex items-center gap-2">
+                    {autodartsDesktop?.supported ? (
+                      <>
+                        <div className={`w-2.5 h-2.5 rounded-full ${autodartsDesktop?.running ? 'bg-emerald-500' : 'bg-red-500'}`} />
+                        <span className={`text-sm font-medium ${autodartsDesktop?.running ? 'text-emerald-400' : 'text-red-400'}`}>
+                          {autodartsDesktop?.running ? t('autodarts_running') : t('autodarts_not_running')}
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-sm text-zinc-500">{t('autodarts_not_supported')}</span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Restart button */}
+                <Button
+                  onClick={handleRestartAutodarts}
+                  disabled={restartingAutodarts}
+                  variant="outline"
+                  className="w-full border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
+                  data-testid="restart-autodarts-btn"
+                >
+                  <RotateCcw className={`w-4 h-4 mr-2 ${restartingAutodarts ? 'animate-spin' : ''}`} />
+                  {restartingAutodarts ? t('restarting') : t('restart_autodarts')}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

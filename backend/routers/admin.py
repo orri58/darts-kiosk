@@ -22,6 +22,7 @@ from backend.services.setup_wizard import (
     check_setup_status, complete_setup, SetupConfig
 )
 from backend.services.system_service import system_service
+from backend.services.autodarts_desktop_service import autodarts_desktop
 
 router = APIRouter()
 
@@ -470,3 +471,29 @@ async def remove_branding_logo(admin: User = Depends(require_admin), db: AsyncSe
     await db.flush()
     await log_audit(db, admin, "remove_logo", "settings", "branding")
     return {"message": "Logo removed", "branding": branding}
+
+
+# ===================================================================
+# Autodarts Desktop Supervision (v3.2.0)
+# ===================================================================
+
+@router.get("/admin/system/autodarts-desktop-status")
+async def get_autodarts_desktop_status(admin: User = Depends(require_admin)):
+    """Get current status of Autodarts Desktop application."""
+    return autodarts_desktop.get_status()
+
+
+@router.post("/admin/system/restart-autodarts-desktop")
+async def restart_autodarts_desktop(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Restart the Autodarts Desktop application."""
+    from backend.models import DEFAULT_AUTODARTS_DESKTOP
+    setting = await get_or_create_setting(db, "autodarts_desktop", DEFAULT_AUTODARTS_DESKTOP)
+    exe_path = setting.get("exe_path", "")
+    if not exe_path:
+        raise HTTPException(status_code=400, detail="Autodarts exe_path not configured")
+    result = autodarts_desktop.restart_process(exe_path)
+    await log_audit(db, admin, "restart_autodarts_desktop", "system", "autodarts_desktop",
+                    details={"exe_path": exe_path, "result": result})
+    if not result.get("success"):
+        raise HTTPException(status_code=500, detail=result.get("error", "Unknown error"))
+    return result

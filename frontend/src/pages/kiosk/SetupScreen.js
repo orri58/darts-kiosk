@@ -107,7 +107,11 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
   const getRemainingInfo = () => {
     if (!session) return null;
     if (session.pricing_mode === 'per_game') {
-      return { type: 'credits', value: session.credits_remaining, label: t('games_remaining') };
+      const credits = session.credits_remaining;
+      if (credits === 1) {
+        return { type: 'credits', value: credits, label: t('last_game') };
+      }
+      return { type: 'credits', value: credits, label: t('games_remaining') };
     }
     if (session.pricing_mode === 'per_time' && session.expires_at) {
       const minutesLeft = Math.max(0, Math.round((new Date(session.expires_at) - new Date()) / 60000));

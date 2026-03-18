@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from backend.database import get_db
 from backend.models import User, Settings
-from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG, DEFAULT_LOCKSCREEN_QR, DEFAULT_OVERLAY_CONFIG
+from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG, DEFAULT_LOCKSCREEN_QR, DEFAULT_OVERLAY_CONFIG, DEFAULT_POST_MATCH_DELAY, DEFAULT_AUTODARTS_DESKTOP
 from backend.schemas import SettingsUpdate
 from backend.dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
 from backend.services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
@@ -304,4 +304,46 @@ async def update_overlay_config(data: SettingsUpdate, admin: User = Depends(requ
         db.add(setting)
     await db.flush()
     await log_audit(db, admin, "update_overlay_config", "settings", "overlay_config")
+    return setting.value
+
+
+# ===== Post-Match Delay Settings =====
+
+@router.get("/settings/post-match-delay")
+async def get_post_match_delay(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "post_match_delay", DEFAULT_POST_MATCH_DELAY)
+
+
+@router.put("/settings/post-match-delay")
+async def update_post_match_delay(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "post_match_delay"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="post_match_delay", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_post_match_delay", "settings", "post_match_delay")
+    return setting.value
+
+
+# ===== Autodarts Desktop Settings =====
+
+@router.get("/settings/autodarts-desktop")
+async def get_autodarts_desktop_settings(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "autodarts_desktop", DEFAULT_AUTODARTS_DESKTOP)
+
+
+@router.put("/settings/autodarts-desktop")
+async def update_autodarts_desktop_settings(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "autodarts_desktop"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="autodarts_desktop", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_autodarts_desktop", "settings", "autodarts_desktop")
     return setting.value

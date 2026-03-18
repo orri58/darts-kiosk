@@ -373,3 +373,12 @@ DEFAULT_OVERLAY_CONFIG = {
     "enabled": True,
     "position": "bottom-left",
 }
+
+DEFAULT_POST_MATCH_DELAY = {
+    "delay_ms": 5000,
+}
+
+DEFAULT_AUTODARTS_DESKTOP = {
+    "exe_path": "C:\\Program Files\\Autodarts\\Autodarts.exe",
+    "auto_start": False,
+}

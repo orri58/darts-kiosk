@@ -305,8 +305,19 @@ async def _finalize_match_inner(board_id: str, trigger: str,
 
         # ── Step 3: Delay ONLY for finished (player sees result) ──
         if trigger == "finished":
-            logger.info(f"[SESSION] finished-delay={FINALIZE_DELAY_FINISHED}s")
-            await asyncio.sleep(FINALIZE_DELAY_FINISHED)
+            # Read configurable delay from DB (v3.2.0), fallback to env var
+            delay_seconds = FINALIZE_DELAY_FINISHED
+            try:
+                from backend.models import DEFAULT_POST_MATCH_DELAY
+                async with AsyncSessionLocal() as delay_db:
+                    delay_setting = await get_or_create_setting(delay_db, "post_match_delay", DEFAULT_POST_MATCH_DELAY)
+                    delay_ms = delay_setting.get("delay_ms", 5000)
+                    delay_seconds = max(0, delay_ms / 1000.0)
+                    await delay_db.commit()
+            except Exception as e:
+                logger.warning(f"[SESSION] failed to read post_match_delay, using default: {e}")
+            logger.info(f"[SESSION] finished-delay={delay_seconds}s")
+            await asyncio.sleep(delay_seconds)
 
         # ── Step 4: SESSION-END vs KEEP-ALIVE branch ──
         if should_teardown:
