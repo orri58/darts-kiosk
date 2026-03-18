@@ -755,11 +755,30 @@ autostart.bat:
   - 18/18 Tests bestanden (Backend + Frontend)
   - Release: darts-kiosk-v3.3.0-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
 
+- v3.3.1: Admin System Controls + Desktop Supervision Hardening (2026-03-18)
+  - P1-A: Admin System Controls
+    - POST /api/admin/system/restart-backend — async file touch (reload mode) / os._exit(1) (Windows)
+    - POST /api/admin/system/reboot-os — shutdown /r /t 5 (Windows) / 400 unsupported (Linux)
+    - POST /api/admin/system/shutdown-os — shutdown /s /t 5 (Windows) / 400 unsupported (Linux)
+    - All endpoints: admin-auth required, structured JSON response, audit logging
+    - Frontend: System-Steuerung card with 3 buttons + confirmation dialogs
+  - P1-B: Desktop Supervision Hardening
+    - Enhanced status: pid, enabled, configured, exe_path, last_check_ok (13 fields total)
+    - POST /api/admin/system/ensure-autodarts-desktop — one-shot wake/recovery
+    - restart_process wrapped in asyncio.to_thread (non-blocking)
+    - _get_pid() via tasklist CSV parsing
+    - Frontend: enhanced Autodarts Desktop card with config info + 2 buttons
+  - New service: backend/services/system_control_service.py
+  - i18n: 15+ new DE/EN keys for system controls
+  - Keine Änderungen an observer, finalize, watchdog, auth, keep_alive
+  - 14/14 Backend + 100% Frontend Tests bestanden
+  - Release: darts-kiosk-v3.3.1-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
+
 ## Remaining Backlog
 ### P1
-- [ ] v3.3.0 Phase 2: Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)
-- [ ] v3.3.0 Phase 2: Windows Kiosk Controls (Shell Switch, Task Manager Toggle)
-- [ ] v3.3.0 Phase 2: Board Wake/Standby Support (ensure Desktop running on unlock)
+- [x] ~~Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)~~ → v3.3.1
+- [x] ~~Board Wake/Desktop Supervision Hardening~~ → v3.3.1
+- [ ] v3.3.2: Windows Kiosk Controls (Shell Switch, Task Manager Toggle)
 - [ ] Autodarts DOM Selector Tests (validate selectors against live Autodarts site)
 - [ ] Hard-Kiosk-Modus als optionaler separater Schritt (nach stabiler Runtime)
 
