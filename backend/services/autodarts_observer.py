@@ -229,6 +229,7 @@ class AutodartsObserver:
         self._finalized = False  # True after finalize_match completed for this game
         self._abort_detected = False  # Set by WS delete handler, triggers immediate finalize
         self._last_finalized_match_id: Optional[str] = None  # Prevents double-finalize for same match
+        self._finalize_dispatching = False  # v3.2.3: single-flight guard for finalize dispatch
 
         # ── Lifecycle state (serializes start/stop/recovery) ──
         self._lifecycle_state: LifecycleState = LifecycleState.CLOSED
@@ -285,6 +286,116 @@ class AutodartsObserver:
             return not self._page.is_closed()
         except Exception:
             return False
+
+    async def _dispatch_finalize(self, trigger: str, source: str) -> Optional[dict]:
+        """
+        v3.2.3: Single-flight finalize dispatch. Exactly-once guarantee.
+
+        Guards:
+          - _finalize_dispatching: prevents concurrent dispatch
+          - _finalized: prevents re-dispatch after completion
+          - match_id dedup: prevents double-finalize for same match
+
+        Called from: observe_loop debounce, WS match-end safety net, loop exit safety net
+        """
+        ws = self._ws_state
+        match_id = ws.last_match_id
+        finalize_key = match_id or f"synthetic_{trigger}_{int(time.time())}"
+
+        # ── Guard: already dispatching ──
+        if self._finalize_dispatching:
+            logger.info(
+                f"[Observer:{self.board_id}] FINALIZE_DISPATCH duplicate ignored "
+                f"trigger={trigger} match_id={match_id} finalize_key={finalize_key} "
+                f"source={source} reason=already_dispatching"
+            )
+            return None
+
+        # ── Guard: already finalized for this game cycle ──
+        if self._finalized:
+            logger.info(
+                f"[Observer:{self.board_id}] FINALIZE_DISPATCH duplicate ignored "
+                f"trigger={trigger} match_id={match_id} finalize_key={finalize_key} "
+                f"source={source} reason=already_finalized"
+            )
+            return None
+
+        # ── Guard: match_id already finalized (cross-cycle dedup) ──
+        if match_id and match_id == self._last_finalized_match_id:
+            logger.info(
+                f"[Observer:{self.board_id}] FINALIZE_DISPATCH duplicate ignored "
+                f"trigger={trigger} match_id={match_id} finalize_key={finalize_key} "
+                f"source={source} reason=match_already_finalized"
+            )
+            return None
+
+        # ── Guard: no callback ──
+        if not self._on_game_ended:
+            logger.warning(
+                f"[Observer:{self.board_id}] FINALIZE_DISPATCH skipped "
+                f"trigger={trigger} source={source} reason=no_callback"
+            )
+            return None
+
+        # ── Dispatch ──
+        self._finalize_dispatching = True
+        self._finalized = True
+        logger.info(
+            f"[Observer:{self.board_id}] FINALIZE_DISPATCH start "
+            f"trigger={trigger} match_id={match_id} finalize_key={finalize_key} source={source}"
+        )
+
+        result = None
+        try:
+            result = await self._on_game_ended(self.board_id, trigger)
+            logger.info(
+                f"[Observer:{self.board_id}] FINALIZE_DISPATCH complete "
+                f"trigger={trigger} match_id={match_id} finalize_key={finalize_key} "
+                f"lock={result.get('should_lock') if result else '?'} "
+                f"teardown={result.get('should_teardown') if result else '?'}"
+            )
+        except Exception as e:
+            logger.error(
+                f"[Observer:{self.board_id}] FINALIZE_DISPATCH failed "
+                f"trigger={trigger} match_id={match_id} error={e}",
+                exc_info=True,
+            )
+        finally:
+            self._finalize_dispatching = False
+
+        return result
+
+    def _schedule_finalize_safety(self, trigger: str, match_id: str):
+        """
+        v3.2.3: Deferred finalize safety net. Runs after poll interval + margin.
+        If the observe loop already dispatched finalize, _dispatch_finalize's guards
+        will silently skip. If not, this ensures finalize is not lost.
+        """
+        delay = OBSERVER_POLL_INTERVAL + 3  # poll interval + margin
+
+        async def _safety_check():
+            await asyncio.sleep(delay)
+            if self._finalized or self._finalize_dispatching or self._stopping:
+                return  # Already handled by observe loop — all good
+            if not self._ws_state.match_finished:
+                return  # State was reset (new game started) — no finalize needed
+            logger.warning(
+                f"[Observer:{self.board_id}] WS_FINALIZE_SAFETY_NET: "
+                f"finalize not dispatched after {delay}s, dispatching now. "
+                f"trigger={trigger} match_id={match_id}"
+            )
+            try:
+                await self._dispatch_finalize(trigger, source="ws_safety_net")
+            except Exception as e:
+                logger.error(
+                    f"[Observer:{self.board_id}] WS_FINALIZE_SAFETY_NET failed: {e}",
+                    exc_info=True,
+                )
+
+        try:
+            asyncio.get_event_loop().create_task(_safety_check())
+        except RuntimeError:
+            pass  # No event loop — can't schedule (e.g., during shutdown)
 
     def _check_profile_locked(self, profile_dir: str) -> bool:
         """
@@ -458,6 +569,14 @@ class AutodartsObserver:
             logger.info(f"[Observer:{self.board_id}] Browser already open, skipping")
             return
 
+        # ── v3.2.3: Block open during active finalize dispatch ──
+        if self._finalize_dispatching:
+            logger.warning(
+                f"[Observer:{self.board_id}] open_session BLOCKED — "
+                f"finalize_dispatching=True (gen={self._session_generation})"
+            )
+            return
+
         # ── Transition to STARTING ──
         self._session_generation += 1
         gen = self._session_generation
@@ -471,6 +590,7 @@ class AutodartsObserver:
         self._stopping = False
         self._closing = False
         self._finalized = False
+        self._finalize_dispatching = False
         self._abort_detected = False
         self._last_finalized_match_id = None
         self._stable_state = ObserverState.CLOSED
@@ -1133,8 +1253,15 @@ class AutodartsObserver:
             current_mid = ws.last_match_id
             if current_mid and current_mid == self._last_finalized_match_id:
                 logger.info(
-                    f"[Observer:{self.board_id}] SKIP_DUPLICATE_FINALIZE "
-                    f"match_id={current_mid} (finish signal for already-finalized match)")
+                    f"[Observer:{self.board_id}] MATCH_FINISH_DUPLICATE_IGNORED "
+                    f"trigger={interpretation} match_id={current_mid} reason=match_already_finalized")
+                return
+            # Duplicate finish signal guard: if already marked finished, ignore
+            if ws.match_finished:
+                logger.info(
+                    f"[Observer:{self.board_id}] MATCH_FINISH_DUPLICATE_IGNORED "
+                    f"trigger={interpretation} match_id={current_mid} reason=already_marked_finished "
+                    f"first_trigger={ws.finish_trigger}")
                 return
             ws.match_finished = True
             ws.match_active = False
@@ -1144,6 +1271,14 @@ class AutodartsObserver:
                 f"[Observer:{self.board_id}] *** MATCH FINISH DETECTED *** "
                 f"trigger={interpretation} | match_id={ws.last_match_id}"
             )
+            logger.info(
+                f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED "
+                f"trigger={interpretation} match_id={ws.last_match_id}"
+            )
+            # v3.2.3: Schedule deferred finalize safety net.
+            # If the observe loop doesn't dispatch finalize within the poll interval + margin,
+            # this task will do it. The single-flight guard prevents double dispatch.
+            self._schedule_finalize_safety(interpretation, ws.last_match_id)
 
         # ═══ POST-MATCH RESET (delete = match removed) ═══
         elif interpretation == "match_reset_delete":
@@ -1349,7 +1484,7 @@ class AutodartsObserver:
 
                     if self._on_game_ended:
                         try:
-                            result = await self._on_game_ended(self.board_id, "aborted")
+                            result = await self._dispatch_finalize("aborted", source="abort_fast_path")
                             logger.info(f"[Observer:{self.board_id}] abort finalize returned: "
                                         f"lock={result.get('should_lock') if result else '?'} "
                                         f"teardown={result.get('should_teardown') if result else '?'}")
@@ -1491,18 +1626,10 @@ class AutodartsObserver:
                     self._exit_polls = 0
                     self._exit_saw_finished = False
 
-                    # ── Call finalize DIRECTLY (synchronous, no create_task) ──
-                    # _finalized guard prevents double finalization
-                    if self._on_game_ended and not self._finalized:
-                        self._finalized = True
-                        try:
-                            result = await self._on_game_ended(self.board_id, reason)
-                            logger.info(f"[Observer:{self.board_id}] finalize returned: "
-                                        f"teardown={result.get('should_teardown') if result else '?'}")
-                        except Exception as e:
-                            logger.error(f"[Observer:{self.board_id}] on_game_ended({reason}) ERROR: {e}",
-                                         exc_info=True)
-                    elif self._finalized:
+                    # ── Call finalize DIRECTLY via single-flight dispatcher ──
+                    if not self._finalized:
+                        result = await self._dispatch_finalize(reason, source="debounce_confirmed")
+                    else:
                         logger.info(f"[Observer:{self.board_id}] FINALIZE_SKIPPED (already finalized)")
 
                     if self._stopping:
@@ -1587,6 +1714,30 @@ class AutodartsObserver:
         if self._stopping:
             stop_reason = "finalize_teardown" if self._finalized else "stopping_flag"
         logger.info(f"[Observer:{self.board_id}] OBSERVE_LOOP_STOP_REASON: {stop_reason}")
+
+        # ═══ v3.2.3: LOOP-EXIT SAFETY NET ═══
+        # If the loop exited (page died, crash, etc.) but a match finish was detected
+        # and finalize never ran, dispatch it now. This prevents lost finalizes.
+        ws = self._ws_state
+        if ws.match_finished and not self._finalized and not self._finalize_dispatching and not self._stopping:
+            trigger = ws.finish_trigger or "finished"
+            logger.warning(
+                f"[Observer:{self.board_id}] LOOP_EXIT_SAFETY_NET: "
+                f"match_finished=True but finalize never ran! "
+                f"trigger={trigger} match_id={ws.last_match_id} stop_reason={stop_reason}"
+            )
+            try:
+                result = await self._dispatch_finalize(trigger, source="loop_exit_safety_net")
+                logger.info(
+                    f"[Observer:{self.board_id}] LOOP_EXIT_SAFETY_NET complete: "
+                    f"lock={result.get('should_lock') if result else '?'}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"[Observer:{self.board_id}] LOOP_EXIT_SAFETY_NET failed: {e}",
+                    exc_info=True,
+                )
+
         logger.info(f"[Observer:{self.board_id}] Observe loop ended")
 
     # ═══════════════════════════════════════════════════════════════

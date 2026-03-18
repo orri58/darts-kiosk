@@ -676,6 +676,26 @@ autostart.bat:
     - Launch-completion blockiert bei close-intent
   - TASK 6: 10/10 gezielte Tests bestanden
   - Release: darts-kiosk-v3.2.2-windows.zip (2.1 MB), verifiziert
+- v3.2.3: Finalize Chain Reliability Hotfix (2026-03-18)
+  - ROOT CAUSE: Observe loop exits (page died/crash) before processing accumulated ws.match_finished
+  - TASK 1: Single-flight _dispatch_finalize() — exactly-once guarantee with triple guard
+    - _finalize_dispatching flag (concurrent guard)
+    - _finalized flag (re-dispatch guard)
+    - match_id dedup (cross-cycle guard)
+  - TASK 2: open_session blocked during active finalize dispatch
+  - TASK 3: Full dispatch logging pipeline
+    - finalize dispatch accepted/failed in kiosk.py
+    - FINALIZE_DISPATCH start/complete/duplicate in observer
+    - post_match_delay start/done phase logs
+  - TASK 4: Authoritative decision preserved (has_remaining_credits, should_lock, lock_enforced)
+  - TASK 5: Duplicate finish signal guard in _update_ws_state
+    - First accepted trigger wins, subsequent MATCH_FINISH_DUPLICATE_IGNORED
+  - SAFETY NETS:
+    - Loop-exit safety net: if ws.match_finished but finalize never ran, dispatch on exit
+    - WS-triggered deferred safety: _schedule_finalize_safety after poll_interval + 3s
+  - Post-match delay now also applies to match_end_* triggers (not just "finished")
+  - 17/17 tests passed (v3.2.2 + v3.2.3)
+  - Release: darts-kiosk-v3.2.3-windows.zip (2.1 MB), verifiziert
 
 ## Remaining Backlog
 ### P1

@@ -306,7 +306,7 @@ async def _finalize_match_inner(board_id: str, trigger: str,
             logger.error(f"[SESSION] DB_ERROR: {e}", exc_info=True)
 
         # ── Step 3: Delay ONLY for finished (player sees result) ──
-        if trigger == "finished":
+        if trigger == "finished" or trigger.startswith("match_end_"):
             # Read configurable delay from DB (v3.2.0), fallback to env var
             delay_seconds = FINALIZE_DELAY_FINISHED
             try:
@@ -318,8 +318,9 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                     await delay_db.commit()
             except Exception as e:
                 logger.warning(f"[SESSION] failed to read post_match_delay, using default: {e}")
-            logger.info(f"[SESSION] finished-delay={delay_seconds}s")
+            logger.info(f"[SESSION] post_match_delay start board={board_id} delay_ms={int(delay_seconds*1000)}")
             await asyncio.sleep(delay_seconds)
+            logger.info(f"[SESSION] post_match_delay done board={board_id} delay_ms={int(delay_seconds*1000)}")
 
         # ── Step 4: SESSION-END vs KEEP-ALIVE branch ──
         if should_teardown:
@@ -494,13 +495,31 @@ async def _on_game_ended(board_id: str, reason: str) -> dict:
     Observer detected match end. Execute finalize DIRECTLY (synchronous).
     Returns finalize result so observer knows whether to exit or continue.
     """
-    logger.info(f"[Observer->Kiosk] === GAME ENDED === board={board_id} trigger={reason}")
-    result = await finalize_match(board_id, reason)
     logger.info(
-        f"[Observer->Kiosk] finalize result: should_lock={result.get('should_lock')}, "
-        f"credits={result.get('credits_remaining')}"
+        f"[SESSION] finalize dispatch accepted board={board_id} trigger={reason} "
+        f"match_id={_get_observer_match_id(board_id)}"
     )
-    return result
+    try:
+        result = await finalize_match(board_id, reason)
+        logger.info(
+            f"[Observer->Kiosk] finalize result: should_lock={result.get('should_lock')}, "
+            f"credits={result.get('credits_remaining')}"
+        )
+        return result
+    except Exception as e:
+        logger.error(
+            f"[SESSION] finalize dispatch failed board={board_id} trigger={reason} error={e}",
+            exc_info=True,
+        )
+        raise
+
+
+def _get_observer_match_id(board_id: str) -> str:
+    """Helper to extract current match_id from observer's WS state."""
+    obs = observer_manager.get(board_id)
+    if obs and hasattr(obs, '_ws_state'):
+        return obs._ws_state.last_match_id or "unknown"
+    return "unknown"
 
 
 # =====================================================================
