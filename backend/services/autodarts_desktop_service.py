@@ -6,7 +6,9 @@ The exe path is configurable via the settings DB.
 This service only runs on Windows.
 
 v3.3.0:
-  - Post-launch focus-steal detection and correction
+  - Post-launch focus-steal detection and correction (non-blocking, threaded)
+  - Two-stage: SW_SHOWMINNOACTIVE launch + active foreground check/correction
+  - Debounced correction (min 10s between attempts, no flicker loops)
   - Enhanced status model with last_start_attempt, last_error, cooldown_active
   - Robust process detection with null-safe checks
   - Safe subprocess encoding (utf-8, errors=replace)
@@ -15,6 +17,7 @@ import logging
 import os
 import platform
 import subprocess
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -25,6 +28,9 @@ IS_WINDOWS = platform.system() == "Windows"
 
 # Cooldown between auto-start attempts (seconds)
 _AUTO_START_COOLDOWN = 60
+
+# Minimum interval between focus corrections (debounce)
+_FOCUS_CORRECTION_DEBOUNCE = 10
 
 # Safe subprocess kwargs for Windows
 _SUBPROCESS_SAFE = {
@@ -44,6 +50,7 @@ class AutodartsDesktopService:
         self._last_auto_start_ts: float = 0.0
         self._last_start_attempt_at: Optional[str] = None
         self._last_error: Optional[str] = None
+        self._last_focus_correction_ts: float = 0.0
 
     # ── Process Detection ──
 
@@ -91,8 +98,8 @@ class AutodartsDesktopService:
             )
             logger.info(f"[AUTODARTS_DESKTOP] Started (minimized): {exe_path}")
             self._last_error = None
-            # Schedule post-launch focus correction
-            self._correct_focus_steal_sync()
+            # Stage 2: Schedule non-blocking focus correction in background thread
+            self._schedule_focus_correction()
             return {"success": True, "message": f"Started: {exe_path}"}
         except Exception as e:
             self._last_error = str(e)
@@ -159,13 +166,17 @@ class AutodartsDesktopService:
         return self._start_no_focus(exe_path, trigger)
 
     def _start_no_focus(self, exe_path: str, trigger: str = "auto") -> dict:
-        """Start Autodarts.exe minimized WITHOUT stealing focus."""
+        """Start Autodarts.exe minimized WITHOUT stealing focus. Two-stage approach:
+        Stage 1: Launch with SW_SHOWMINNOACTIVE + CREATE_NO_WINDOW
+        Stage 2: Background thread checks foreground and corrects if stolen (debounced)
+        """
         if not os.path.isfile(exe_path):
             err = f"Datei nicht gefunden: {exe_path}"
             self._last_error = err
             logger.warning(f"[AUTODARTS_DESKTOP] exe not found: {exe_path}")
             return {"action": "failed", "error": err}
         try:
+            # Stage 1: Launch minimized, no focus steal
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             si.wShowWindow = 7  # SW_SHOWMINNOACTIVE — minimized, no focus steal
@@ -176,28 +187,46 @@ class AutodartsDesktopService:
             )
             logger.info(f"[AUTODARTS_DESKTOP] auto-started (no focus): {exe_path}")
             self._last_error = None
-            # Post-launch focus correction
-            self._correct_focus_steal_sync()
+            # Stage 2: Non-blocking focus correction in background thread
+            self._schedule_focus_correction()
             return {"action": "started", "exe_path": exe_path}
         except Exception as e:
             self._last_error = str(e)
             logger.warning(f"[AUTODARTS_DESKTOP] auto-start failed: {e}")
             return {"action": "failed", "error": str(e)}
 
-    # ── Focus Steal Correction ──
+    # ── Focus Steal Correction (Non-blocking, Debounced) ──
 
-    def _correct_focus_steal_sync(self):
+    def _schedule_focus_correction(self):
         """
-        After launching Autodarts Desktop, check if it stole focus.
-        If detected, minimize it and restore the previous foreground window.
-        Best-effort only — failures are warnings, not errors.
+        Schedule a focus correction check in a background daemon thread.
+        Debounced: will not run more than once per _FOCUS_CORRECTION_DEBOUNCE seconds.
+        This ensures the asyncio event loop is never blocked.
         """
         if not IS_WINDOWS:
             return
+        now = time.monotonic()
+        elapsed = now - self._last_focus_correction_ts
+        if elapsed < _FOCUS_CORRECTION_DEBOUNCE:
+            logger.debug(f"[AUTODARTS_DESKTOP] focus correction debounced ({int(_FOCUS_CORRECTION_DEBOUNCE - elapsed)}s remaining)")
+            return
+        self._last_focus_correction_ts = now
+        thread = threading.Thread(target=self._do_focus_correction, daemon=True, name="autodarts-focus-fix")
+        thread.start()
+        logger.info("[AUTODARTS_DESKTOP] focus correction scheduled (background thread)")
+
+    def _do_focus_correction(self):
+        """
+        Stage 2 of focus-steal prevention. Runs in a BACKGROUND THREAD.
+        After launching Autodarts Desktop, wait briefly for its window to appear,
+        then check if it stole focus. If detected, minimize it and restore the
+        previous foreground window.
+        Best-effort only — failures are warnings, not errors.
+        """
         try:
-            # Wait briefly for the window to appear
+            # Wait for the Autodarts window to appear (2s is enough for most launches)
             time.sleep(2)
-            # Use PowerShell to detect and correct focus steal
+            # Use PowerShell to detect and correct focus steal via Win32 API
             ps_script = """
             Add-Type @"
             using System;
@@ -230,7 +259,7 @@ class AutodartsDesktopService:
             if stdout.startswith("CORRECTED:"):
                 title = stdout.split(":", 1)[1]
                 logger.info(f"[AUTODARTS_DESKTOP] foreground_steal_detected title={title}")
-                logger.info(f"[AUTODARTS_DESKTOP] foreground_corrected action=minimize_restore_kiosk")
+                logger.info(f"[AUTODARTS_DESKTOP] foreground_corrected action=minimize")
             elif stdout.startswith("OK:"):
                 logger.debug(f"[AUTODARTS_DESKTOP] no focus steal detected, fg={stdout}")
             else:
