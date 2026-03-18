@@ -774,6 +774,27 @@ autostart.bat:
   - 14/14 Backend + 100% Frontend Tests bestanden
   - Release: darts-kiosk-v3.3.1-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
 
+- v3.3.1-hotfix1: P0 Runtime-Stabilitaets-Fixes (2026-03-18)
+  - TASK A: False Finish / Finalize Suppression
+    - ROOT CAUSE: match_end_gameshot_match feuert fuer Leg-Level game_shot+match Events
+    - FIX: Signale aufgeteilt in CONFIRMED (state_finished/game_finished) vs PENDING (gameshot_match)
+      - Confirmed: sofortige Finalize (50ms)
+      - Pending: nur Safety Net (7s), erfordert Debounce (3 Polls = 6s) zur Bestaetigung
+    - FALSE_FINISH_REVOKED: turn_start/throw nach prematurem gameshot_match setzt zurueck:
+      match_finished=False, match_active=True, finish_trigger=None, _finalized=False
+    - Priority Check nur fuer confirmed Triggers
+    - Debounce Fast-Track nur fuer confirmed Triggers
+  - TASK B: Watchdog Recovery Dead-End
+    - ROOT CAUSE: _closing/_stopping Flags nach close_session nie zurueckgesetzt (START_PATH_BLOCKED)
+    - FIX: Guard-Flags (_closing, _stopping, _finalize_dispatching) nach CLOSE_SESSION_DONE zurueckgesetzt
+    - Watchdog Rule 4: CLOSED + non-intentional close_reason (z.B. watchdog_recovery) erlaubt Recovery
+    - _recover_observer: Force-Reset der Guard-Flags bei Close-Timeout
+  - TASK C: Chrome/Observer Start Guard
+    - Geloest durch TASK B Fix (kein stuck observer mehr)
+    - _check_profile_locked bereits vorhanden fuer Chrome-Cleanup
+  - 18/18 pytest Tests bestanden
+  - Release: darts-kiosk-v3.3.1-hotfix1-windows.zip
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)~~ → v3.3.1
