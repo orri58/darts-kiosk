@@ -150,9 +150,44 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                 "credits_remaining": 0, "board_status": "unknown"}
 
     if _finalized.get(board_id) and trigger != "manual":
-        logger.info(f"[SESSION] finalize skipped (already finalized) board={board_id} trigger={trigger}")
-        return {"should_lock": False, "should_teardown": False,
-                "credits_remaining": 0, "board_status": "unknown"}
+        # v3.3.1-hotfix2: Verify board is ACTUALLY locked before skipping.
+        # A stale _finalized flag from a partial failure must not block retry.
+        _board_verified_locked = False
+        _session_verified_ended = False
+        try:
+            async with AsyncSessionLocal() as _vdb:
+                _vr = await _vdb.execute(select(Board).where(Board.board_id == board_id))
+                _vboard = _vr.scalar_one_or_none()
+                if _vboard and _vboard.status == BoardStatus.LOCKED.value:
+                    _board_verified_locked = True
+                if _vboard:
+                    _vsession = await get_active_session_for_board(_vdb, _vboard.id)
+                    _session_verified_ended = _vsession is None
+                else:
+                    _session_verified_ended = True
+        except Exception as _ve:
+            logger.warning(f"[SESSION] finalize verification DB error: {_ve}")
+
+        logger.info(
+            f"[SESSION] finalize_state_before_decision board={board_id} trigger={trigger} "
+            f"_finalized=True board_locked={_board_verified_locked} "
+            f"session_ended={_session_verified_ended}"
+        )
+
+        if _board_verified_locked and _session_verified_ended:
+            logger.info(
+                f"[SESSION] finalize_skip reason=already_committed board={board_id} "
+                f"trigger={trigger} board_status=locked session_ended=True"
+            )
+            return {"should_lock": True, "should_teardown": True,
+                    "credits_remaining": 0, "board_status": "locked"}
+        else:
+            logger.warning(
+                f"[SESSION] stale_finalized_flag_cleared board={board_id} trigger={trigger} "
+                f"board_locked={_board_verified_locked} session_ended={_session_verified_ended} "
+                f"reason=finalize_resume_incomplete_commit"
+            )
+            _finalized.pop(board_id, None)
 
     # ── Duplicate match-ID guard (defense-in-depth) ──
     obs = observer_manager.get(board_id)
@@ -172,9 +207,11 @@ async def _finalize_match_inner(board_id: str, trigger: str,
     credits_remaining = 0
     board_status = "unlocked"
     match_token = None
+    db_committed = False
 
     try:
         # ── Step 2: DB operations (credit + lock decision) ──
+        logger.info(f"[SESSION] db_commit_started board={board_id} trigger={trigger}")
         try:
             async with AsyncSessionLocal() as db:
                 async with db.begin():
@@ -308,9 +345,16 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                         board_status = "unlocked"
 
                     await db.flush()
+                # Transaction auto-committed after db.begin() exits
+                logger.info(
+                    f"[SESSION] db_commit_succeeded board={board_id} "
+                    f"should_lock={should_lock} credits={credits_remaining} "
+                    f"should_teardown={should_teardown}"
+                )
+                db_committed = True
 
         except Exception as e:
-            logger.error(f"[SESSION] DB_ERROR: {e}", exc_info=True)
+            logger.error(f"[SESSION] db_commit_failed board={board_id} error={e}", exc_info=True)
 
         # ── Step 3: Delay ONLY for finished (player sees result) ──
         if trigger == "finished" or trigger.startswith("match_end_"):
@@ -411,8 +455,20 @@ async def _finalize_match_inner(board_id: str, trigger: str,
         except Exception as e:
             logger.warning(f"[SESSION] broadcast error: {e}")
 
-        # ── Step 8: Mark finalized ──
-        _finalized[board_id] = True
+        # ── Step 8: Mark finalized (ONLY if DB committed successfully) ──
+        if db_committed:
+            _finalized[board_id] = True
+            logger.info(
+                f"[SESSION] finalize_marked_committed board={board_id} "
+                f"should_lock={should_lock} credits={credits_remaining} "
+                f"db_committed=True"
+            )
+        else:
+            logger.warning(
+                f"[SESSION] finalize NOT marked committed board={board_id} "
+                f"reason=db_not_committed should_lock={should_lock} "
+                f"(retry allowed)"
+            )
 
     finally:
         if should_teardown:
@@ -474,15 +530,60 @@ async def finalize_match(board_id: str, trigger: str,
     except asyncio.TimeoutError:
         logger.error(f"[SESSION] FINALIZE_TIMEOUT board={board_id} trigger={trigger} (>{FINALIZE_TIMEOUT}s)")
         _finalizing.discard(board_id)
-        _finalized[board_id] = True
+
+        # v3.3.1-hotfix2: Minimal recovery — attempt DB lock before giving up.
+        # Do NOT blindly set _finalized — verify commit first.
+        _timeout_db_ok = False
         try:
+            logger.info(f"[SESSION] timeout_recovery db_commit_started board={board_id}")
+            async with AsyncSessionLocal() as _tdb:
+                async with _tdb.begin():
+                    _tr = await _tdb.execute(select(Board).where(Board.board_id == board_id))
+                    _tboard = _tr.scalar_one_or_none()
+                    if _tboard and _tboard.status != BoardStatus.LOCKED.value:
+                        _tboard.status = BoardStatus.LOCKED.value
+                        _tsession = await get_active_session_for_board(_tdb, _tboard.id)
+                        if _tsession:
+                            _tsession.status = SessionStatus.FINISHED.value
+                            _tsession.ended_at = datetime.now(timezone.utc)
+                            _tsession.ended_reason = "finalize_timeout"
+                        await _tdb.flush()
+                    elif _tboard and _tboard.status == BoardStatus.LOCKED.value:
+                        logger.info(f"[SESSION] timeout_recovery board_already_locked board={board_id}")
+            logger.info(f"[SESSION] timeout_recovery db_commit_succeeded board={board_id}")
+            _timeout_db_ok = True
+        except Exception as _te:
+            logger.error(f"[SESSION] timeout_recovery db_commit_failed board={board_id} error={_te}")
+
+        if _timeout_db_ok:
+            _finalized[board_id] = True
+            logger.info(
+                f"[SESSION] finalize_marked_committed board={board_id} "
+                f"reason=timeout_recovery db_committed=True"
+            )
+        else:
+            # Do NOT mark finalized — allow retry
+            logger.warning(
+                f"[SESSION] finalize NOT marked committed board={board_id} "
+                f"reason=timeout_recovery_failed (retry allowed)"
+            )
+
+        # Try to close observer
+        try:
+            observer_manager.set_desired_state(board_id, "stopped")
             await asyncio.wait_for(observer_manager.close(board_id, reason="finalize_timeout"), timeout=5.0)
         except (asyncio.TimeoutError, Exception):
             pass
-        logger.info(
-            f"[SESSION] finalize result preserved after error board={board_id} "
-            f"finalize_key=timeout"
-        )
+
+        # Broadcast lock state
+        try:
+            await board_ws.broadcast("board_status", {"board_id": board_id, "status": "locked"})
+            await board_ws.broadcast("kiosk_refresh", {
+                "board_id": board_id, "should_lock": True, "action": "return_to_kiosk",
+            })
+        except Exception:
+            pass
+
         return {
             "should_lock": True, "should_teardown": True,
             "credits_remaining": 0, "board_status": "locked",
