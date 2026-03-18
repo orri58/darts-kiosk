@@ -739,15 +739,32 @@ autostart.bat:
   - 31/31 tests passed (v3.2.2-v3.2.5)
   - Release: darts-kiosk-v3.2.5-windows.zip (2.1 MB), verifiziert
 
+- v3.3.0: P0 — Autodarts Desktop Focus-Steal Fix (2026-03-18)
+  - ROOT CAUSE: Autodarts.exe stiehlt Fokus beim Starten, Kiosk-UI verdeckt
+  - FIX: Zweistufiger Ansatz:
+    - Stage 1: SW_SHOWMINNOACTIVE (wShowWindow=7) + CREATE_NO_WINDOW + DETACHED_PROCESS
+    - Stage 2: Background-Thread mit PowerShell Win32 API Check/Correction
+      - GetForegroundWindow() → Titel prüfen → ShowWindow(SW_MINIMIZE) wenn *Autodarts*
+  - Focus-Correction debounced: min 10s zwischen Korrekturen (kein Flicker)
+  - Background-Thread: daemon=True, blockiert Event-Loop NICHT
+  - Bug-Fixes integriert:
+    - NameError: get_or_create_setting Import war bereits korrekt (v3.2.2)
+    - NoneType: is_running() und get_status() null-safe mit try/except
+    - UnicodeDecodeError: _SUBPROCESS_SAFE mit encoding=utf-8, errors=replace
+  - Keine Änderungen an observer, finalize, watchdog, auth, keep_alive
+  - 18/18 Tests bestanden (Backend + Frontend)
+  - Release: darts-kiosk-v3.3.0-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
+
 ## Remaining Backlog
 ### P1
-- [ ] v3.2.0 Phase 2: Erweiterte Desktop-Ueberwachung (Standby/Wake/Reconnect)
-- [ ] v3.2.0 Phase 2: Admin Dashboard OS-Steuerung (Reboot, Shutdown, Shell-Switching)
-- [ ] v3.2.0 Phase 2: Erweiterte Watchdog Self-Healing
+- [ ] v3.3.0 Phase 2: Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)
+- [ ] v3.3.0 Phase 2: Windows Kiosk Controls (Shell Switch, Task Manager Toggle)
+- [ ] v3.3.0 Phase 2: Board Wake/Standby Support (ensure Desktop running on unlock)
 - [ ] Autodarts DOM Selector Tests (validate selectors against live Autodarts site)
 - [ ] Hard-Kiosk-Modus als optionaler separater Schritt (nach stabiler Runtime)
 
 ### P2
+- [ ] Finish Experience Safety (Post-Match Delay Verbesserung)
 - [ ] Chromium Extension as alternative to Playwright observer
 - [ ] PWA Install Prompt for public leaderboard page
 - [ ] Persist runtime state to JSON file
