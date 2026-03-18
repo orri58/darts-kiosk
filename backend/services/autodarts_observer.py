@@ -376,7 +376,12 @@ class AutodartsObserver:
         async def _safety_check():
             await asyncio.sleep(delay)
             if self._finalized or self._finalize_dispatching or self._stopping:
-                return  # Already handled by observe loop — all good
+                logger.info(
+                    f"[Observer:{self.board_id}] WS_FINALIZE_SAFETY_NET skipped "
+                    f"reason=already_reserved finalized={self._finalized} "
+                    f"dispatching={self._finalize_dispatching} stopping={self._stopping}"
+                )
+                return  # Already handled — all good
             if not self._ws_state.match_finished:
                 return  # State was reset (new game started) — no finalize needed
             logger.warning(
@@ -1333,6 +1338,9 @@ class AutodartsObserver:
         Does NOT handle kiosk window management — that is finalize_match's job.
         reason: manual_lock | session_end | watchdog_recovery | crash_cleanup | admin_stop
         """
+        import time as _t
+        t0 = _t.monotonic()
+
         if self._lifecycle_state == LifecycleState.CLOSED:
             logger.info(f"[Observer:{self.board_id}] CLOSE_SESSION_SKIPPED (lifecycle=closed)")
             return
@@ -1341,14 +1349,25 @@ class AutodartsObserver:
             return
         self._closing = True
         self._stopping = True
-        self._close_reason = reason
+        # v3.2.4: Preserve committed close_reason — never degrade to "unknown"
+        if not self._close_reason or self._close_reason == "unknown":
+            self._close_reason = reason
+        else:
+            logger.info(
+                f"[Observer:{self.board_id}] close_reason preserved={self._close_reason} "
+                f"(incoming={reason} ignored)"
+            )
         # Mark close-requested generation so stale callbacks can detect it
         self._close_requested_gen = self._session_generation
         self._set_lifecycle(LifecycleState.STOPPING)
         logger.info(
             f"[Observer:{self.board_id}] === CLOSE_SESSION_START === "
-            f"(gen={self._session_generation}, reason={reason})"
+            f"(gen={self._session_generation}, reason={self._close_reason})"
         )
+        logger.info(f"[Observer:{self.board_id}] CLOSE_PATH_RESERVED gen={self._session_generation}")
+
+        ms = int((_t.monotonic() - t0) * 1000)
+        logger.info(f"[FINALIZE_TIMING] close_lock_acquired ms={ms} board={self.board_id}")
 
         # Detect self-call: if we're being called from within the observe_task,
         # do NOT cancel/await ourselves (would deadlock).
@@ -1363,47 +1382,75 @@ class AutodartsObserver:
                 logger.info(f"[Observer:{self.board_id}]   cancelling observe_task (external call)...")
                 self._observe_task.cancel()
                 try:
-                    await self._observe_task
-                except asyncio.CancelledError:
+                    await asyncio.wait_for(
+                        asyncio.shield(self._observe_task),
+                        timeout=5.0,
+                    )
+                except (asyncio.CancelledError, asyncio.TimeoutError):
                     pass
         self._observe_task = None
+
+        ms = int((_t.monotonic() - t0) * 1000)
+        logger.info(f"[FINALIZE_TIMING] observe_cancel_done ms={ms} board={self.board_id}")
 
         await self._cleanup()
         self._set_state(ObserverState.CLOSED)
         self._set_lifecycle(LifecycleState.CLOSED)
-        logger.info(f"[Observer:{self.board_id}] === CLOSE_SESSION_DONE ===")
+
+        ms = int((_t.monotonic() - t0) * 1000)
+        logger.info(f"[FINALIZE_TIMING] lifecycle_closed ms={ms} board={self.board_id}")
+        logger.info(
+            f"[Observer:{self.board_id}] === CLOSE_SESSION_DONE === "
+            f"reason={self._close_reason}"
+        )
 
     async def _cleanup(self):
-        """Close Playwright objects step-by-step with detailed logging."""
-        # Step 1: Close page
+        """Close Playwright objects step-by-step with detailed logging and timeouts."""
+        import time as _t
+        t0 = _t.monotonic()
+
+        # Step 1: Close page (3s timeout)
         if self._page:
             try:
-                await self._page.close()
-                logger.info(f"[AUTODARTS] PAGE_CLOSE_DONE board={self.board_id}")
+                await asyncio.wait_for(self._page.close(), timeout=3.0)
+                ms = int((_t.monotonic() - t0) * 1000)
+                logger.info(f"[FINALIZE_TIMING] page_close_done ms={ms} board={self.board_id}")
+            except asyncio.TimeoutError:
+                ms = int((_t.monotonic() - t0) * 1000)
+                logger.warning(f"[FINALIZE_TIMING] page_close_timeout ms={ms} board={self.board_id}")
             except Exception as e:
                 logger.debug(f"[AUTODARTS] page close error: {e}")
         self._page = None
 
-        # Step 2: Close context
+        # Step 2: Close context (3s timeout)
         if self._context:
             try:
-                await self._context.close()
-                logger.info(f"[AUTODARTS] CONTEXT_CLOSE_DONE board={self.board_id}")
+                await asyncio.wait_for(self._context.close(), timeout=3.0)
+                ms = int((_t.monotonic() - t0) * 1000)
+                logger.info(f"[FINALIZE_TIMING] context_close_done ms={ms} board={self.board_id}")
+            except asyncio.TimeoutError:
+                ms = int((_t.monotonic() - t0) * 1000)
+                logger.warning(f"[FINALIZE_TIMING] context_close_timeout ms={ms} board={self.board_id}")
             except Exception as e:
                 logger.debug(f"[AUTODARTS] context close error: {e}")
         self._context = None
 
-        # Step 3: Stop Playwright
+        # Step 3: Stop Playwright (5s timeout)
         if self._playwright:
             try:
-                await self._playwright.stop()
-                logger.info(f"[AUTODARTS] PLAYWRIGHT_STOP_DONE board={self.board_id}")
+                await asyncio.wait_for(self._playwright.stop(), timeout=5.0)
+                ms = int((_t.monotonic() - t0) * 1000)
+                logger.info(f"[FINALIZE_TIMING] playwright_stop_done ms={ms} board={self.board_id}")
+            except asyncio.TimeoutError:
+                ms = int((_t.monotonic() - t0) * 1000)
+                logger.warning(f"[FINALIZE_TIMING] playwright_stop_timeout ms={ms} board={self.board_id}")
             except Exception as e:
                 logger.debug(f"[AUTODARTS] playwright stop error: {e}")
         self._playwright = None
 
         self.status.browser_open = False
-        logger.info(f"[AUTODARTS] CLEANUP_COMPLETE board={self.board_id}")
+        total_ms = int((_t.monotonic() - t0) * 1000)
+        logger.info(f"[FINALIZE_TIMING] cleanup_complete ms={total_ms} board={self.board_id}")
 
     # ═══════════════════════════════════════════════════════════════
     # NAVIGATE BACK TO HOME/LOBBY (after game ends, credits remain)
@@ -1511,6 +1558,37 @@ class AutodartsObserver:
 
                 interval = DEBOUNCE_POLL_INTERVAL if self._exit_polls > 0 else OBSERVER_POLL_INTERVAL
                 await asyncio.sleep(interval)
+
+                # ═══ v3.2.4: PRIORITY CHECK — finalize before page-alive ═══
+                # If WS already detected match end, dispatch finalize IMMEDIATELY
+                # regardless of page state. This is the primary dispatch path.
+                # The page may have died during sleep, but the WS signal is authoritative.
+                ws_pre = self._ws_state
+                if ws_pre.match_finished and not self._finalized and not self._finalize_dispatching:
+                    trigger = ws_pre.finish_trigger or "finished"
+                    logger.info(
+                        f"[Observer:{self.board_id}] FINALIZE_PRIMARY_DISPATCH "
+                        f"trigger={trigger} match_id={ws_pre.last_match_id} "
+                        f"source=observe_loop_priority_check"
+                    )
+                    result = await self._dispatch_finalize(trigger, source="observe_loop_priority")
+                    if result is not None:
+                        if result.get("should_teardown"):
+                            stop_reason = "finalize_teardown"
+                            break
+                        else:
+                            # keep_alive: reset for next game
+                            self._finalized = False
+                            self._finalize_dispatching = False
+                            self._credit_consumed = False
+                            self._exit_polls = 0
+                            self._exit_saw_finished = False
+                            self._ws_state.reset()
+                            self._stable_state = ObserverState.IDLE
+                            self._set_state(ObserverState.IDLE)
+                            logger.info(f"[Observer:{self.board_id}] OBSERVER_RESET_FOR_NEXT_GAME done")
+                            logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME (primary dispatch, keep_alive)")
+                            continue
 
                 # ── Null-safe page check ──
                 if self._stopping:
@@ -1718,8 +1796,9 @@ class AutodartsObserver:
         # ═══ v3.2.3: LOOP-EXIT SAFETY NET ═══
         # If the loop exited (page died, crash, etc.) but a match finish was detected
         # and finalize never ran, dispatch it now. This prevents lost finalizes.
+        # v3.2.4: Removed `not self._stopping` condition — finalize must run regardless
         ws = self._ws_state
-        if ws.match_finished and not self._finalized and not self._finalize_dispatching and not self._stopping:
+        if ws.match_finished and not self._finalized and not self._finalize_dispatching:
             trigger = ws.finish_trigger or "finished"
             logger.warning(
                 f"[Observer:{self.board_id}] LOOP_EXIT_SAFETY_NET: "
@@ -1989,6 +2068,15 @@ class ObserverManager:
         on_game_ended=None,
         headless: bool = False,
     ):
+        # v3.2.4: Block open if a close is in progress for this board
+        obs_existing = self._observers.get(board_id)
+        if obs_existing and (obs_existing._closing or obs_existing._finalize_dispatching):
+            logger.warning(
+                f"[ObserverMgr] START_PATH_BLOCKED reason=close_in_progress "
+                f"board={board_id} gen={obs_existing._session_generation}"
+            )
+            return obs_existing
+
         lock = self._get_lock(board_id)
         logger.info(f"[ObserverMgr] lifecycle_lock acquiring board={board_id}")
         async with lock:
@@ -2024,16 +2112,33 @@ class ObserverManager:
     async def close(self, board_id: str, reason: str = "unknown"):
         lock = self._get_lock(board_id)
         logger.info(f"[ObserverMgr] lifecycle_lock acquiring (close) board={board_id} reason={reason}")
-        async with lock:
+        try:
+            # v3.2.4: Bounded lock acquisition — don't hang forever if watchdog holds lock
+            await asyncio.wait_for(lock.acquire(), timeout=8.0)
+        except asyncio.TimeoutError:
+            logger.error(
+                f"[ObserverMgr] lifecycle_lock TIMEOUT (close) board={board_id} reason={reason} "
+                f"— forcing close without lock"
+            )
+            # Force close without lock to prevent finalize deadlock
+            obs = self._observers.get(board_id)
+            self._close_reasons[board_id] = reason
+            if obs:
+                try:
+                    await asyncio.wait_for(obs.close_session(reason=reason), timeout=8.0)
+                except (asyncio.TimeoutError, Exception) as e:
+                    logger.error(f"[ObserverMgr] forced close failed: {e}")
+            return
+        try:
             logger.info(f"[ObserverMgr] lifecycle_lock acquired (close) board={board_id}")
-            try:
-                self._close_reasons[board_id] = reason
-                obs = self._observers.get(board_id)
-                if obs:
-                    await obs.close_session(reason=reason)
-                    logger.info(f"[ObserverMgr] Observer closed for board {board_id} reason={reason}")
-            finally:
-                logger.info(f"[ObserverMgr] lifecycle_lock released (close) board={board_id}")
+            self._close_reasons[board_id] = reason
+            obs = self._observers.get(board_id)
+            if obs:
+                await obs.close_session(reason=reason)
+                logger.info(f"[ObserverMgr] Observer closed for board {board_id} reason={reason}")
+        finally:
+            lock.release()
+            logger.info(f"[ObserverMgr] lifecycle_lock released (close) board={board_id}")
 
     async def close_all(self):
         for board_id in list(self._observers.keys()):

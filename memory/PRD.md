@@ -696,6 +696,31 @@ autostart.bat:
   - Post-match delay now also applies to match_end_* triggers (not just "finished")
   - 17/17 tests passed (v3.2.2 + v3.2.3)
   - Release: darts-kiosk-v3.2.3-windows.zip (2.1 MB), verifiziert
+- v3.2.4: Finalize Deadlock + State Corruption Hotfix (2026-03-18)
+  - ROOT CAUSE: Observe loop exits at page_alive check before processing ws.match_finished.
+    Observer close (_cleanup) has no timeouts, blocking finalize. Lifecycle lock contention
+    between finalize and watchdog creates deadlock. Safety net gap when _stopping is True.
+  - WHY TIMEOUT: _cleanup() awaits page.close()/context.close()/playwright.stop() without
+    timeout bounds. If Playwright hangs, finalize blocks indefinitely holding lifecycle lock.
+  - TASK 1: Priority match-end check at top of observe loop (before page_alive)
+    - FINALIZE_PRIMARY_DISPATCH fires immediately when ws.match_finished detected
+    - No more lost finalizes due to page death during sleep
+  - TASK 2: Close path separation
+    - CLOSE_PATH_RESERVED gen=... log on close entry
+    - START_PATH_BLOCKED in observer_manager.open() when obs._closing
+    - open_session blocks during _finalize_dispatching
+  - TASK 3: Close deadlock fix
+    - _cleanup() steps bounded: page=3s, context=3s, playwright=5s timeouts
+    - close_session observe_task cancel bounded to 5s
+    - observer_manager.close() lifecycle lock acquisition bounded to 8s with forced fallback
+    - observer_manager.close inside finalize bounded to 10s
+    - FINALIZE_TIMING logs for every phase (page, context, playwright, lifecycle, kiosk_restore, total)
+  - TASK 4: Primary dispatch happens in observe loop, safety net logs 'skipped reason=already_reserved'
+  - TASK 5: Credits never negative (all guard returns use 0), timeout returns should_lock=True,
+    finalize committed log, result preserved after error
+  - TASK 6: close_reason preservation — once set, never degrades to 'unknown'
+  - 24/24 tests passed (v3.2.2 + v3.2.3 + v3.2.4)
+  - Release: darts-kiosk-v3.2.4-windows.zip (2.1 MB), verifiziert
 
 ## Remaining Backlog
 ### P1

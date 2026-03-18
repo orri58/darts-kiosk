@@ -146,13 +146,13 @@ async def _finalize_match_inner(board_id: str, trigger: str,
     # ── Step 1: Idempotency guard ──
     if board_id in _finalizing:
         logger.info(f"[SESSION] finalize skipped (already running) board={board_id}")
-        return {"should_lock": False, "should_teardown": True,
-                "credits_remaining": -1, "board_status": "unknown"}
+        return {"should_lock": False, "should_teardown": False,
+                "credits_remaining": 0, "board_status": "unknown"}
 
     if _finalized.get(board_id) and trigger != "manual":
         logger.info(f"[SESSION] finalize skipped (already finalized) board={board_id} trigger={trigger}")
         return {"should_lock": False, "should_teardown": False,
-                "credits_remaining": -1, "board_status": "unknown"}
+                "credits_remaining": 0, "board_status": "unknown"}
 
     # ── Duplicate match-ID guard (defense-in-depth) ──
     obs = observer_manager.get(board_id)
@@ -160,9 +160,11 @@ async def _finalize_match_inner(board_id: str, trigger: str,
     if current_match_id and _last_finalized_match.get(board_id) == current_match_id and trigger != "manual":
         logger.info(f"[SESSION] SKIP_DUPLICATE_FINALIZE match_id={current_match_id} board={board_id}")
         return {"should_lock": False, "should_teardown": False,
-                "credits_remaining": -1, "board_status": "unknown"}
+                "credits_remaining": 0, "board_status": "unknown"}
 
     _finalizing.add(board_id)
+    import time as _t
+    _t0 = _t.monotonic()
     logger.info(f"[SESSION] finalize start board={board_id} trigger={trigger}")
 
     should_lock = False
@@ -238,6 +240,11 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                         logger.info(f"[SESSION] lock_enforced board={board_id} reason=no_remaining_credits")
                     else:
                         logger.info(f"[SESSION] keep_alive_allowed board={board_id} reason=remaining_credits")
+
+                    logger.info(
+                        f"[SESSION] finalize committed board={board_id} "
+                        f"credits={credit_after} should_lock={should_lock} should_teardown={should_teardown}"
+                    )
 
                     # ── Match result + player stats ──
                     if _should_deduct_credit(trigger):
@@ -332,8 +339,15 @@ async def _finalize_match_inner(board_id: str, trigger: str,
             try:
                 logger.info(f"[AUTODARTS] closing observer board={board_id} (session_end)")
                 observer_manager.set_desired_state(board_id, "stopped")
-                await observer_manager.close(board_id, reason="session_end")
-                logger.info("[AUTODARTS] observer closed OK")
+                await asyncio.wait_for(
+                    observer_manager.close(board_id, reason="session_end"),
+                    timeout=10.0,
+                )
+                ms = int((_t.monotonic() - _t0) * 1000)
+                logger.info(f"[AUTODARTS] observer closed OK ms={ms}")
+            except asyncio.TimeoutError:
+                ms = int((_t.monotonic() - _t0) * 1000)
+                logger.error(f"[AUTODARTS] observer close TIMEOUT board={board_id} ms={ms}")
             except Exception as e:
                 logger.error(f"[AUTODARTS] observer close failed: {e}")
         else:
@@ -406,7 +420,9 @@ async def _finalize_match_inner(board_id: str, trigger: str,
             try:
                 logger.info(f"[KIOSK_UI] session_end_restore start board={board_id} should_lock={should_lock}")
                 await return_to_kiosk_ui(board_id, should_lock)
+                ms = int((_t.monotonic() - _t0) * 1000)
                 logger.info(f"[KIOSK_UI] session_end_restore done board={board_id}")
+                logger.info(f"[FINALIZE_TIMING] kiosk_restore_done ms={ms} board={board_id}")
             except Exception as e:
                 logger.error(f"[KIOSK_UI] CRITICAL: return_to_kiosk_ui failed in finally: {e}", exc_info=True)
         else:
@@ -428,10 +444,12 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                 logger.info(f"[KEEP_ALIVE_UI] done board={board_id} autodarts_foreground=False")
         _finalizing.discard(board_id)
 
+    total_ms = int((_t.monotonic() - _t0) * 1000)
     logger.info(
         f"[SESSION] finalize end board={board_id} trigger={trigger} "
         f"should_lock={should_lock} credits={credits_remaining}"
     )
+    logger.info(f"[FINALIZE_TIMING] total_finalize_ms={total_ms} board={board_id}")
 
     return {
         "should_lock": should_lock,
@@ -458,12 +476,16 @@ async def finalize_match(board_id: str, trigger: str,
         _finalizing.discard(board_id)
         _finalized[board_id] = True
         try:
-            await observer_manager.close(board_id)
-        except Exception:
+            await asyncio.wait_for(observer_manager.close(board_id, reason="finalize_timeout"), timeout=5.0)
+        except (asyncio.TimeoutError, Exception):
             pass
+        logger.info(
+            f"[SESSION] finalize result preserved after error board={board_id} "
+            f"finalize_key=timeout"
+        )
         return {
-            "should_lock": False, "should_teardown": True,
-            "credits_remaining": -1, "board_status": "unknown",
+            "should_lock": True, "should_teardown": True,
+            "credits_remaining": 0, "board_status": "locked",
             "error": "finalize_timeout",
         }
 
