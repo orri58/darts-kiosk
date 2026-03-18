@@ -201,41 +201,43 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                     credits_before = session.credits_remaining
                     consume_credit = _should_deduct_credit(trigger) and session.pricing_mode == PricingMode.PER_GAME.value
 
-                    logger.info(f"[SESSION] credit_before={credits_before}")
-                    logger.info(f"[SESSION] consume_credit={consume_credit}")
-
                     if consume_credit:
                         session.credits_remaining = max(0, session.credits_remaining - 1)
 
-                    logger.info(f"[SESSION] credit_after={session.credits_remaining}")
-
-                    credits_remaining = session.credits_remaining
+                    credit_after = session.credits_remaining
+                    credits_remaining = credit_after
 
                     # ── Store match_id for duplicate prevention ──
                     if current_match_id:
                         _last_finalized_match[board_id] = current_match_id
-                        logger.info(f"[SESSION] MATCH_FINALIZED_ONCE match_id={current_match_id}")
 
-                    # ── Lock decision: ONLY when credits <= 0 ──
+                    # ═══ AUTHORITATIVE DECISION (v3.2.2) ═══
+                    # Single source of truth — all downstream logic uses these
+                    has_remaining_credits = True
                     if session.pricing_mode == PricingMode.PER_GAME.value:
-                        should_lock = session.credits_remaining <= 0
-                    if session.pricing_mode == PricingMode.PER_TIME.value:
+                        has_remaining_credits = credit_after > 0
+                    elif session.pricing_mode == PricingMode.PER_TIME.value:
                         if session.expires_at and datetime.now(timezone.utc) >= session.expires_at:
-                            should_lock = True
+                            has_remaining_credits = False
 
-                    logger.info(f"[SESSION] should_lock={should_lock}")
-
-                    # ── Teardown decision: ONLY close observer when locking ──
+                    should_lock = not has_remaining_credits
                     should_teardown = should_lock
+
                     obs_for_log = observer_manager.get(board_id)
                     lc_log = obs_for_log.lifecycle_state.value if obs_for_log else "none"
                     desired_log = observer_manager.get_desired_state(board_id)
+                    branch = "session_end" if should_lock else "keep_alive"
                     logger.info(
                         f"[SESSION] finalize decision board={board_id} "
-                        f"trigger={trigger} credit_before={credits_before} credit_after={credits_remaining} "
+                        f"trigger={trigger} credit_before={credits_before} credit_after={credit_after} "
+                        f"has_remaining_credits={has_remaining_credits} "
                         f"should_lock={should_lock} should_teardown={should_teardown} "
-                        f"desired_state={desired_log} lifecycle={lc_log}"
+                        f"branch={branch} desired_state={desired_log} lifecycle={lc_log}"
                     )
+                    if should_lock:
+                        logger.info(f"[SESSION] lock_enforced board={board_id} reason=no_remaining_credits")
+                    else:
+                        logger.info(f"[SESSION] keep_alive_allowed board={board_id} reason=remaining_credits")
 
                     # ── Match result + player stats ──
                     if _should_deduct_credit(trigger):

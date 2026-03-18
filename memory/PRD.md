@@ -655,6 +655,27 @@ autostart.bat:
   - darts-kiosk-v3.2.1-source.zip (21 MB)
   - autodarts_desktop_service.py im Bundle verifiziert
   - VERSION=3.2.1 im Bundle verifiziert
+- v3.2.2: Stability Hotfix (2026-03-18)
+  - TASK 1: Final-Credit Lock zuverlässig — normalisierte Entscheidungslogik
+    - Einzige autoritative Werte: has_remaining_credits, should_lock, should_teardown
+    - Kein trigger-spezifischer Bypass möglich
+    - Strukturierter Log: finalize decision + lock_enforced / keep_alive_allowed
+  - TASK 2: autodarts_desktop_service gehärtet
+    - is_running(): stdout-None-Guard, encoding="utf-8", errors="replace"
+    - _SUBPROCESS_SAFE dict für alle subprocess.run Aufrufe
+    - ensure_running() mit Exception-Guard
+  - TASK 3: Admin restart endpoint NameError behoben
+    - get_or_create_setting Import zu admin.py hinzugefügt
+  - TASK 4: Windows subprocess decoding
+    - Alle subprocess.run Aufrufe in observer, window_manager mit encoding="utf-8", errors="replace"
+    - Betrifft: tasklist, taskkill, powershell, pgrep, kill, wmic
+  - TASK 5: Manual lock during starting — stale-callback safe
+    - _close_requested_gen Guard in Observer
+    - PAGE_CLOSED / CONTEXT_CLOSED als EXPECTED wenn close requested
+    - Health-check Abort bei close-intent
+    - Launch-completion blockiert bei close-intent
+  - TASK 6: 10/10 gezielte Tests bestanden
+  - Release: darts-kiosk-v3.2.2-windows.zip (2.1 MB), verifiziert
 
 ## Remaining Backlog
 ### P1

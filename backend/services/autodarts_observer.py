@@ -235,6 +235,7 @@ class AutodartsObserver:
         self._session_generation: int = 0
         self._last_launch_time: float = 0
         self._close_reason: str = ""
+        self._close_requested_gen: int = -1  # v3.2.2: generation when close was requested
 
         # Stable confirmed state (only changes after debounce)
         self._stable_state: ObserverState = ObserverState.CLOSED
@@ -377,7 +378,7 @@ class AutodartsObserver:
                     ['powershell', '-NoProfile', '-Command',
                      "Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" "
                      "| Select-Object ProcessId,CommandLine | Format-List"],
-                    capture_output=True, text=True, timeout=10,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 )
                 current_pid = None
                 for line in result.stdout.splitlines():
@@ -399,7 +400,7 @@ class AutodartsObserver:
             try:
                 result = subprocess.run(
                     ['pgrep', '-af', 'chrome'],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                 )
                 for line in result.stdout.splitlines():
                     if profile_norm in line.lower():
@@ -421,12 +422,12 @@ class AutodartsObserver:
                 if sys.platform == 'win32':
                     r = subprocess.run(
                         ['taskkill', '/F', '/PID', str(pid)],
-                        capture_output=True, timeout=5,
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                     )
                 else:
                     r = subprocess.run(
                         ['kill', '-9', str(pid)],
-                        capture_output=True, timeout=5,
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
                     )
                 if r.returncode == 0:
                     logger.info(f"[Observer:{self.board_id}] CHROME_KILL: pid={pid} success")
@@ -585,7 +586,10 @@ class AutodartsObserver:
                 def handler():
                     lc = obs_ref._lifecycle_state.value
                     gen = obs_ref._session_generation
-                    if obs_ref._stopping or obs_ref._closing or lc in ("stopping", "closed", "auth_required"):
+                    close_requested = (obs_ref._stopping or obs_ref._closing
+                                       or obs_ref._close_requested_gen == gen
+                                       or lc in ("stopping", "closed", "auth_required"))
+                    if close_requested:
                         logger.info(
                             f"[Observer:{obs_ref.board_id}] PAGE_CLOSED_EXPECTED "
                             f"lifecycle={lc} gen={gen}"
@@ -611,7 +615,10 @@ class AutodartsObserver:
                 def handler():
                     lc = obs_ref._lifecycle_state.value
                     gen = obs_ref._session_generation
-                    if obs_ref._stopping or obs_ref._closing or lc in ("stopping", "closed", "auth_required"):
+                    close_requested = (obs_ref._stopping or obs_ref._closing
+                                       or obs_ref._close_requested_gen == gen
+                                       or lc in ("stopping", "closed", "auth_required"))
+                    if close_requested:
                         logger.info(
                             f"[Observer:{obs_ref.board_id}] CONTEXT_CLOSED_EXPECTED "
                             f"lifecycle={lc} gen={gen}"
@@ -714,6 +721,14 @@ class AutodartsObserver:
                     )
                     health_ok = False
                     break
+                # v3.2.2: If close was requested for this generation, abort health checks
+                if self._close_requested_gen == gen:
+                    logger.info(
+                        f"[Observer:{self.board_id}] stale launch callback ignored because close requested "
+                        f"gen={gen} close_reason={self._close_reason}"
+                    )
+                    health_ok = False
+                    break
                 await asyncio.sleep(check_at - (0 if check_at == 3 else (3 if check_at == 7 else 7)))
                 if not self._page_alive():
                     logger.error(
@@ -752,16 +767,24 @@ class AutodartsObserver:
                     break
 
             if health_ok:
-                logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH SUCCESS === (gen={gen})")
-                self._set_lifecycle(LifecycleState.RUNNING)
-                # Only hide kiosk AFTER health confirms valid authenticated session
-                try:
-                    from backend.services.window_manager import hide_kiosk_window
-                    await hide_kiosk_window()
-                    logger.info(f"[Observer:{self.board_id}]   Kiosk window hidden (session confirmed)")
-                except Exception as wm_err:
-                    logger.warning(f"[Observer:{self.board_id}]   Window management skipped: {wm_err}")
-                self._observe_task = asyncio.create_task(self._observe_loop())
+                # v3.2.2: Final close-intent check before transitioning to RUNNING
+                if self._close_requested_gen == gen or self._closing:
+                    logger.info(
+                        f"[Observer:{self.board_id}] stale launch callback ignored because close requested "
+                        f"gen={gen}"
+                    )
+                    await self._cleanup()
+                else:
+                    logger.info(f"[Observer:{self.board_id}] === BROWSER LAUNCH SUCCESS === (gen={gen})")
+                    self._set_lifecycle(LifecycleState.RUNNING)
+                    # Only hide kiosk AFTER health confirms valid authenticated session
+                    try:
+                        from backend.services.window_manager import hide_kiosk_window
+                        await hide_kiosk_window()
+                        logger.info(f"[Observer:{self.board_id}]   Kiosk window hidden (session confirmed)")
+                    except Exception as wm_err:
+                        logger.warning(f"[Observer:{self.board_id}]   Window management skipped: {wm_err}")
+                    self._observe_task = asyncio.create_task(self._observe_loop())
             else:
                 # Preserve AUTH_REQUIRED — do NOT overwrite with ERROR
                 if self._lifecycle_state != LifecycleState.AUTH_REQUIRED:
@@ -1184,6 +1207,8 @@ class AutodartsObserver:
         self._closing = True
         self._stopping = True
         self._close_reason = reason
+        # Mark close-requested generation so stale callbacks can detect it
+        self._close_requested_gen = self._session_generation
         self._set_lifecycle(LifecycleState.STOPPING)
         logger.info(
             f"[Observer:{self.board_id}] === CLOSE_SESSION_START === "

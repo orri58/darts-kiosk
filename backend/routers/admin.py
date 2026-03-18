@@ -15,7 +15,7 @@ from backend.models import User, Board, Session, AuditLog, SessionStatus, MatchR
 from backend.schemas import AuditLogResponse, SessionResponse
 from backend.dependencies import (
     get_current_user, require_admin, log_audit, DATA_DIR,
-    get_active_session_for_board
+    get_active_session_for_board, get_or_create_setting
 )
 from backend.services.health_monitor import health_monitor
 from backend.services.setup_wizard import (

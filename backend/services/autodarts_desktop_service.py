@@ -1,14 +1,15 @@
 """
-Autodarts Desktop Supervision Service (v3.2.0 — Minimal, v3.2.1 — Auto-Start)
+Autodarts Desktop Supervision Service (v3.2.0 — Minimal, v3.2.1 — Auto-Start, v3.2.2 — Hardened)
 
 Detects if Autodarts.exe is running, can start/restart it.
 The exe path is configurable via the settings DB.
 This service only runs on Windows.
 
-v3.2.1: Added ensure_running() with cooldown to safely auto-start on
-         server boot and board unlock without focus-stealing or loops.
+v3.2.2: Hardened is_running() against NoneType crashes and Windows charmap
+         decoding errors. All subprocess calls use encoding="utf-8", errors="replace".
 """
 import logging
+import os
 import platform
 import subprocess
 import time
@@ -20,6 +21,15 @@ IS_WINDOWS = platform.system() == "Windows"
 # Cooldown between auto-start attempts (seconds)
 _AUTO_START_COOLDOWN = 60
 
+# Safe subprocess kwargs for Windows
+_SUBPROCESS_SAFE = {
+    "capture_output": True,
+    "text": True,
+    "encoding": "utf-8",
+    "errors": "replace",
+    "timeout": 10,
+}
+
 
 class AutodartsDesktopService:
     """Minimal supervision for the Autodarts Desktop application."""
@@ -29,16 +39,20 @@ class AutodartsDesktopService:
         self._last_auto_start_ts: float = 0.0
 
     def is_running(self) -> bool:
-        """Check if Autodarts.exe is currently running."""
+        """Check if Autodarts.exe is currently running.
+
+        Hardened: handles None stdout, charmap decoding errors,
+        and malformed tasklist output safely.
+        """
         if not IS_WINDOWS:
-            logger.debug("[AUTODARTS_DESKTOP] Not Windows, skipping process check")
             return False
         try:
             result = subprocess.run(
                 ["tasklist", "/FI", f"IMAGENAME eq {self._process_name}", "/NH"],
-                capture_output=True, text=True, timeout=10,
+                **_SUBPROCESS_SAFE,
             )
-            return self._process_name.lower() in result.stdout.lower()
+            stdout = result.stdout or ""
+            return self._process_name.lower() in stdout.lower()
         except Exception as e:
             logger.warning(f"[AUTODARTS_DESKTOP] is_running check failed: {e}")
             return False
@@ -48,7 +62,6 @@ class AutodartsDesktopService:
         if not IS_WINDOWS:
             return {"success": False, "error": "Not a Windows system"}
 
-        import os
         if not os.path.isfile(exe_path):
             logger.error(f"[AUTODARTS_DESKTOP] exe not found: {exe_path}")
             return {"success": False, "error": f"Datei nicht gefunden: {exe_path}"}
@@ -58,7 +71,6 @@ class AutodartsDesktopService:
             return {"success": True, "message": "Already running"}
 
         try:
-            # Start minimized using SW_SHOWMINIMIZED (6)
             si = subprocess.STARTUPINFO()
             si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             si.wShowWindow = 6  # SW_SHOWMINIMIZED
@@ -80,13 +92,14 @@ class AutodartsDesktopService:
         try:
             result = subprocess.run(
                 ["taskkill", "/IM", self._process_name, "/F"],
-                capture_output=True, text=True, timeout=10,
+                **_SUBPROCESS_SAFE,
             )
             killed = result.returncode == 0
             if killed:
                 logger.info("[AUTODARTS_DESKTOP] Process killed")
             else:
-                logger.info(f"[AUTODARTS_DESKTOP] taskkill returned {result.returncode}: {result.stderr.strip()}")
+                stderr = (result.stderr or "").strip()
+                logger.info(f"[AUTODARTS_DESKTOP] taskkill returned {result.returncode}: {stderr}")
             return killed
         except Exception as e:
             logger.error(f"[AUTODARTS_DESKTOP] kill failed: {e}")
@@ -96,8 +109,6 @@ class AutodartsDesktopService:
         """Kill and restart Autodarts.exe."""
         logger.info(f"[AUTODARTS_DESKTOP] Restart requested: {exe_path}")
         self.kill_process()
-        # Brief pause to allow process to fully exit
-        import time
         time.sleep(1)
         return self.start_process(exe_path)
 
@@ -116,8 +127,12 @@ class AutodartsDesktopService:
             logger.warning(f"[AUTODARTS_DESKTOP] ensure_running({trigger}): no exe_path configured")
             return {"action": "skip", "reason": "no_exe_path"}
 
-        if self.is_running():
-            return {"action": "skip", "reason": "already_running"}
+        try:
+            if self.is_running():
+                return {"action": "skip", "reason": "already_running"}
+        except Exception as e:
+            logger.warning(f"[AUTODARTS_DESKTOP] ensure_running({trigger}): is_running check failed: {e}")
+            return {"action": "skip", "reason": "check_failed"}
 
         now = time.monotonic()
         elapsed = now - self._last_auto_start_ts
@@ -132,7 +147,6 @@ class AutodartsDesktopService:
 
     def _start_no_focus(self, exe_path: str) -> dict:
         """Start Autodarts.exe minimized WITHOUT stealing focus."""
-        import os
         if not os.path.isfile(exe_path):
             logger.warning(f"[AUTODARTS_DESKTOP] exe not found: {exe_path}")
             return {"action": "failed", "error": f"Datei nicht gefunden: {exe_path}"}
@@ -153,7 +167,10 @@ class AutodartsDesktopService:
 
     def get_status(self) -> dict:
         """Return current status of Autodarts Desktop."""
-        running = self.is_running()
+        try:
+            running = self.is_running()
+        except Exception:
+            running = False
         return {
             "running": running,
             "process_name": self._process_name,

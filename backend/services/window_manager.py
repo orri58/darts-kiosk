@@ -408,7 +408,7 @@ def _win32_kill_overlay():
         # First try by window title
         r = subprocess.run(
             ['taskkill', '/F', '/FI', f'WINDOWTITLE eq {OVERLAY_WINDOW_TITLE}'],
-            capture_output=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
         )
         if r.returncode == 0:
             return True
@@ -418,7 +418,7 @@ def _win32_kill_overlay():
             ['wmic', 'process', 'where',
              f"CommandLine like '%{OVERLAY_PROCESS_NAME}%'",
              'call', 'terminate'],
-            capture_output=True, timeout=5,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5,
         )
         return r.returncode == 0
     except Exception as e:
