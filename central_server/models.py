@@ -1,7 +1,6 @@
 """
 Central License Server — Models
-Mirror of licensing models from the kiosk, but in the central server's own DB.
-v3.5.1: Added RegistrationToken model for device onboarding.
+v3.5.2: Added CentralUser model for role-based access control.
 """
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, JSON
 from sqlalchemy.orm import relationship
@@ -146,3 +145,18 @@ class CentralAuditLog(Base):
     license_id = Column(String(36), nullable=True)
     details = Column(JSON, nullable=True)
     message = Column(Text, nullable=True)
+
+
+class CentralUser(Base):
+    """Admin/Operator user for the central license server (v3.5.2)."""
+    __tablename__ = "central_users"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    password_hash = Column(String(256), nullable=False)
+    display_name = Column(String(200), nullable=True)
+    role = Column(String(20), nullable=False, default="operator")  # superadmin | operator
+    allowed_customer_ids = Column(JSON, nullable=True)  # List of customer IDs for operators
+    status = Column(String(20), default="active")
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)

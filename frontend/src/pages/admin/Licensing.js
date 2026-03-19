@@ -186,6 +186,26 @@ export default function Licensing() {
   const [newRawToken, setNewRawToken] = useState(null);
   const [regStatus, setRegStatus] = useState(null);
 
+  // v3.5.2: Central server auth state
+  const [centralAuth, setCentralAuth] = useState({ token: null, user: null });
+  const [centralLoginForm, setCentralLoginForm] = useState({ username: '', password: '' });
+  const isCentralSuperadmin = centralAuth.user?.role === 'superadmin';
+  const centralHeaders = centralAuth.token ? { Authorization: `Bearer ${centralAuth.token}` } : { Authorization: 'Bearer admin-secret-token' };
+
+  const getCentralUrl = () => syncConfig.server_url || syncForm.server_url || '';
+
+  const loginToCentral = async () => {
+    const url = getCentralUrl();
+    if (!url) { toast.error('Keine zentrale Server-URL'); return; }
+    try {
+      const res = await axios.post(`${url}/api/auth/login`, centralLoginForm);
+      setCentralAuth({ token: res.data.access_token, user: res.data.user });
+      toast.success(`Angemeldet als ${res.data.user.display_name || res.data.user.username}`);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Login fehlgeschlagen');
+    }
+  };
+
   const fetchAll = useCallback(async () => {
     try {
       const [dash, cust, loc, dev, lic, identity, checkSt, syncCfg, syncSt, regSt] = await Promise.all([
@@ -308,15 +328,12 @@ export default function Licensing() {
 
   const fetchRegTokens = async () => {
     try {
-      // Tokens are on the CENTRAL server — use sync config URL
-      const syncCfgUrl = syncConfig.server_url || syncForm.server_url;
+      const syncCfgUrl = getCentralUrl();
       if (!syncCfgUrl) {
         toast.error('Keine zentrale Server-URL konfiguriert');
         return;
       }
-      const res = await axios.get(`${syncCfgUrl}/api/registration-tokens`, {
-        headers: { Authorization: 'Bearer admin-secret-token' },
-      });
+      const res = await axios.get(`${syncCfgUrl}/api/registration-tokens`, { headers: centralHeaders });
       setRegTokens(res.data);
     } catch (err) {
       toast.error('Tokens konnten nicht geladen werden: ' + (err.response?.data?.detail || err.message));
@@ -325,7 +342,7 @@ export default function Licensing() {
 
   const createRegToken = async () => {
     try {
-      const syncCfgUrl = syncConfig.server_url || syncForm.server_url;
+      const syncCfgUrl = getCentralUrl();
       if (!syncCfgUrl) {
         toast.error('Keine zentrale Server-URL konfiguriert');
         return;
@@ -338,7 +355,7 @@ export default function Licensing() {
       if (!body.note) delete body.note;
 
       const res = await axios.post(`${syncCfgUrl}/api/registration-tokens`, body, {
-        headers: { Authorization: 'Bearer admin-secret-token', 'Content-Type': 'application/json' },
+        headers: { ...centralHeaders, 'Content-Type': 'application/json' },
       });
       setNewRawToken(res.data.raw_token);
       setShowTokenForm(false);
@@ -352,10 +369,8 @@ export default function Licensing() {
 
   const revokeRegToken = async (tokenId) => {
     try {
-      const syncCfgUrl = syncConfig.server_url || syncForm.server_url;
-      await axios.post(`${syncCfgUrl}/api/registration-tokens/${tokenId}/revoke`, {}, {
-        headers: { Authorization: 'Bearer admin-secret-token' },
-      });
+      const syncCfgUrl = getCentralUrl();
+      await axios.post(`${syncCfgUrl}/api/registration-tokens/${tokenId}/revoke`, {}, { headers: centralHeaders });
       toast.success('Token widerrufen');
       fetchRegTokens();
     } catch (err) {
@@ -894,6 +909,44 @@ export default function Licensing() {
         {/* Registration Tokens (v3.5.1) */}
         <TabsContent value="tokens">
           <div className="space-y-4">
+            {/* Central Server Login (v3.5.2) */}
+            {!centralAuth.token && getCentralUrl() && (
+              <Card className="bg-zinc-900 border-zinc-800">
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-white text-base flex items-center gap-2">
+                    <Shield className="w-5 h-5 text-amber-500" />
+                    {t('lic_central_login') || 'Am zentralen Server anmelden'}
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-end gap-3">
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-zinc-400">Benutzername</label>
+                      <input type="text" className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white w-48" value={centralLoginForm.username} onChange={e => setCentralLoginForm(f => ({...f, username: e.target.value}))} data-testid="central-login-username" />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="text-xs text-zinc-400">Passwort</label>
+                      <input type="password" className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white w-48" value={centralLoginForm.password} onChange={e => setCentralLoginForm(f => ({...f, password: e.target.value}))} onKeyDown={e => e.key === 'Enter' && loginToCentral()} data-testid="central-login-password" />
+                    </div>
+                    <Button onClick={loginToCentral} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="central-login-btn">Anmelden</Button>
+                  </div>
+                  <p className="text-xs text-zinc-500 mt-2">Server: {getCentralUrl()}</p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Logged in indicator */}
+            {centralAuth.user && (
+              <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded text-sm" data-testid="central-user-info">
+                <Shield className="w-4 h-4 text-emerald-400" />
+                <span className="text-zinc-300">Angemeldet: <span className="text-white font-medium">{centralAuth.user.display_name || centralAuth.user.username}</span></span>
+                <span className={`text-xs px-2 py-0.5 rounded ${centralAuth.user.role === 'superadmin' ? 'text-amber-400 bg-amber-500/10' : 'text-blue-400 bg-blue-500/10'}`}>
+                  {centralAuth.user.role}
+                </span>
+                <button onClick={() => setCentralAuth({ token: null, user: null })} className="text-xs text-zinc-500 hover:text-white ml-auto">Abmelden</button>
+              </div>
+            )}
+
             {/* Registration Status */}
             {regStatus && (
               <Card className="bg-zinc-900 border-zinc-800">
@@ -944,14 +997,17 @@ export default function Licensing() {
                   <Button size="sm" onClick={fetchRegTokens} className="bg-zinc-700 hover:bg-zinc-600 text-white" data-testid="reg-refresh-btn">
                     <RefreshCw className="w-4 h-4" />
                   </Button>
-                  <Button size="sm" onClick={() => setShowTokenForm(!showTokenForm)} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="reg-create-btn">
-                    <Plus className="w-4 h-4 mr-1" /> {t('lic_reg_create') || 'Token erstellen'}
-                  </Button>
+                  {/* Create Token: superadmin only */}
+                  {isCentralSuperadmin && (
+                    <Button size="sm" onClick={() => setShowTokenForm(!showTokenForm)} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="reg-create-btn">
+                      <Plus className="w-4 h-4 mr-1" /> {t('lic_reg_create') || 'Token erstellen'}
+                    </Button>
+                  )}
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 {/* Create Token Form */}
-                {showTokenForm && (
+                {showTokenForm && isCentralSuperadmin && (
                   <div className="p-4 bg-zinc-800/50 rounded-lg space-y-3 border border-zinc-700" data-testid="reg-token-form">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="flex flex-col gap-1">
@@ -996,7 +1052,7 @@ export default function Licensing() {
 
                 {/* Token List */}
                 {regTokens.length === 0 && !showTokenForm && (
-                  <p className="text-sm text-zinc-500">{t('lic_reg_no_tokens') || 'Keine Registration Tokens vorhanden. Erstellen Sie einen Token, um ein neues Geraet zu registrieren.'}</p>
+                  <p className="text-sm text-zinc-500">{t('lic_reg_no_tokens') || 'Keine Registration Tokens vorhanden.'}</p>
                 )}
                 {regTokens.length > 0 && (
                   <div className="space-y-2 max-h-[500px] overflow-y-auto">
@@ -1016,7 +1072,8 @@ export default function Licensing() {
                             {tk.used_by_install_id && <span className="text-emerald-400">Benutzt von: {tk.used_by_install_id.substring(0, 12)}...</span>}
                           </div>
                         </div>
-                        {tk.status === 'active' && (
+                        {/* Revoke: superadmin only */}
+                        {tk.status === 'active' && isCentralSuperadmin && (
                           <Button size="sm" onClick={() => revokeRegToken(tk.id)} className="bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs" data-testid={`reg-revoke-${tk.id}`}>
                             <XCircle className="w-3.5 h-3.5 mr-1" /> {t('lic_reg_revoke') || 'Widerrufen'}
                           </Button>
