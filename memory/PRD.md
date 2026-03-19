@@ -897,16 +897,44 @@ autostart.bat:
   - NICHT GEAENDERT: Observer, Watchdog, Finalize, Credits, Admin, Frontend
   - Release: darts-kiosk-v3.3.4-windows.zip (2.1 MB)
 
+- v3.3.5: Selector Fallback + Robustness Layer (2026-03-19)
+  - FEATURE: Priorisierte Selektor-Gruppen mit Fallback-Aufloesung
+  - NEUE DATEI: backend/autodarts_selectors.py (kanonische Quelle)
+    - SELECTOR_GROUPS dict: in_game_score, in_game_match, in_game_turn, finished_ui, result_generic
+    - Jede Gruppe: primary (erster Selektor) + fallback (Rest)
+    - build_detect_state_js(): Generiert DOM-Detection-JS aus SELECTOR_GROUPS
+    - Flache Listen (IN_GAME_SELECTORS etc.) abgeleitet fuer Rueckwaertskompatibilitaet
+  - Observer _detect_state_dom() aktualisiert:
+    - Nutzt build_detect_state_js() statt Inline-JS
+    - resolveGroup() im Browser: versucht Selektoren in Prioritaetsreihenfolge
+    - Fallback-Logging: [SELECTOR] fallback_used / primary_hit pro Gruppe
+    - Soft-Fail: Gruppe ohne Match = found:false (kein Crash)
+    - Heuristik: _evidence Array + _evidenceCount fuer Multi-Signal-Konfidenz
+  - Test Suite erweitert (8 Klassen, 52 Tests):
+    - TestSelectorIntegrity (9): Struktur, Primary-Reihenfolge, Duplikate
+    - TestWSFrameClassification (10): Unveraendert
+    - TestFallbackResolution (9): Primary-Hit, Fallback-Hit, Second-Fallback, Soft-Fail
+    - TestHeuristicCombination (5): Single/Multi-Evidence, Button+UI
+    - TestCSSSelectorsValid (2): Syntax-Validierung
+    - TestDOMDetectionBackwardCompat (7): Rueckwaertskompatibilitaet
+    - TestLivePageProbe (3): Optional (AUTODARTS_LIVE=1)
+    - TestGotchaVariantGuard (7): Unveraendert
+  - Regressions-Test: 151 Tests bestanden (alle v3.2.x-v3.3.x Suites), 0 Failures
+  - Stale Test-Erwartung in test_v323_finalize.py korrigiert (Upgrade-Semantik seit v3.3.1-hotfix1)
+  - NICHT GEAENDERT: Observer core flow, Finalize, Credits, Watchdog, Auth, Frontend
+  - Release: darts-kiosk-v3.3.5-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)~~ → v3.3.1
 - [x] ~~Board Wake/Desktop Supervision Hardening~~ → v3.3.1
-- [ ] v3.3.2: Windows Kiosk Controls (Shell Switch, Task Manager Toggle)
-- [ ] Autodarts DOM Selector Tests (validate selectors against live Autodarts site)
+- [x] ~~Windows Kiosk Controls (Shell Switch, Task Manager Toggle)~~ → v3.3.3
+- [x] ~~Autodarts DOM Selector Tests~~ → v3.3.4
+- [x] ~~Selector Fallback + Robustness Layer~~ → v3.3.5
+- [ ] Finish Experience Safety (Post-Match Delay UX Verbesserung)
 - [ ] Hard-Kiosk-Modus als optionaler separater Schritt (nach stabiler Runtime)
 
 ### P2
-- [ ] Finish Experience Safety (Post-Match Delay Verbesserung)
 - [ ] Chromium Extension as alternative to Playwright observer
 - [ ] PWA Install Prompt for public leaderboard page
 - [ ] Persist runtime state to JSON file

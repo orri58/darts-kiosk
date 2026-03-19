@@ -126,7 +126,13 @@ def test_keep_alive_unchanged():
 # ============================================================
 
 def test_ws_duplicate_finish_signals():
-    """Second finish signal for same match is ignored in _update_ws_state."""
+    """Confirmed state_finished upgrades a pending gameshot_match trigger (v3.3.1-hotfix1).
+
+    Since v3.3.1-hotfix1, a confirmed trigger (state_finished/game_finished) is allowed
+    to UPGRADE a pending trigger (gameshot_match/matchshot). This is intentional:
+    gameshot_match is a pending signal that awaits confirmation; state_finished IS that
+    confirmation. True duplicates (same category) are still ignored.
+    """
     from backend.services.autodarts_observer import AutodartsObserver, WSEventState
 
     obs = AutodartsObserver.__new__(AutodartsObserver)
@@ -138,17 +144,22 @@ def test_ws_duplicate_finish_signals():
     obs._stopping = False
     obs._on_game_ended = None
 
-    # Patch _schedule_finalize_safety to avoid async issues in sync test
+    # Patch async schedulers to avoid issues in sync test
     obs._schedule_finalize_safety = lambda *a, **kw: None
+    obs._schedule_immediate_finalize = lambda *a, **kw: None
 
-    # First signal
+    # First signal (pending)
     obs._update_ws_state("match_end_gameshot_match", "autodarts.matches.abc.state", {}, "")
     assert obs._ws_state.match_finished is True
     assert obs._ws_state.finish_trigger == "match_end_gameshot_match"
 
-    # Second signal (duplicate) — should NOT overwrite trigger
+    # Second signal (confirmed) — UPGRADES the pending trigger
     obs._update_ws_state("match_end_state_finished", "autodarts.matches.abc.state", {}, "")
-    assert obs._ws_state.finish_trigger == "match_end_gameshot_match"  # First trigger wins
+    assert obs._ws_state.finish_trigger == "match_end_state_finished"  # Upgraded to confirmed
+
+    # Third signal (same confirmed category) — true duplicate, ignored
+    obs._update_ws_state("match_end_state_finished", "autodarts.matches.abc.state", {}, "")
+    assert obs._ws_state.finish_trigger == "match_end_state_finished"  # Unchanged
 
 
 # ============================================================
