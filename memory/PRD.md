@@ -875,6 +875,28 @@ autostart.bat:
   - 16/16 Tests bestanden (iteration_54, Backend + Frontend)
   - Release: darts-kiosk-v3.3.3-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
 
+- v3.3.4: Autodarts DOM Selector Test Suite (2026-03-19)
+  - NEUES FEATURE: Automatisierte Test Suite fuer Autodarts DOM-Selektoren + WS-Frame-Klassifikation
+  - ZENTRALE SELEKTOR-DATEI: backend/tests/autodarts_selectors.py
+    - Single Source of Truth fuer alle CSS-Selektoren, Button-Patterns, WS-Events
+    - In-Game (11), Match-End (4+3 Buttons), Result (5), Login, WS-Channels
+  - TEST SUITE: backend/tests/test_autodarts_dom_selectors.py — 6 Testklassen, 48 Tests:
+    1. SelectorIntegrity (8): Struktur, Regex-Kompilierung, keine Duplikate
+    2. WSFrameClassification (10): turn_start, throw, game_shot+match, finished, gameFinished,
+       matchshot, delete, irrelevant, subscription, game_shot+leg
+    3. DOMDetectionLogic (17): Mock-HTML-Injection + exakte Observer-JS ausfuehren:
+       idle, scoreboard, player-score, match+running, testid, turn, #match,
+       rematch, nochmal spielen, share, new game, post-match, match-summary,
+       winner, finished, leg-result, no-false-positive
+    4. CSSSelectorsValid (3): Syntax-Validierung per querySelectorAll
+    5. LivePageProbe (3): Optional (AUTODARTS_LIVE=1) — Seite laden, Login-Redirect, DOM
+    6. GotchaVariantGuard (7): is_gotcha, extract_variant
+  - AUSFUEHRUNG: pytest backend/tests/test_autodarts_dom_selectors.py -v
+  - LIVE: AUTODARTS_LIVE=1 pytest backend/tests/test_autodarts_dom_selectors.py -v
+  - 48/48 Tests bestanden (45 standard + 3 live)
+  - NICHT GEAENDERT: Observer, Watchdog, Finalize, Credits, Admin, Frontend
+  - Release: darts-kiosk-v3.3.4-windows.zip (2.1 MB)
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)~~ → v3.3.1
