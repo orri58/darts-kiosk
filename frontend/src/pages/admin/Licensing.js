@@ -95,7 +95,8 @@ function SimpleForm({ fields, onSubmit, submitLabel }) {
 const BINDING_COLORS = {
   bound: 'text-emerald-400 bg-emerald-500/10',
   unbound: 'text-zinc-400 bg-zinc-500/10',
-  mismatch: 'text-red-400 bg-red-500/10',
+  mismatch_grace: 'text-amber-400 bg-amber-500/10',
+  mismatch_expired: 'text-red-400 bg-red-500/10',
   first_bind: 'text-blue-400 bg-blue-500/10',
 };
 
@@ -345,9 +346,10 @@ export default function Licensing() {
               {devices.map(d => {
                 const loc = locations.find(l => l.id === d.location_id);
                 const isThisDevice = deviceIdentity && d.install_id === deviceIdentity.install_id;
-                const isMismatch = d.binding_status === 'mismatch';
+                const isMismatch = d.binding_status === 'mismatch_grace' || d.binding_status === 'mismatch_expired';
+                const isMismatchExpired = d.binding_status === 'mismatch_expired';
                 return (
-                  <div key={d.id} className={`p-3 rounded-sm space-y-2 ${isMismatch ? 'bg-red-500/5 border border-red-500/20' : 'bg-zinc-800/50'}`} data-testid={`lic-device-${d.id}`}>
+                  <div key={d.id} className={`p-3 rounded-sm space-y-2 ${isMismatchExpired ? 'bg-red-500/5 border border-red-500/20' : isMismatch ? 'bg-amber-500/5 border border-amber-500/20' : 'bg-zinc-800/50'}`} data-testid={`lic-device-${d.id}`}>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Monitor className="w-4 h-4 text-cyan-400" />
@@ -374,13 +376,27 @@ export default function Licensing() {
                       {d.last_seen_at && <span>{t('lic_last_seen')}: {new Date(d.last_seen_at).toLocaleString('de-DE')}</span>}
                     </div>
                     {isMismatch && (
-                      <div className="flex items-center gap-2 mt-1">
-                        <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
-                        <span className="text-xs text-red-400">{t('lic_binding_mismatch_hint')}</span>
-                        <Button size="sm" variant="outline" className="border-amber-500/30 text-amber-400 text-xs ml-auto"
-                          onClick={() => rebindDevice(d.id)} data-testid={`lic-rebind-${d.id}`}>
-                          <Link2 className="w-3 h-3 mr-1" /> {t('lic_rebind')}
-                        </Button>
+                      <div className="space-y-1.5 mt-1">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className={`w-3.5 h-3.5 ${isMismatchExpired ? 'text-red-400' : 'text-amber-400'}`} />
+                          <span className={`text-xs ${isMismatchExpired ? 'text-red-400' : 'text-amber-400'}`}>
+                            {isMismatchExpired ? t('lic_binding_mismatch_expired_hint') : t('lic_binding_mismatch_grace_hint')}
+                          </span>
+                          <Button size="sm" variant="outline" className="border-amber-500/30 text-amber-400 text-xs ml-auto"
+                            onClick={() => rebindDevice(d.id)} data-testid={`lic-rebind-${d.id}`}>
+                            <Link2 className="w-3 h-3 mr-1" /> {t('lic_rebind')}
+                          </Button>
+                        </div>
+                        {d.mismatch_detected_at && (
+                          <p className="text-xs text-zinc-500" data-testid={`lic-mismatch-ts-${d.id}`}>
+                            {t('lic_mismatch_since')}: {new Date(d.mismatch_detected_at).toLocaleString('de-DE')}
+                          </p>
+                        )}
+                        {d.previous_install_id && (
+                          <p className="text-xs text-zinc-500 font-mono" data-testid={`lic-prev-iid-${d.id}`}>
+                            {t('lic_previous_id')}: {d.previous_install_id.slice(0, 12)}...
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>

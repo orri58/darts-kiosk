@@ -37,14 +37,31 @@ export default function LicenseOverlay({ kioskState }) {
   const status = licStatus.status;
   const binding = licStatus.binding_status;
 
-  // No overlay needed for active/test/no_license (with good binding)
-  if ((status === 'active' || status === 'test' || status === 'no_license') && binding !== 'mismatch') return null;
+  // No overlay needed for active/test/no_license with good binding
+  if ((status === 'active' || status === 'test' || status === 'no_license') &&
+      (!binding || binding === 'bound' || binding === 'first_bind' || binding === 'unbound')) return null;
 
   // Don't show blocking overlay during active games
   const isInGame = kioskState === 'in_game' || kioskState === 'observer_active' || kioskState === 'finished';
 
-  // Device binding mismatch: warning overlay (non-blocking for now, shows hint)
-  if (binding === 'mismatch') {
+  // v3.4.4: Mismatch grace — yellow warning bar (non-blocking, sessions allowed)
+  if (binding === 'mismatch_grace') {
+    if (isInGame) return null;
+    return (
+      <div
+        className="fixed top-0 left-0 right-0 z-[999] bg-amber-500/90 text-black px-4 py-2 flex items-center justify-center gap-2"
+        data-testid="license-mismatch-grace-bar"
+      >
+        <AlertTriangle className="w-4 h-4" />
+        <span className="text-sm font-medium">
+          Geraetebindung stimmt nicht ueberein — Grace-Zeitraum aktiv
+        </span>
+      </div>
+    );
+  }
+
+  // v3.4.4: Mismatch expired — full blocking overlay
+  if (binding === 'mismatch_expired') {
     if (isInGame) return null;
     return (
       <div
@@ -52,14 +69,14 @@ export default function LicenseOverlay({ kioskState }) {
         data-testid="license-binding-mismatch-overlay"
       >
         <div className="text-center max-w-md px-8">
-          <div className="w-20 h-20 rounded-full bg-amber-500/20 flex items-center justify-center mx-auto mb-6">
-            <AlertTriangle className="w-10 h-10 text-amber-500" />
+          <div className="w-20 h-20 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-6">
+            <Lock className="w-10 h-10 text-red-500" />
           </div>
           <h2 className="text-2xl font-bold text-white mb-3">
             Geraet nicht autorisiert
           </h2>
           <p className="text-zinc-400 mb-6">
-            Die Install-ID dieses Geraets stimmt nicht mit der registrierten ID ueberein.
+            Die Geraetebindung dieses Kiosks ist abgelaufen. Der Grace-Zeitraum ist ueberschritten.
             Bitte kontaktieren Sie den Administrator fuer eine Neubindung.
           </p>
           {licStatus.install_id && (

@@ -112,7 +112,7 @@ class TestDeviceBinding:
         mock_db.add = MagicMock()
         mock_db.flush = AsyncMock()
 
-        result = await svc._check_device_binding(mock_db, install_id, location_id, now)
+        result = await svc._check_device_binding(mock_db, install_id, location_id, now, 48, trigger_binding=True)
         assert result == "first_bind"
         # Verify device was added
         mock_db.add.assert_called_once()
@@ -131,6 +131,7 @@ class TestDeviceBinding:
         mock_device = MagicMock()
         mock_device.install_id = install_id
         mock_device.binding_status = "bound"
+        mock_device.mismatch_detected_at = None
 
         mock_db = AsyncMock()
         mock_result = MagicMock()
@@ -138,12 +139,12 @@ class TestDeviceBinding:
         mock_db.execute = AsyncMock(return_value=mock_result)
         mock_db.flush = AsyncMock()
 
-        result = await svc._check_device_binding(mock_db, install_id, location_id, now)
+        result = await svc._check_device_binding(mock_db, install_id, location_id, now, 48)
         assert result == "bound"
 
     @pytest.mark.asyncio
-    async def test_different_device_returns_mismatch(self):
-        """Different install_id when another device is already bound → mismatch."""
+    async def test_different_device_returns_mismatch_grace(self):
+        """Different install_id when another device is already bound → mismatch_grace."""
         from backend.services.license_service import LicenseValidationService
         svc = LicenseValidationService()
 
@@ -156,14 +157,18 @@ class TestDeviceBinding:
         mock_device = MagicMock()
         mock_device.install_id = bound_id
         mock_device.binding_status = "bound"
+        mock_device.mismatch_detected_at = None
+        mock_device.previous_install_id = None
+        mock_device.id = "dev-1"
 
         mock_db = AsyncMock()
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [mock_device]
         mock_db.execute = AsyncMock(return_value=mock_result)
+        mock_db.flush = AsyncMock()
 
-        result = await svc._check_device_binding(mock_db, new_id, location_id, now)
-        assert result == "mismatch"
+        result = await svc._check_device_binding(mock_db, new_id, location_id, now, 48)
+        assert result == "mismatch_grace"
 
     @pytest.mark.asyncio
     async def test_no_location_returns_none(self):
@@ -175,7 +180,7 @@ class TestDeviceBinding:
         now = datetime.now(timezone.utc)
         mock_db = AsyncMock()
 
-        result = await svc._check_device_binding(mock_db, install_id, None, now)
+        result = await svc._check_device_binding(mock_db, install_id, None, now, 48)
         assert result is None
 
 
@@ -251,11 +256,17 @@ class TestSessionAllowedWithBinding:
         svc = LicenseValidationService()
         assert svc.is_session_allowed({"status": "active", "binding_status": "first_bind"}) is True
 
-    def test_active_mismatch_blocked(self):
-        """Binding mismatch blocks session even if license is active."""
+    def test_active_mismatch_grace_allowed(self):
+        """Binding mismatch_grace allows session (v3.4.4: grace period)."""
         from backend.services.license_service import LicenseValidationService
         svc = LicenseValidationService()
-        assert svc.is_session_allowed({"status": "active", "binding_status": "mismatch"}) is False
+        assert svc.is_session_allowed({"status": "active", "binding_status": "mismatch_grace"}) is True
+
+    def test_active_mismatch_expired_blocked(self):
+        """Binding mismatch_expired blocks session."""
+        from backend.services.license_service import LicenseValidationService
+        svc = LicenseValidationService()
+        assert svc.is_session_allowed({"status": "active", "binding_status": "mismatch_expired"}) is False
 
     def test_no_license_allowed(self):
         """No license configured → fail-open."""

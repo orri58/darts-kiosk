@@ -111,7 +111,7 @@ if CORS_ORIGINS != ['*']:
 async def lifespan(app: FastAPI):
     await init_db()
 
-    # v3.4.3: Ensure new columns exist on existing tables (SQLite ALTER TABLE)
+    # v3.4.4: Ensure new columns exist on existing tables (SQLite ALTER TABLE)
     try:
         import aiosqlite
         db_path = str(DATA_DIR / 'db.sqlite')
@@ -119,12 +119,16 @@ async def lifespan(app: FastAPI):
             cursor = await raw_db.execute("PRAGMA table_info(lic_devices)")
             cols = [row[1] for row in await cursor.fetchall()]
             if cols:  # table exists
-                if 'binding_status' not in cols:
-                    await raw_db.execute("ALTER TABLE lic_devices ADD COLUMN binding_status VARCHAR(20) DEFAULT 'unbound'")
-                    logger.info("[MIGRATE] Added lic_devices.binding_status column")
-                if 'first_seen_at' not in cols:
-                    await raw_db.execute("ALTER TABLE lic_devices ADD COLUMN first_seen_at DATETIME")
-                    logger.info("[MIGRATE] Added lic_devices.first_seen_at column")
+                _new_cols = {
+                    'binding_status': "VARCHAR(20) DEFAULT 'unbound'",
+                    'first_seen_at': 'DATETIME',
+                    'mismatch_detected_at': 'DATETIME',
+                    'previous_install_id': 'VARCHAR(64)',
+                }
+                for col_name, col_type in _new_cols.items():
+                    if col_name not in cols:
+                        await raw_db.execute(f"ALTER TABLE lic_devices ADD COLUMN {col_name} {col_type}")
+                        logger.info(f"[MIGRATE] Added lic_devices.{col_name} column")
                 await raw_db.commit()
     except Exception as e:
         logger.warning(f"[MIGRATE] Column migration check failed (non-critical): {e}")

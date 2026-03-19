@@ -19,7 +19,12 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-_DATA_DIR = Path(os.environ.get("DATA_DIR", "")) or (Path(__file__).resolve().parent.parent.parent / "data")
+# Use the same DATA_DIR as database.py for consistency
+try:
+    from backend.database import DATA_DIR as _DATA_DIR
+except ImportError:
+    _DATA_DIR = Path(os.environ.get("DATA_DIR", "")) or (Path(__file__).resolve().parent.parent.parent / "data")
+
 _IDENTITY_FILE = _DATA_DIR / "device_identity.json"
 
 

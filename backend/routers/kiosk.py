@@ -718,13 +718,13 @@ async def stop_observer_for_board(board_id: str, reason: str = "unknown"):
 async def kiosk_start_game(board_id: str, data: StartGameRequest, db: AsyncSession = Depends(get_db)):
     logger.info(f"[StartGame] board={board_id}, game_type={data.game_type}, players={data.players}")
 
-    # v3.4.3: License enforcement — secondary check before game start
+    # v3.4.4: License enforcement — secondary check + trigger auto-bind on game start
     try:
         from backend.services.license_service import license_service
         from backend.services.device_identity_service import device_identity_service
         _install_id = device_identity_service.get_install_id()
         lic_status = await license_service.get_effective_status(
-            db, install_id=_install_id, board_id=board_id
+            db, install_id=_install_id, board_id=board_id, trigger_binding=True
         )
         if not license_service.is_session_allowed(lic_status):
             _block_reason = lic_status.get('binding_status') or lic_status.get('status')

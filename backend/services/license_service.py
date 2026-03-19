@@ -1,5 +1,5 @@
 """
-License Validation Service — v3.4.3 Device Binding
+License Validation Service — v3.4.4 Mismatch Grace + Tracking
 
 Handles:
 - License status computation (active/grace/expired/blocked)
@@ -7,12 +7,15 @@ Handles:
 - Device registration and binding (install_id → LicDevice)
 - Grace period enforcement
 - Device binding check (install_id match/mismatch)
+- Mismatch grace period (configurable, default 48h)
+- Device tracking (first_seen, last_seen, mismatch_detected, previous_install_id)
 
 Design:
 - Does NOT modify existing runtime logic
 - All DB operations use existing async session pattern
 - Local cache is a signed JSON file for tamper detection
 - Binding lives on LicDevice, NOT on License
+- Auto-bind ONLY on start_game (trigger_binding=True), not on unlock_board
 """
 import hashlib
 import json
@@ -51,30 +54,42 @@ def _utcnow() -> datetime:
 class LicenseValidationService:
     """Validates license status for a device/location/customer with device binding."""
 
+    # Default binding grace hours (configurable via settings table)
+    DEFAULT_BINDING_GRACE_HOURS = 48
+
+    async def _get_binding_grace_hours(self, db: AsyncSession) -> int:
+        """Read configurable binding_grace_hours from settings table."""
+        try:
+            from backend.models import Settings
+            stmt = select(Settings).where(Settings.key == "binding_grace_hours")
+            result = await db.execute(stmt)
+            s = result.scalar_one_or_none()
+            if s and s.value is not None:
+                return int(s.value)
+        except Exception:
+            pass
+        return self.DEFAULT_BINDING_GRACE_HOURS
+
     async def get_effective_status(
         self, db: AsyncSession, device_id: Optional[str] = None,
         location_id: Optional[str] = None, customer_id: Optional[str] = None,
         install_id: Optional[str] = None, board_id: Optional[str] = None,
+        trigger_binding: bool = False,
     ) -> dict:
         """
         Compute the effective license status for a device, location, or customer.
 
-        v3.4.3: When install_id is provided, also checks device binding:
-        - If no device with that install_id exists → first-bind (auto-create)
-        - If device bound with same install_id → OK
-        - If device bound with different install_id → binding_mismatch
+        v3.4.4: trigger_binding controls auto-bind behaviour:
+        - trigger_binding=True (start_game): auto-binds unbound device to install_id
+        - trigger_binding=False (unlock_board, license-status): checks only, no auto-bind
 
-        Resolution order:
-        1. Find device by install_id → get location → get customer
-        2. If not found by install_id, try board_id lookup
-        3. Find all licenses for customer (and optionally location)
-        4. Pick the most permissive active license
-        5. Compute effective status considering grace period
-        6. Check device binding (if install_id provided)
+        Mismatch Grace logic:
+        - On first mismatch: set mismatch_detected_at, return mismatch_grace
+        - Within grace period: return mismatch_grace (sessions allowed)
+        - After grace expired: return mismatch_expired (sessions blocked)
         """
         now = _utcnow()
         binding_status = None
-        bound_device = None
 
         # v3.4.3: If install_id provided, try to resolve device by install_id first
         if install_id and not device_id:
@@ -84,7 +99,6 @@ class LicenseValidationService:
             if bound_device:
                 device_id = bound_device.id
                 binding_status = "bound"
-                # Update last_seen
                 bound_device.last_seen_at = now
                 await db.flush()
 
@@ -96,28 +110,35 @@ class LicenseValidationService:
             if board_device:
                 device_id = board_device.id
                 location_id = board_device.location_id
-                # Auto-bind: if device has no install_id yet, bind it now
+
                 if install_id and not board_device.install_id:
-                    board_device.install_id = install_id
-                    board_device.binding_status = "bound"
-                    board_device.first_seen_at = board_device.first_seen_at or now
-                    board_device.last_seen_at = now
-                    await db.flush()
-                    binding_status = "first_bind"
-                    logger.info(
-                        f"[LICENSE] Auto-bind via board_id: board={board_id} "
-                        f"install_id={install_id} device={board_device.id}"
-                    )
+                    # Auto-bind ONLY when trigger_binding=True (start_game)
+                    if trigger_binding:
+                        board_device.install_id = install_id
+                        board_device.binding_status = "bound"
+                        board_device.first_seen_at = board_device.first_seen_at or now
+                        board_device.last_seen_at = now
+                        await db.flush()
+                        binding_status = "first_bind"
+                        logger.info(
+                            f"[BIND_CREATED] board={board_id} install_id={install_id} device={board_device.id}"
+                        )
+                    else:
+                        # Not binding yet, just resolving chain
+                        binding_status = "unbound"
+
                 elif install_id and board_device.install_id == install_id:
                     binding_status = "bound"
                     board_device.last_seen_at = now
                     await db.flush()
+
                 elif install_id and board_device.install_id != install_id:
-                    binding_status = "mismatch"
-                    logger.warning(
-                        f"[LICENSE] Board device binding MISMATCH: board={board_id} "
-                        f"install_id={install_id} expected={board_device.install_id}"
+                    # v3.4.4: Mismatch with grace period
+                    grace_hours = await self._get_binding_grace_hours(db)
+                    binding_status = self._evaluate_mismatch_grace(
+                        board_device, install_id, now, grace_hours
                     )
+                    await db.flush()
 
         # Resolve device → location → customer chain
         if device_id and not location_id:
@@ -193,12 +214,13 @@ class LicenseValidationService:
             if effective_status == LicenseStatus.GRACE.value and grace_until > now:
                 grace_days_remaining = (grace_until - now).days
 
-        # v3.4.3: Device binding check
-        if install_id and effective_status in (
+        # v3.4.4: Device binding check via _check_device_binding
+        if install_id and binding_status is None and effective_status in (
             LicenseStatus.ACTIVE.value, LicenseStatus.TEST.value, LicenseStatus.GRACE.value
         ):
+            grace_hours = await self._get_binding_grace_hours(db)
             binding_status = await self._check_device_binding(
-                db, install_id, location_id, now
+                db, install_id, location_id, now, grace_hours, trigger_binding
             )
 
         return self._build_status(
@@ -214,14 +236,56 @@ class LicenseValidationService:
             binding_status=binding_status,
         )
 
+    def _evaluate_mismatch_grace(
+        self, device: LicDevice, new_install_id: str,
+        now: datetime, grace_hours: int,
+    ) -> str:
+        """
+        Evaluate mismatch grace period on a device.
+        Updates device fields in-place (caller must flush).
+
+        Returns: "mismatch_grace" | "mismatch_expired"
+        """
+        if not device.mismatch_detected_at:
+            # First time mismatch detected
+            device.mismatch_detected_at = now
+            device.previous_install_id = device.install_id
+            device.binding_status = "mismatch_grace"
+            logger.warning(
+                f"[BIND_MISMATCH_DETECTED] device={device.id} "
+                f"expected={device.install_id} got={new_install_id} grace_hours={grace_hours}"
+            )
+            return "mismatch_grace"
+
+        # Mismatch already detected — check grace window
+        detected_at = self._aware(device.mismatch_detected_at)
+        grace_end = detected_at + timedelta(hours=grace_hours)
+
+        if now <= grace_end:
+            remaining_hours = int((grace_end - now).total_seconds() / 3600)
+            device.binding_status = "mismatch_grace"
+            logger.info(
+                f"[BIND_GRACE_ACTIVE] device={device.id} "
+                f"remaining_hours={remaining_hours}"
+            )
+            return "mismatch_grace"
+        else:
+            device.binding_status = "mismatch_expired"
+            logger.warning(
+                f"[BIND_BLOCKED] device={device.id} "
+                f"mismatch_detected_at={detected_at.isoformat()} grace expired"
+            )
+            return "mismatch_expired"
+
     async def _check_device_binding(
         self, db: AsyncSession, install_id: str,
         location_id: Optional[str], now: datetime,
+        grace_hours: int, trigger_binding: bool = False,
     ) -> str:
         """
-        Check device binding for a given install_id.
+        Check device binding for a given install_id at a location.
 
-        Returns: "bound" | "first_bind" | "mismatch" | None
+        v3.4.4: Returns "bound" | "first_bind" | "mismatch_grace" | "mismatch_expired" | "unbound" | None
         """
         if not location_id:
             return None
@@ -237,42 +301,46 @@ class LicenseValidationService:
         # Check if this install_id is already bound at this location
         for dev in existing_devices:
             if dev.install_id == install_id:
-                if dev.binding_status != "bound":
+                if dev.binding_status not in ("bound",):
                     dev.binding_status = "bound"
+                    dev.mismatch_detected_at = None  # Clear any old mismatch
                     await db.flush()
                 logger.info(f"[LICENSE] Device binding OK: install_id={install_id} device={dev.id}")
                 return "bound"
 
         # No device with this install_id at this location
-        # Check if there are ANY bound devices → this is a mismatch
-        bound_devices = [d for d in existing_devices if d.binding_status == "bound"]
+        bound_devices = [d for d in existing_devices if d.binding_status in ("bound", "mismatch_grace", "mismatch_expired")]
         if bound_devices:
-            logger.warning(
-                f"[LICENSE] Device binding MISMATCH: install_id={install_id} "
-                f"expected={bound_devices[0].install_id} location={location_id}"
-            )
-            return "mismatch"
+            # Evaluate mismatch grace on the first bound device
+            dev = bound_devices[0]
+            binding = self._evaluate_mismatch_grace(dev, install_id, now, grace_hours)
+            await db.flush()
+            return binding
 
-        # No bound devices yet → first bind (auto-create device record)
-        new_device = LicDevice(
-            location_id=location_id,
-            install_id=install_id,
-            binding_status="bound",
-            device_name=f"Auto-bound {install_id[:8]}",
-            first_seen_at=now,
-            last_seen_at=now,
-        )
-        db.add(new_device)
-        await db.flush()
-        logger.info(f"[LICENSE] First device bind: install_id={install_id} device={new_device.id} location={location_id}")
-        return "first_bind"
+        # No bound devices yet
+        if trigger_binding:
+            # First bind (auto-create device record)
+            new_device = LicDevice(
+                location_id=location_id,
+                install_id=install_id,
+                binding_status="bound",
+                device_name=f"Auto-bound {install_id[:8]}",
+                first_seen_at=now,
+                last_seen_at=now,
+            )
+            db.add(new_device)
+            await db.flush()
+            logger.info(f"[BIND_CREATED] install_id={install_id} device={new_device.id} location={location_id}")
+            return "first_bind"
+
+        return "unbound"
 
     async def rebind_device(
         self, db: AsyncSession, device_id: str, new_install_id: str,
     ) -> dict:
         """
         Rebind a device record to a new install_id. Superadmin only.
-        Clears mismatch status on all devices at that location.
+        Clears mismatch state and stores previous_install_id.
         """
         stmt = select(LicDevice).where(LicDevice.id == device_id)
         result = await db.execute(stmt)
@@ -281,8 +349,10 @@ class LicenseValidationService:
             return {"error": "device_not_found"}
 
         old_install_id = device.install_id
+        device.previous_install_id = old_install_id
         device.install_id = new_install_id
         device.binding_status = "bound"
+        device.mismatch_detected_at = None  # v3.4.4: clear mismatch state
         device.last_seen_at = _utcnow()
         await db.flush()
 
@@ -388,13 +458,14 @@ class LicenseValidationService:
         - active, grace, test: allowed (if binding OK or no binding check)
         - no_license: allowed (system not configured yet)
         - expired, blocked: BLOCKED
-        - binding_mismatch: BLOCKED (device not authorized)
+        - mismatch_grace: ALLOWED (with warning)
+        - mismatch_expired: BLOCKED (device binding grace expired)
+        - unbound: ALLOWED (not yet bound)
 
-        v3.4.3: binding_mismatch blocks sessions.
+        v3.4.4: mismatch_grace allows sessions, mismatch_expired blocks.
         """
-        # Check binding first
         binding = status.get("binding_status")
-        if binding == "mismatch":
+        if binding == "mismatch_expired":
             return False
 
         allowed = {"active", "grace", "test", "no_license"}

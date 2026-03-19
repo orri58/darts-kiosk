@@ -53,6 +53,8 @@ def _serialize_device(d):
         "status": d.status, "binding_status": d.binding_status,
         "first_seen_at": d.first_seen_at.isoformat() if d.first_seen_at else None,
         "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+        "mismatch_detected_at": d.mismatch_detected_at.isoformat() if d.mismatch_detected_at else None,
+        "previous_install_id": d.previous_install_id,
         "created_at": d.created_at.isoformat() if d.created_at else None,
     }
 
@@ -394,3 +396,44 @@ async def rebind_device(
         f"old={result.get('old_install_id')} new={new_install_id}"
     )
     return result
+
+
+# ═══════════════════════════════════════════════════════════════
+# BINDING SETTINGS (v3.4.4)
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/binding-settings")
+async def get_binding_settings(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Return current binding configuration."""
+    from backend.models import Settings
+    stmt = select(Settings).where(Settings.key == "binding_grace_hours")
+    result = await db.execute(stmt)
+    s = result.scalar_one_or_none()
+    return {
+        "binding_grace_hours": int(s.value) if s and s.value is not None else 48,
+    }
+
+
+@router.post("/binding-settings")
+async def update_binding_settings(
+    data: dict,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update binding configuration. Body: { "binding_grace_hours": 48 }"""
+    hours = data.get("binding_grace_hours")
+    if hours is None or not isinstance(hours, (int, float)) or hours < 0:
+        raise HTTPException(400, "binding_grace_hours must be a non-negative number")
+
+    from backend.models import Settings
+    stmt = select(Settings).where(Settings.key == "binding_grace_hours")
+    result = await db.execute(stmt)
+    s = result.scalar_one_or_none()
+    if s:
+        s.value = int(hours)
+    else:
+        db.add(Settings(key="binding_grace_hours", value=int(hours)))
+    await db.flush()
+
+    logger.info(f"[LICENSE] Binding grace hours updated to {hours} by {admin.username}")
+    return {"binding_grace_hours": int(hours)}

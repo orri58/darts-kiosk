@@ -147,13 +147,13 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
     if existing:
         raise HTTPException(status_code=400, detail="Board already has an active session")
 
-    # v3.4.1: License enforcement — check before creating session
+    # v3.4.4: License enforcement — check before creating session (NO auto-bind)
     try:
         from backend.services.license_service import license_service
         from backend.services.device_identity_service import device_identity_service
         _install_id = device_identity_service.get_install_id()
         lic_status = await license_service.get_effective_status(
-            db, install_id=_install_id, board_id=board_id
+            db, install_id=_install_id, board_id=board_id, trigger_binding=False
         )
         if not license_service.is_session_allowed(lic_status):
             _block_reason = lic_status.get('binding_status') or lic_status.get('status')

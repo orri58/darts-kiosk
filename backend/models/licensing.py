@@ -103,10 +103,12 @@ class LicDevice(Base):
     hardware_fingerprint = Column(String(128), nullable=True)
     device_name = Column(String(100), nullable=True)
     status = Column(String(20), default=DeviceStatus.ACTIVE.value)
-    binding_status = Column(String(20), default="unbound")  # unbound, bound, mismatch
+    binding_status = Column(String(20), default="unbound")  # unbound, bound, mismatch_grace, mismatch_expired
     first_seen_at = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
     last_license_check_at = Column(DateTime, nullable=True)
+    mismatch_detected_at = Column(DateTime, nullable=True)  # v3.4.4: when mismatch was first detected
+    previous_install_id = Column(String(64), nullable=True)  # v3.4.4: previous install_id before mismatch
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
