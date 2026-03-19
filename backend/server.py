@@ -48,6 +48,7 @@ from backend.services.mdns_service import mdns_service
 # Routers
 from backend.routers import auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
 from backend.routers import licensing as licensing_router
+from backend.routers import central_proxy
 
 # Configuration
 from backend.database import DATA_DIR
@@ -285,6 +286,7 @@ api_router.include_router(matches.router)
 api_router.include_router(stats.router)
 api_router.include_router(players.router)
 api_router.include_router(licensing_router.router)
+api_router.include_router(central_proxy.router)
 
 app.include_router(api_router)
 

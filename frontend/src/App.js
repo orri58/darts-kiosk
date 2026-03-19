@@ -24,16 +24,28 @@ import PublicLeaderboard from "./pages/PublicLeaderboard";
 import SetupWizard from "./pages/admin/SetupWizard";
 import CreditsOverlay from "./pages/CreditsOverlay";
 
+// Operator Portal Pages
+import OperatorLayout from "./pages/operator/OperatorLayout";
+import OperatorLogin from "./pages/operator/OperatorLogin";
+import OperatorDashboard from "./pages/operator/OperatorDashboard";
+import OperatorDevices from "./pages/operator/OperatorDevices";
+import OperatorLicenses from "./pages/operator/OperatorLicenses";
+import OperatorCustomers from "./pages/operator/OperatorCustomers";
+import OperatorLocations from "./pages/operator/OperatorLocations";
+import OperatorAudit from "./pages/operator/OperatorAudit";
+
 // Context
 import { AuthProvider } from "./context/AuthContext";
 import { SettingsProvider } from "./context/SettingsContext";
 import { I18nProvider } from "./context/I18nContext";
+import { CentralAuthProvider } from "./context/CentralAuthContext";
 
 function App() {
   return (
     <AuthProvider>
       <SettingsProvider>
         <I18nProvider>
+        <CentralAuthProvider>
         <BrowserRouter>
           <Routes>
             {/* Kiosk Routes */}
@@ -68,12 +80,24 @@ function App() {
               <Route path="reports" element={<AdminReports />} />
               <Route path="licensing" element={<AdminLicensing />} />
             </Route>
+
+            {/* Operator Portal Routes */}
+            <Route path="/operator/login" element={<OperatorLogin />} />
+            <Route path="/operator" element={<OperatorLayout />}>
+              <Route index element={<OperatorDashboard />} />
+              <Route path="devices" element={<OperatorDevices />} />
+              <Route path="licenses" element={<OperatorLicenses />} />
+              <Route path="customers" element={<OperatorCustomers />} />
+              <Route path="locations" element={<OperatorLocations />} />
+              <Route path="audit" element={<OperatorAudit />} />
+            </Route>
             
             {/* Default redirect */}
             <Route path="/" element={<Navigate to="/kiosk" replace />} />
             <Route path="*" element={<Navigate to="/kiosk" replace />} />
           </Routes>
         </BrowserRouter>
+        </CentralAuthProvider>
         </I18nProvider>
         <Toaster 
           position="bottom-center" 
