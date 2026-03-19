@@ -845,6 +845,36 @@ autostart.bat:
   - 12/12 pytest Tests bestanden (iteration_53)
   - Release: darts-kiosk-v3.3.2-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
 
+- v3.3.3: Windows Kiosk Controls (2026-03-19)
+  - NEUES FEATURE: Admin-gesteuerte Windows-Kiosk-Controls
+  - A) Shell Switch:
+    - Umschalten zwischen Explorer-Shell (explorer.exe) und konfigurierter Kiosk-Shell
+    - Registry HKLM\...\Winlogon\Shell wird gezielt gelesen und geschrieben
+    - Aktuellen Shell-Wert auslesen + classify (explorer/kiosk/custom/unknown)
+    - Kiosk-Shell-Pfad konfigurierbar in DB (POST /api/admin/kiosk/settings)
+    - Reboot-Hinweis nach Aenderung (kein automatischer Reboot)
+    - Wenn kein Kiosk-Shell-Pfad konfiguriert: Button deaktiviert
+  - B) Task Manager Toggle:
+    - Deaktivieren/Aktivieren via HKCU Group Policy (DisableTaskMgr)
+    - Sofort wirksam (kein Reboot noetig)
+    - Scope: user (HKCU, kein Admin-Recht noetig)
+    - Status-Check prueft HKCU und HKLM
+  - C) Kiosk Status Dashboard:
+    - Neuer "Kiosk" Tab im System Admin-Panel
+    - Zeigt: OS, Kiosk-Steuerung, Shell-Modus, Task-Manager-Status
+    - Graceful Degradation auf Nicht-Windows (supported=false, reason=windows_only)
+  - D) Audit + Confirmation:
+    - Alle Aktionen schreiben Audit-Logs (shell_switch_to_explorer/kiosk, task_manager_enable/disable)
+    - Frontend Confirmation-Dialoge vor allen kritischen Aktionen
+  - NEUE DATEIEN:
+    - backend/services/windows_kiosk_control_service.py
+    - Neue Routes in backend/routers/admin.py
+    - Kiosk Tab in frontend/src/pages/admin/System.js
+    - i18n Schluessel (DE/EN) in translations.js
+  - NICHT GEAENDERT: Observer, Watchdog, Finalize, Credits, Gotcha-Fix, Auth
+  - 16/16 Tests bestanden (iteration_54, Backend + Frontend)
+  - Release: darts-kiosk-v3.3.3-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)~~ → v3.3.1
