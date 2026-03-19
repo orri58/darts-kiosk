@@ -717,6 +717,24 @@ async def stop_observer_for_board(board_id: str, reason: str = "unknown"):
 @router.post("/kiosk/{board_id}/start-game")
 async def kiosk_start_game(board_id: str, data: StartGameRequest, db: AsyncSession = Depends(get_db)):
     logger.info(f"[StartGame] board={board_id}, game_type={data.game_type}, players={data.players}")
+
+    # v3.4.1: License enforcement — secondary check before game start
+    try:
+        from backend.services.license_service import license_service
+        lic_status = await license_service.get_effective_status(db)
+        if not license_service.is_session_allowed(lic_status):
+            logger.warning(
+                f"[LICENSE] Game start blocked: board={board_id} status={lic_status.get('status')}"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"license_{lic_status.get('status', 'invalid')}",
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[LICENSE] Check failed (allowing game): {e}")
+
     result = await db.execute(select(Board).where(Board.board_id == board_id))
     board = result.scalar_one_or_none()
     if not board:
@@ -902,6 +920,36 @@ class SoundTrigger(BaseModel):
 async def trigger_sound(board_id: str, data: SoundTrigger):
     await board_ws.broadcast("sound_event", {"board_id": board_id, "event": data.event})
     return {"message": f"Sound '{data.event}' triggered", "board_id": board_id}
+
+
+# =====================================================================
+# License status for kiosk frontend (v3.4.1)
+# =====================================================================
+
+@router.get("/kiosk/license-status")
+async def kiosk_license_status(db: AsyncSession = Depends(get_db)):
+    """Public endpoint for the kiosk UI to check license status.
+    Returns the effective license status without requiring auth.
+    The kiosk needs this to show overlay/warnings."""
+    try:
+        from backend.services.license_service import license_service
+        status = await license_service.get_effective_status(db)
+        license_service.save_to_cache(status)
+        return status
+    except Exception as e:
+        logger.error(f"[LICENSE] Kiosk status check failed: {e}")
+        # Try cache
+        try:
+            from backend.services.license_service import license_service as ls
+            cached = ls.load_from_cache()
+            if cached:
+                cached["source"] = "cache"
+                return cached
+        except Exception:
+            pass
+        # Fail-open: return active to avoid blocking on errors
+        return {"status": "active", "source": "fallback_error"}
+
 
 
 # =====================================================================

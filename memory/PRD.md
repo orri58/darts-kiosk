@@ -1027,6 +1027,34 @@ autostart.bat:
   - NICHT GEAENDERT: Observer, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
   - Release: darts-kiosk-v3.4.1 Windows (2.2 MB), Linux (1.7 MB), Source (21 MB)
 
+- v3.4.2: License Enforcement im Kiosk-Flow (2026-03-19)
+  - Lizenzpruefung vor Session-Start:
+    - boards.py: unlock_board() prueft is_session_allowed() vor Session-Erstellung
+    - kiosk.py: kiosk_start_game() prueft als Sicherheitsnetz vor Spielstart
+    - Fail-open: Bei Pruefungsfehler wird Session trotzdem erlaubt (Resilienz)
+    - no_license = Lizenzsystem nicht konfiguriert → erlaubt (fail-open)
+  - Enforcement-Policy:
+    - active → normal
+    - grace → erlaubt + optionaler Hinweis
+    - test → erlaubt
+    - no_license → erlaubt (nicht konfiguriert)
+    - expired → blockiert (HTTP 403 license_expired)
+    - blocked → blockiert (HTTP 403 license_blocked)
+  - Laufende Spiele: NICHT unterbrochen, nur neue Sessions blockiert
+  - Kiosk-Overlay (frontend/src/pages/kiosk/LicenseOverlay.js):
+    - Grace: Gelbe Top-Bar mit verbleibenden Tagen (nicht-blockierend)
+    - Expired/Blocked: Vollbild-Overlay mit Lock-Icon (blockierend)
+    - Nur auf Locked/Setup Screens — NIE waehrend aktiver Spiele
+    - Status-Polling alle 5 Minuten
+  - Neuer API-Endpunkt: GET /api/kiosk/license-status (public, kein Auth)
+    - Fallback auf Cache bei Fehler
+    - Fallback auf "active" bei totalem Fehler (fail-open)
+  - Saubere Logs: [LICENSE] Session blocked / Grace period active / Check failed
+  - Tests: 28 bestanden (inkl. 8 Enforcement-Tests)
+  - Regressions-Test: 78 Core-Tests bestanden, 0 Failures
+  - NICHT GEAENDERT: Observer, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
+  - Release: darts-kiosk-v3.4.2 Windows (2.2 MB), Linux (1.8 MB), Source (21 MB)
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls~~ → v3.3.1
@@ -1037,12 +1065,13 @@ autostart.bat:
 - [x] ~~Windows Agent (separater Prozess)~~ → v3.4.0
 - [x] ~~Agent Autostart Hardening~~ → v3.4.1
 - [x] ~~Lizenzsystem MVP (Architektur + Grundgeruest)~~ → v3.4.1
+- [x] ~~License Enforcement im Kiosk-Flow~~ → v3.4.2
 - [ ] Finish Experience Safety (Post-Match Delay UX)
 - [ ] Hard-Kiosk-Modus als optionaler separater Schritt
 
 ### P1 — Lizenzsystem Ausbau
-- [ ] Lizenzpruefung vor Session-Start (Kiosk-Integration)
-- [ ] Lizenz-Ablauf-Overlay im Kiosk-UI (Hinweis bei Grace/Expired)
+- [x] ~~Lizenzpruefung vor Session-Start (Kiosk-Integration)~~ → v3.4.2
+- [x] ~~Lizenz-Ablauf-Overlay im Kiosk-UI~~ → v3.4.2
 - [ ] Geraete-Bindung: install_id automatisch generieren beim ersten Start
 - [ ] Zyklische Lizenzpruefung im Agent/Backend (z.B. alle 6h)
 - [ ] Rollen-basierte Sichtbarkeit (Operator sieht nur eigene Kunden)

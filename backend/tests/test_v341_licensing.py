@@ -163,10 +163,11 @@ class TestSessionAllowLogic:
         svc = LicenseValidationService()
         assert svc.is_session_allowed({"status": "blocked"}) is False
 
-    def test_no_license_blocks(self):
+    def test_no_license_allows(self):
+        """no_license means system not configured — fail-open."""
         from backend.services.license_service import LicenseValidationService
         svc = LicenseValidationService()
-        assert svc.is_session_allowed({"status": "no_license"}) is False
+        assert svc.is_session_allowed({"status": "no_license"}) is True
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -246,3 +247,51 @@ class TestLicensingModels:
         expected = {"active", "grace", "expired", "blocked", "test"}
         actual = {s.value for s in LicenseStatus}
         assert actual == expected
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# Test 5: License Enforcement Integration
+# ═══════════════════════════════════════════════════════════════
+
+class TestLicenseEnforcement:
+    """Test that the enforcement logic correctly allows/blocks sessions."""
+
+    def test_enforcement_active_allows(self):
+        from backend.services.license_service import LicenseValidationService
+        svc = LicenseValidationService()
+        assert svc.is_session_allowed({"status": "active"}) is True
+
+    def test_enforcement_grace_allows(self):
+        from backend.services.license_service import LicenseValidationService
+        svc = LicenseValidationService()
+        assert svc.is_session_allowed({"status": "grace"}) is True
+
+    def test_enforcement_expired_blocks(self):
+        from backend.services.license_service import LicenseValidationService
+        svc = LicenseValidationService()
+        assert svc.is_session_allowed({"status": "expired"}) is False
+
+    def test_enforcement_blocked_blocks(self):
+        from backend.services.license_service import LicenseValidationService
+        svc = LicenseValidationService()
+        assert svc.is_session_allowed({"status": "blocked"}) is False
+
+    def test_enforcement_no_license_failopen(self):
+        """When no license system is configured, sessions are allowed (fail-open)."""
+        from backend.services.license_service import LicenseValidationService
+        svc = LicenseValidationService()
+        assert svc.is_session_allowed({"status": "no_license"}) is True
+
+    def test_enforcement_test_allows(self):
+        from backend.services.license_service import LicenseValidationService
+        svc = LicenseValidationService()
+        assert svc.is_session_allowed({"status": "test"}) is True
+
+    def test_enforcement_unknown_status_blocks(self):
+        """Unknown status should be treated as not allowed (defensive)."""
+        from backend.services.license_service import LicenseValidationService
+        svc = LicenseValidationService()
+        assert svc.is_session_allowed({"status": "unknown"}) is False
+        assert svc.is_session_allowed({"status": ""}) is False
+        assert svc.is_session_allowed({}) is False

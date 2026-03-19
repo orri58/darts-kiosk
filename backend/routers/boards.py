@@ -1,5 +1,6 @@
 """Board CRUD & Session Control Routes"""
 import asyncio
+import logging
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -21,6 +22,8 @@ from backend.dependencies import (
 from backend.services.ws_manager import board_ws
 from backend.routers.kiosk import start_observer_for_board, stop_observer_for_board
 from backend.services.autodarts_observer import observer_manager
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -143,6 +146,30 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
     existing = await get_active_session_for_board(db, board.id)
     if existing:
         raise HTTPException(status_code=400, detail="Board already has an active session")
+
+    # v3.4.1: License enforcement — check before creating session
+    try:
+        from backend.services.license_service import license_service
+        lic_status = await license_service.get_effective_status(db)
+        if not license_service.is_session_allowed(lic_status):
+            logger.warning(
+                f"[LICENSE] Session blocked: board={board_id} status={lic_status.get('status')} "
+                f"customer={lic_status.get('customer_name')}"
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"license_{lic_status.get('status', 'invalid')}",
+            )
+        if lic_status.get("status") == "grace":
+            logger.info(
+                f"[LICENSE] Grace period active: board={board_id} "
+                f"grace_days_remaining={lic_status.get('grace_days_remaining')}"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # License check failure must NOT block operation (fail-open for resilience)
+        logger.error(f"[LICENSE] Check failed (allowing session): {e}")
 
     expires_at = None
     if data.pricing_mode == PricingMode.PER_TIME.value and data.minutes:

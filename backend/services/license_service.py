@@ -243,8 +243,14 @@ class LicenseValidationService:
             return None
 
     def is_session_allowed(self, status: dict) -> bool:
-        """Check if a new game session should be allowed based on license status."""
-        allowed = {"active", "grace", "test"}
+        """Check if a new game session should be allowed based on license status.
+
+        Policy: fail-open when no license system is configured.
+        - active, grace, test: allowed
+        - no_license: allowed (system not configured yet)
+        - expired, blocked: BLOCKED
+        """
+        allowed = {"active", "grace", "test", "no_license"}
         return status.get("status") in allowed
 
 
