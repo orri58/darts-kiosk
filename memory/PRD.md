@@ -820,6 +820,31 @@ autostart.bat:
   - 10/10 pytest Tests bestanden (iteration_52)
   - Release: darts-kiosk-v3.3.1-hotfix2-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
 
+- v3.3.2: Gotcha Variant-Aware Match-End Detection (2026-03-19)
+  - ROOT CAUSE: game_shot+body.type=match (match_end_gameshot_match) und matchshot Signale
+    werden bei Gotcha durch Spieler-Score-Resets (Gegner auf 0 setzen) ausgeloest,
+    obwohl das Match noch laeuft. Observer und Finalize behandelten diese als echtes Match-Ende.
+  - DREI SCHUTZMECHANISMEN IMPLEMENTIERT:
+    1. Observer-Guard (autodarts_observer.py): _is_gotcha() prueft Variante.
+       Fuer Gotcha werden game_shot/matchshot Signale als MATCH_FINISH_REJECTED verworfen.
+       Nur confirmed State-Frames (finished=true, gameFinished=true) loesen Finalize aus.
+    2. Kiosk-Guard (kiosk.py): Defense-in-depth in _finalize_match_inner().
+       Falls ein game_shot/matchshot Trigger fuer eine Gotcha-Session die Finalize-Funktion
+       erreicht, wird er mit finalize_blocked abgewiesen. Kein Credit-Abzug, kein Lock.
+    3. Variant-Tracking: WSEventState.variant wird (a) aus WS-Payload extrahiert und
+       (b) von _on_game_started aus der Session-DB gelesen und an den Observer uebergeben.
+  - NEUE LOG-MARKER:
+    - VARIANT_SET / VARIANT_DETECTED (variant aus Session oder WS-Payload)
+    - MATCH_FINISH_CANDIDATE variant=Gotcha trigger=... confirmed=False
+    - MATCH_FINISH_REJECTED variant=Gotcha reason=game_shot_without_confirmed_finished_state
+    - MATCH_FINISH_ACCEPTED variant=Gotcha trigger=match_end_state_finished confirmed=True
+    - finalize_blocked board=... variant=Gotcha reason=unconfirmed_finish
+    - finalize committed board=... variant=Gotcha/501/standard
+  - Standardvarianten (301/501/Cricket) bleiben UNVERAENDERT.
+  - simulate-game-end Endpoint akzeptiert jetzt optionalen ?trigger= Query-Parameter fuer Tests.
+  - 12/12 pytest Tests bestanden (iteration_53)
+  - Release: darts-kiosk-v3.3.2-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)~~ → v3.3.1
