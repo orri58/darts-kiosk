@@ -650,3 +650,210 @@ async def update_kiosk_settings(
     await log_audit(db, admin, "update_kiosk_settings", "settings", "kiosk_controls",
                     details={"kiosk_shell_path": new_config.get("kiosk_shell_path", "")})
     return {"success": True, "settings": new_config}
+
+
+# ===================================================================
+# Windows Agent Proxy Endpoints (v3.4.0)
+# ===================================================================
+# These endpoints proxy commands to the local Windows Agent process.
+# On agent timeout/failure (3s), they fall back to existing direct services.
+
+@router.get("/admin/agent/status")
+async def get_agent_status(admin: User = Depends(require_admin)):
+    """Get Windows Agent status. Falls back to basic info if agent is offline."""
+    from backend.services.agent_client import agent_client
+
+    status = await agent_client.get_status()
+    if status is not None:
+        status["source"] = "agent"
+        return status
+
+    # Fallback: agent offline — return minimal status from existing services
+    import asyncio
+    ad_status = await asyncio.to_thread(autodarts_desktop.get_status)
+    return {
+        "agent_online": False,
+        "source": "fallback",
+        "autodarts": {
+            "running": ad_status.get("running", False),
+            "pid": ad_status.get("pid"),
+        },
+    }
+
+
+@router.post("/admin/agent/autodarts/ensure")
+async def agent_ensure_autodarts(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Ensure Autodarts Desktop is running. Tries agent first, falls back to direct service."""
+    from backend.services.agent_client import agent_client
+    from backend.models import DEFAULT_AUTODARTS_DESKTOP
+
+    config = await get_or_create_setting(db, "autodarts_desktop", DEFAULT_AUTODARTS_DESKTOP)
+    exe_path = config.get("exe_path", "")
+
+    result = await agent_client.ensure_autodarts(exe_path)
+    if result is not None:
+        result["via"] = "agent"
+        await log_audit(db, admin, "agent_ensure_autodarts", "system", "autodarts_desktop", details=result)
+        return result
+
+    # Fallback
+    import asyncio
+    result = await asyncio.to_thread(autodarts_desktop.ensure_running, exe_path, "admin_ensure_fallback")
+    result["via"] = "fallback"
+    await log_audit(db, admin, "ensure_autodarts_fallback", "system", "autodarts_desktop", details=result)
+    return result
+
+
+@router.post("/admin/agent/autodarts/restart")
+async def agent_restart_autodarts(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Restart Autodarts Desktop. Tries agent first, falls back to direct service."""
+    from backend.services.agent_client import agent_client
+    from backend.models import DEFAULT_AUTODARTS_DESKTOP
+
+    config = await get_or_create_setting(db, "autodarts_desktop", DEFAULT_AUTODARTS_DESKTOP)
+    exe_path = config.get("exe_path", "")
+
+    result = await agent_client.restart_autodarts(exe_path)
+    if result is not None:
+        result["via"] = "agent"
+        await log_audit(db, admin, "agent_restart_autodarts", "system", "autodarts_desktop", details=result)
+        return result
+
+    # Fallback
+    import asyncio
+    result = await asyncio.to_thread(autodarts_desktop.restart_process, exe_path)
+    result["via"] = "fallback"
+    await log_audit(db, admin, "restart_autodarts_fallback", "system", "autodarts_desktop", details=result)
+    return result
+
+
+@router.post("/admin/agent/system/restart-backend")
+async def agent_restart_backend(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Restart backend via agent. Falls back to direct restart."""
+    from backend.services.agent_client import agent_client
+    from backend.services.system_control_service import system_control
+
+    result = await agent_client.restart_backend()
+    if result is not None:
+        result["via"] = "agent"
+        await log_audit(db, admin, "agent_restart_backend", "system", "backend", details=result)
+        return result
+
+    # Fallback
+    result = await system_control.restart_backend()
+    result["via"] = "fallback"
+    await log_audit(db, admin, "restart_backend_fallback", "system", "backend", details=result)
+    return result
+
+
+@router.post("/admin/agent/system/reboot")
+async def agent_reboot_os(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Reboot OS via agent. Falls back to direct command."""
+    from backend.services.agent_client import agent_client
+    from backend.services.system_control_service import system_control
+
+    result = await agent_client.reboot_os()
+    if result is not None:
+        result["via"] = "agent"
+        await log_audit(db, admin, "agent_reboot_os", "system", "os", details=result)
+        return result
+
+    # Fallback
+    result = await system_control.reboot_os()
+    result["via"] = "fallback"
+    await log_audit(db, admin, "reboot_os_fallback", "system", "os", details=result)
+    return result
+
+
+@router.post("/admin/agent/system/shutdown")
+async def agent_shutdown_os(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Shutdown OS via agent. Falls back to direct command."""
+    from backend.services.agent_client import agent_client
+    from backend.services.system_control_service import system_control
+
+    result = await agent_client.shutdown_os()
+    if result is not None:
+        result["via"] = "agent"
+        await log_audit(db, admin, "agent_shutdown_os", "system", "os", details=result)
+        return result
+
+    # Fallback
+    result = await system_control.shutdown_os()
+    result["via"] = "fallback"
+    await log_audit(db, admin, "shutdown_os_fallback", "system", "os", details=result)
+    return result
+
+
+@router.post("/admin/agent/kiosk/shell/switch")
+async def agent_switch_shell(
+    data: dict,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Switch shell via agent. Falls back to direct service."""
+    from backend.services.agent_client import agent_client
+
+    target = data.get("target", "explorer")
+
+    result = await agent_client.switch_shell(target)
+    if result is not None:
+        result["via"] = "agent"
+        await log_audit(db, admin, "agent_shell_switch", "system", "kiosk_shell",
+                        details={"target": target, **result})
+        return result
+
+    # Fallback to existing direct service
+    import asyncio
+    if target == "explorer":
+        result = await asyncio.to_thread(windows_kiosk_control.switch_to_explorer)
+    else:
+        result = await asyncio.to_thread(windows_kiosk_control.switch_to_kiosk, target)
+    result["via"] = "fallback"
+    await log_audit(db, admin, "shell_switch_fallback", "system", "kiosk_shell",
+                    details={"target": target, **result})
+    return result
+
+
+@router.post("/admin/agent/kiosk/taskmanager/set")
+async def agent_set_task_manager(
+    data: dict,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Set task manager state via agent. Falls back to direct service."""
+    from backend.services.agent_client import agent_client
+
+    enabled = data.get("enabled", True)
+
+    result = await agent_client.set_task_manager(enabled)
+    if result is not None:
+        result["via"] = "agent"
+        await log_audit(db, admin, "agent_taskmanager_set", "system", "kiosk_taskmgr",
+                        details={"enabled": enabled, **result})
+        return result
+
+    # Fallback
+    import asyncio
+    if enabled:
+        result = await asyncio.to_thread(windows_kiosk_control.enable_task_manager)
+    else:
+        result = await asyncio.to_thread(windows_kiosk_control.disable_task_manager)
+    result["via"] = "fallback"
+    await log_audit(db, admin, "taskmanager_set_fallback", "system", "kiosk_taskmgr",
+                    details={"enabled": enabled, **result})
+    return result

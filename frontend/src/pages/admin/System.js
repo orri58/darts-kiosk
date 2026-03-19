@@ -39,6 +39,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
+import AgentTab from '../../components/admin/AgentTab';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -124,6 +125,10 @@ export default function AdminSystem() {
   const [savingKioskSettings, setSavingKioskSettings] = useState(false);
   const [switchingShell, setSwitchingShell] = useState(false);
   const [togglingTaskMgr, setTogglingTaskMgr] = useState(false);
+  // v3.4.0: Windows Agent
+  const [agentStatus, setAgentStatus] = useState(null);
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [agentAction, setAgentAction] = useState(null);
   const headers = { Authorization: `Bearer ${token}` };
 
   const fetchAll = useCallback(async () => {
@@ -156,6 +161,11 @@ export default function AdminSystem() {
       if (kioskRes.data?.shell?.kiosk_shell_configured) {
         setKioskShellPath(kioskRes.data.shell.kiosk_shell_configured);
       }
+    } catch { /* ignore — older builds */ }
+    // v3.4.0: Fetch Windows Agent status
+    try {
+      const agentRes = await axios.get(`${API}/admin/agent/status`, { headers });
+      setAgentStatus(agentRes.data);
     } catch { /* ignore — older builds */ }
   }, [token]);
 
@@ -698,6 +708,9 @@ export default function AdminSystem() {
           </TabsTrigger>
           <TabsTrigger value="kiosk" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-kiosk">
             <Shield className="w-4 h-4 mr-2" /> Kiosk
+          </TabsTrigger>
+          <TabsTrigger value="agent" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-agent">
+            <Cpu className="w-4 h-4 mr-2" /> {t('agent_tab')}
           </TabsTrigger>
         </TabsList>
 
@@ -1750,6 +1763,19 @@ export default function AdminSystem() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        {/* ===== Windows Agent Tab (v3.4.0) ===== */}
+        <TabsContent value="agent">
+          <AgentTab
+            agentStatus={agentStatus}
+            setAgentStatus={setAgentStatus}
+            agentAction={agentAction}
+            setAgentAction={setAgentAction}
+            headers={headers}
+            t={t}
+            fetchAll={fetchAll}
+          />
         </TabsContent>
       </Tabs>
     </div>

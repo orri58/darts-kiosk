@@ -1,0 +1,4 @@
+# Darts Kiosk Windows Agent — Dependencies
+# No extra dependencies beyond Python stdlib required.
+# The agent uses only stdlib modules:
+#   http.server, json, subprocess, logging, threading, argparse, pathlib

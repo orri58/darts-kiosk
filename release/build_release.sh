@@ -123,6 +123,13 @@ cp "${SCRIPT_DIR}/windows/MANUAL_DEPLOYMENT.md" "${WIN_DIR}/" 2>/dev/null || tru
 
 # Copy kiosk deployment files (EXPERIMENTAL — not recommended for production)
 mkdir -p "${WIN_DIR}/kiosk_experimental"
+
+# v3.4.0: Copy Windows Agent
+mkdir -p "${WIN_DIR}/agent"
+cp "${APP_DIR}/agent/darts_agent.py" "${WIN_DIR}/agent/"
+cp "${APP_DIR}/agent/start_agent.bat" "${WIN_DIR}/agent/"
+cp "${APP_DIR}/agent/requirements.txt" "${WIN_DIR}/agent/"
+log "Windows Agent kopiert"
 if [[ -d "${APP_DIR}/kiosk" ]]; then
     cp "${APP_DIR}/kiosk/"*.bat "${WIN_DIR}/kiosk_experimental/" 2>/dev/null || true
     cp "${APP_DIR}/kiosk/"*.vbs "${WIN_DIR}/kiosk_experimental/" 2>/dev/null || true
@@ -163,6 +170,7 @@ SYNC_DATABASE_URL=sqlite:///./data/db/darts.sqlite
 DATA_DIR=./data
 JWT_SECRET=darts-local-dev-secret-change-in-production
 AGENT_SECRET=agent-local-dev-secret
+AGENT_PORT=8002
 CORS_ORIGINS=*
 MODE=STANDALONE
 BOARD_ID=BOARD-1
@@ -218,6 +226,11 @@ cp "${APP_DIR}/updater.py" "${LINUX_DIR}/"
 # Copy docker files
 cp "${APP_DIR}/docker-compose.yml" "${LINUX_DIR}/" 2>/dev/null || true
 cp "${APP_DIR}/Dockerfile" "${LINUX_DIR}/" 2>/dev/null || true
+
+# v3.4.0: Copy agent (Linux version)
+mkdir -p "${LINUX_DIR}/agent"
+cp "${APP_DIR}/agent/darts_agent.py" "${LINUX_DIR}/agent/"
+cp "${APP_DIR}/agent/requirements.txt" "${LINUX_DIR}/agent/"
 
 # Create offline-ready serve script (no node needed)
 cat > "${LINUX_DIR}/serve-frontend.py" << 'PYEOF'

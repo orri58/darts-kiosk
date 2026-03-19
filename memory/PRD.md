@@ -924,6 +924,47 @@ autostart.bat:
   - NICHT GEAENDERT: Observer core flow, Finalize, Credits, Watchdog, Auth, Frontend
   - Release: darts-kiosk-v3.3.5-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
 
+- v3.4.0: Windows Agent — Separater lokaler Prozess (2026-03-19)
+  - NEUER PROZESS: agent/darts_agent.py — eigenstaendiger HTTP-Server (127.0.0.1, konfigurierbarer Port)
+  - Architektur: Admin Panel → FastAPI Backend → Agent (localhost) → OS-Aktionen
+  - Bei Agent-Ausfall: automatischer Fallback auf bestehende direkte Services (3s Timeout)
+  - NEUE DATEIEN:
+    - agent/darts_agent.py: Hauptprozess mit HTTP-Server, Auth, Logging
+    - agent/start_agent.bat: Windows-Startskript
+    - agent/requirements.txt: Nur stdlib (keine externen Deps)
+    - backend/services/agent_client.py: Async HTTP-Client mit 3s Timeout
+    - frontend/src/components/admin/AgentTab.js: Neuer Admin-Panel-Tab
+  - ERWEITERTE DATEIEN:
+    - backend/routers/admin.py: 8 neue Agent-Proxy-Endpoints (alle mit Audit-Log)
+    - frontend/src/pages/admin/System.js: Neuer "Agent" Tab
+    - frontend/src/i18n/translations.js: ~50 neue DE/EN Keys
+    - release/build_release.sh: Agent in Windows+Linux Bundles
+  - Agent-Features:
+    - Status/Heartbeat: Version, Uptime, OS, Autodarts-Status, Kiosk-Fenster, Shell, TaskMgr
+    - Autodarts Desktop: ensure_running (mit Cooldown), restart (mit Fokus-Steal-Prevention)
+    - System: restart-backend (Agent ueberlebt!), reboot_os, shutdown_os
+    - Kiosk: Shell-Switch (Explorer/Kiosk), Task-Manager Enable/Disable
+    - Kiosk-Fenster: Windows-Erkennung via PowerShell + Win32 API
+    - Sicherheit: Shared Secret Auth, localhost-only, Timeouts, Cooldowns
+  - Admin Panel "Agent" Tab:
+    - Agent Online/Offline Status mit "via Agent/Fallback" Badge
+    - Version, Platform, Uptime, Heartbeat
+    - Autodarts Desktop: Status + Ensure/Restart Buttons
+    - Kiosk-Fenster: Erkannt/Nicht erkannt
+    - System: Backend restart, Windows reboot, Windows shutdown (alle mit Confirm Dialog)
+    - Kiosk: Shell-Switch + TaskManager (nur wenn Agent online)
+  - Tests: 17 neue Tests (test_v340_windows_agent.py)
+    - TestAgentStatus (2): Status-Struktur, No-Auth
+    - TestAgentAuth (2): 401 ohne/mit falschem Secret
+    - TestGracefulDegradation (4): Alle Services auf Non-Windows
+    - TestCooldownGuards (2): Autodarts + Backend Cooldown
+    - TestAgentClient (3): Offline=None, Configured, NotConfigured
+    - TestExePathValidation (2): Leerer/ungültiger Pfad
+    - TestAgentVersion (2): Version-Konstante
+  - Regressions-Test: 128 Tests bestanden (alle v3.2.x-v3.4.0 Suites), 0 Failures
+  - NICHT GEAENDERT: Observer core flow, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
+  - Release: darts-kiosk-v3.4.0-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)~~ → v3.3.1
@@ -931,6 +972,7 @@ autostart.bat:
 - [x] ~~Windows Kiosk Controls (Shell Switch, Task Manager Toggle)~~ → v3.3.3
 - [x] ~~Autodarts DOM Selector Tests~~ → v3.3.4
 - [x] ~~Selector Fallback + Robustness Layer~~ → v3.3.5
+- [x] ~~Windows Agent (separater Prozess)~~ → v3.4.0
 - [ ] Finish Experience Safety (Post-Match Delay UX Verbesserung)
 - [ ] Hard-Kiosk-Modus als optionaler separater Schritt (nach stabiler Runtime)
 
