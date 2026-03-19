@@ -23,6 +23,7 @@ from backend.services.setup_wizard import (
 )
 from backend.services.system_service import system_service
 from backend.services.autodarts_desktop_service import autodarts_desktop
+from backend.services.windows_kiosk_control_service import windows_kiosk_control
 
 router = APIRouter()
 
@@ -552,3 +553,100 @@ async def shutdown_os(admin: User = Depends(require_admin), db: AsyncSession = D
     if not result.get("accepted") and "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+# ===================================================================
+# Windows Kiosk Controls (v3.3.3)
+# ===================================================================
+
+DEFAULT_KIOSK_CONTROLS = {"kiosk_shell_path": ""}
+
+
+@router.get("/admin/kiosk/status")
+async def get_kiosk_status(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Get Windows kiosk control status: shell mode, task manager, availability."""
+    config = await get_or_create_setting(db, "kiosk_controls", DEFAULT_KIOSK_CONTROLS)
+    kiosk_shell = config.get("kiosk_shell_path", "")
+    return windows_kiosk_control.get_full_status(kiosk_shell)
+
+
+@router.post("/admin/kiosk/shell/explorer")
+async def switch_shell_to_explorer(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Switch Windows shell to Explorer. Requires reboot to take effect."""
+    import asyncio
+    result = await asyncio.to_thread(windows_kiosk_control.switch_to_explorer)
+    await log_audit(db, admin, "shell_switch_to_explorer", "system", "kiosk_shell", details=result)
+    if not result.get("supported", True):
+        return result
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Shell-Switch fehlgeschlagen"))
+    return result
+
+
+@router.post("/admin/kiosk/shell/kiosk")
+async def switch_shell_to_kiosk(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Switch Windows shell to Kiosk shell. Requires reboot to take effect."""
+    import asyncio
+    config = await get_or_create_setting(db, "kiosk_controls", DEFAULT_KIOSK_CONTROLS)
+    kiosk_shell = config.get("kiosk_shell_path", "")
+    result = await asyncio.to_thread(windows_kiosk_control.switch_to_kiosk, kiosk_shell)
+    await log_audit(db, admin, "shell_switch_to_kiosk", "system", "kiosk_shell", details=result)
+    if not result.get("supported", True):
+        return result
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Shell-Switch fehlgeschlagen"))
+    return result
+
+
+@router.post("/admin/kiosk/taskmanager/enable")
+async def enable_task_manager(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Enable Windows Task Manager."""
+    import asyncio
+    result = await asyncio.to_thread(windows_kiosk_control.enable_task_manager)
+    await log_audit(db, admin, "task_manager_enable", "system", "kiosk_taskmgr", details=result)
+    if not result.get("supported", True):
+        return result
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Task-Manager Toggle fehlgeschlagen"))
+    return result
+
+
+@router.post("/admin/kiosk/taskmanager/disable")
+async def disable_task_manager(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Disable Windows Task Manager."""
+    import asyncio
+    result = await asyncio.to_thread(windows_kiosk_control.disable_task_manager)
+    await log_audit(db, admin, "task_manager_disable", "system", "kiosk_taskmgr", details=result)
+    if not result.get("supported", True):
+        return result
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error", "Task-Manager Toggle fehlgeschlagen"))
+    return result
+
+
+@router.post("/admin/kiosk/settings")
+async def update_kiosk_settings(
+    data: dict,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    """Update kiosk control settings (kiosk_shell_path)."""
+    from backend.models import Settings
+    from sqlalchemy.orm.attributes import flag_modified
+
+    config = await get_or_create_setting(db, "kiosk_controls", DEFAULT_KIOSK_CONTROLS)
+    new_config = dict(config)
+
+    if "kiosk_shell_path" in data:
+        new_config["kiosk_shell_path"] = str(data["kiosk_shell_path"]).strip()
+
+    result = await db.execute(select(Settings).where(Settings.key == "kiosk_controls"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = new_config
+        flag_modified(setting, "value")
+        await db.flush()
+
+    await log_audit(db, admin, "update_kiosk_settings", "settings", "kiosk_controls",
+                    details={"kiosk_shell_path": new_config.get("kiosk_shell_path", "")})
+    return {"success": True, "settings": new_config}
