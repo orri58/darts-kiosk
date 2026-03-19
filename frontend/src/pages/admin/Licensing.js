@@ -6,7 +6,7 @@ import {
   Plus, RefreshCw, Ban, CheckCircle, Clock, ArrowUpRight,
   Users, AlertTriangle, Shield, Link2, Unlink, Fingerprint,
   ScrollText, Filter, Activity, Wifi, WifiOff, Server, Settings2, Save,
-  Ticket, Copy, XCircle, Eye, QrCode, ChevronRight, Package
+  Ticket, Copy, XCircle, Eye, QrCode, ChevronRight, Package, Sparkles
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '../../components/ui/button';
@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
+import OnboardingWizard from './OnboardingWizard';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const CENTRAL_API = `${process.env.REACT_APP_BACKEND_URL}/api/central`;
@@ -444,6 +445,7 @@ export default function Licensing() {
   const [newRawToken, setNewRawToken] = useState(null);
   const [regStatus, setRegStatus] = useState(null);
   const [tokenFilter, setTokenFilter] = useState('all');
+  const [activeTab, setActiveTab] = useState('onboarding');
 
   const fetchAll = useCallback(async () => {
     try {
@@ -611,8 +613,11 @@ export default function Licensing() {
         </div>
       )}
 
-      <Tabs defaultValue="customers" className="w-full">
-        <TabsList className="bg-zinc-800 border border-zinc-700" data-testid="lic-tabs">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+        <TabsList className="bg-zinc-800 border border-zinc-700 flex-wrap" data-testid="lic-tabs">
+          <TabsTrigger value="onboarding" className="data-[state=active]:bg-emerald-500 data-[state=active]:text-black" data-testid="lic-tab-onboarding">
+            <Sparkles className="w-4 h-4 mr-1" /> Neuer Kunde
+          </TabsTrigger>
           <TabsTrigger value="customers" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="lic-tab-customers">
             <Building2 className="w-4 h-4 mr-1" /> {t('lic_customers')}
           </TabsTrigger>
@@ -635,6 +640,16 @@ export default function Licensing() {
             <Ticket className="w-4 h-4 mr-1" /> Registrierung
           </TabsTrigger>
         </TabsList>
+
+        {/* Onboarding Wizard */}
+        <TabsContent value="onboarding">
+          <OnboardingWizard
+            headers={headers}
+            existingCustomers={customers}
+            existingLocations={locations}
+            onFinished={() => { fetchAll(); setActiveTab('customers'); }}
+          />
+        </TabsContent>
 
         {/* Customers */}
         <TabsContent value="customers">
