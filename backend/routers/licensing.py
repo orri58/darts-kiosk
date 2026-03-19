@@ -539,3 +539,110 @@ async def trigger_license_check(admin: User = Depends(require_admin)):
     import asyncio
     asyncio.create_task(cyclic_license_checker._run_check())
     return {"triggered": True, "message": "License check triggered"}
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# SYNC CONFIGURATION (v3.5.0)
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/sync-config")
+async def get_sync_config(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Return the remote sync configuration."""
+    from backend.models import Settings
+    stmt = select(Settings).where(Settings.key == "license_sync_config")
+    result = await db.execute(stmt)
+    s = result.scalar_one_or_none()
+    config = s.value if s and s.value else {}
+    # Never return the full API key — mask it
+    masked_config = {**config}
+    if masked_config.get("api_key"):
+        key = masked_config["api_key"]
+        masked_config["api_key_masked"] = f"{key[:8]}...{key[-4:]}" if len(key) > 12 else "****"
+        del masked_config["api_key"]
+    return {
+        "enabled": config.get("enabled", False),
+        "server_url": config.get("server_url", ""),
+        "api_key_masked": masked_config.get("api_key_masked", ""),
+        "api_key_set": bool(config.get("api_key")),
+        "interval_hours": config.get("interval_hours", 6),
+        "device_name": config.get("device_name", ""),
+    }
+
+
+@router.post("/sync-config")
+async def update_sync_config(
+    data: dict,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the remote sync configuration.
+    Body: {
+        "enabled": true/false,
+        "server_url": "https://central.example.com",
+        "api_key": "dk_...",        (optional — only update if provided)
+        "interval_hours": 6,        (1-24)
+        "device_name": "Kiosk 1"
+    }
+    """
+    from backend.models import Settings
+
+    # Load existing config
+    stmt = select(Settings).where(Settings.key == "license_sync_config")
+    result = await db.execute(stmt)
+    s = result.scalar_one_or_none()
+    existing = s.value if s and s.value and isinstance(s.value, dict) else {}
+
+    # Merge new values
+    if "enabled" in data:
+        existing["enabled"] = bool(data["enabled"])
+    if "server_url" in data:
+        existing["server_url"] = data["server_url"].rstrip("/") if data["server_url"] else ""
+    if "api_key" in data and data["api_key"]:
+        existing["api_key"] = data["api_key"]
+    if "interval_hours" in data:
+        existing["interval_hours"] = max(1, min(24, int(data["interval_hours"])))
+    if "device_name" in data:
+        existing["device_name"] = data["device_name"]
+
+    if s:
+        s.value = existing
+    else:
+        db.add(Settings(key="license_sync_config", value=existing))
+    await db.flush()
+
+    logger.info(f"[SYNC] Config updated by {admin.username}: enabled={existing.get('enabled')} url={existing.get('server_url')}")
+
+    await audit_log_service.log(
+        db, "SYNC_CONFIG_UPDATED",
+        actor=admin.username,
+        new_value={"enabled": existing.get("enabled"), "server_url": existing.get("server_url"), "interval_hours": existing.get("interval_hours")},
+        message=f"Sync config updated by {admin.username}",
+    )
+
+    return {"ok": True, "config": {
+        "enabled": existing.get("enabled", False),
+        "server_url": existing.get("server_url", ""),
+        "interval_hours": existing.get("interval_hours", 6),
+        "device_name": existing.get("device_name", ""),
+    }}
+
+
+@router.get("/sync-status")
+async def get_sync_status(admin: User = Depends(require_admin)):
+    """Return the current sync client status (connected/offline, last sync, etc.)."""
+    from backend.services.license_sync_client import license_sync_client
+    from backend.services.cyclic_license_checker import cyclic_license_checker
+    return {
+        "sync": license_sync_client.get_status(),
+        "checker": cyclic_license_checker.get_status(),
+    }
+
+
+@router.post("/sync-now")
+async def trigger_sync_now(admin: User = Depends(require_admin)):
+    """Manually trigger a sync cycle (remote + local fallback)."""
+    from backend.services.cyclic_license_checker import cyclic_license_checker
+    import asyncio
+    asyncio.create_task(cyclic_license_checker._run_check())
+    return {"triggered": True, "message": "Hybrid sync triggered"}

@@ -5,7 +5,7 @@ import {
   KeyRound, Building2, MapPin, Monitor, FileKey,
   Plus, RefreshCw, Ban, CheckCircle, Clock, ArrowUpRight,
   Users, AlertTriangle, Shield, Link2, Unlink, Fingerprint,
-  ScrollText, Filter, Activity
+  ScrollText, Filter, Activity, Wifi, WifiOff, Server, Settings2, Save
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -124,6 +124,9 @@ const AUDIT_COLORS = {
   DEVICE_REBOUND: 'text-cyan-400 bg-cyan-500/10',
   LICENSE_CHECK_SUCCESS: 'text-emerald-400 bg-emerald-500/10',
   LICENSE_CHECK_FAILED: 'text-red-400 bg-red-500/10',
+  REMOTE_SYNC_OK: 'text-emerald-400 bg-emerald-500/10',
+  REMOTE_SYNC_FAILED: 'text-amber-400 bg-amber-500/10',
+  SYNC_CONFIG_UPDATED: 'text-blue-400 bg-blue-500/10',
 };
 
 function AuditBadge({ action }) {
@@ -150,10 +153,13 @@ export default function Licensing() {
   const [auditLog, setAuditLog] = useState({ entries: [], total: 0 });
   const [auditFilter, setAuditFilter] = useState({ action: '', limit: 30 });
   const [checkStatus, setCheckStatus] = useState(null);
+  const [syncConfig, setSyncConfig] = useState({ enabled: false, server_url: '', api_key_masked: '', api_key_set: false, interval_hours: 6, device_name: '' });
+  const [syncForm, setSyncForm] = useState({ server_url: '', api_key: '', interval_hours: 6, device_name: '', enabled: false });
+  const [syncStatus, setSyncStatus] = useState(null);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [dash, cust, loc, dev, lic, identity, checkSt] = await Promise.all([
+      const [dash, cust, loc, dev, lic, identity, checkSt, syncCfg, syncSt] = await Promise.all([
         axios.get(`${API}/licensing/dashboard`, { headers }),
         axios.get(`${API}/licensing/customers`, { headers }),
         axios.get(`${API}/licensing/locations`, { headers }),
@@ -161,6 +167,8 @@ export default function Licensing() {
         axios.get(`${API}/licensing/licenses`, { headers }),
         axios.get(`${API}/licensing/device-identity`, { headers }).catch(() => ({ data: null })),
         axios.get(`${API}/licensing/check-status`, { headers }).catch(() => ({ data: null })),
+        axios.get(`${API}/licensing/sync-config`, { headers }).catch(() => ({ data: {} })),
+        axios.get(`${API}/licensing/sync-status`, { headers }).catch(() => ({ data: null })),
       ]);
       setDashboard(dash.data);
       setCustomers(cust.data);
@@ -169,6 +177,17 @@ export default function Licensing() {
       setLicenses(lic.data);
       setDeviceIdentity(identity.data);
       setCheckStatus(checkSt.data);
+      if (syncCfg.data) {
+        setSyncConfig(syncCfg.data);
+        setSyncForm({
+          server_url: syncCfg.data.server_url || '',
+          api_key: '',
+          interval_hours: syncCfg.data.interval_hours || 6,
+          device_name: syncCfg.data.device_name || '',
+          enabled: syncCfg.data.enabled || false,
+        });
+      }
+      setSyncStatus(syncSt.data);
     } catch (err) {
       toast.error('Lizenzdaten konnten nicht geladen werden');
     }
@@ -232,6 +251,28 @@ export default function Licensing() {
     }
   };
 
+  const saveSyncConfig = async () => {
+    try {
+      const body = { ...syncForm };
+      if (!body.api_key) delete body.api_key; // don't overwrite if empty
+      await axios.post(`${API}/licensing/sync-config`, body, { headers });
+      toast.success(t('lic_sync_config_saved') || 'Sync-Konfiguration gespeichert');
+      fetchAll();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Fehler');
+    }
+  };
+
+  const triggerSyncNow = async () => {
+    try {
+      await axios.post(`${API}/licensing/sync-now`, {}, { headers });
+      toast.success(t('lic_sync_triggered') || 'Sync gestartet');
+      setTimeout(() => { fetchAll(); fetchAuditLog(); }, 3000);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Fehler');
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="licensing-page">
       <div className="flex items-center justify-between">
@@ -271,6 +312,9 @@ export default function Licensing() {
           </TabsTrigger>
           <TabsTrigger value="audit" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="lic-tab-audit" onClick={() => fetchAuditLog()}>
             <ScrollText className="w-4 h-4 mr-1" /> {t('lic_audit_log')}
+          </TabsTrigger>
+          <TabsTrigger value="sync" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="lic-tab-sync">
+            <Server className="w-4 h-4 mr-1" /> {t('lic_sync') || 'Sync'}
           </TabsTrigger>
         </TabsList>
 
@@ -553,6 +597,7 @@ export default function Licensing() {
                     {t('lic_last_check')}: {checkStatus.last_check_at ? new Date(checkStatus.last_check_at).toLocaleString('de-DE') : '—'}
                     {checkStatus.last_check_ok === false && <span className="text-red-400 ml-1">({t('lic_check_failed')})</span>}
                     {checkStatus.last_check_ok === true && <span className="text-emerald-400 ml-1">OK</span>}
+                    {checkStatus.last_check_source && <span className="text-zinc-500 ml-1">({checkStatus.last_check_source})</span>}
                   </span>
                 )}
                 <Button size="sm" onClick={triggerCheck} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="lic-trigger-check-btn">
@@ -573,7 +618,8 @@ export default function Licensing() {
                   <option value="">{t('lic_all_events')}</option>
                   {['LICENSE_CREATED','LICENSE_ACTIVATED','LICENSE_BLOCKED','LICENSE_EXTENDED',
                     'BIND_CREATED','BIND_MISMATCH_DETECTED','BIND_BLOCKED','DEVICE_REBOUND',
-                    'LICENSE_CHECK_SUCCESS','LICENSE_CHECK_FAILED'].map(a => (
+                    'LICENSE_CHECK_SUCCESS','LICENSE_CHECK_FAILED',
+                    'REMOTE_SYNC_OK','REMOTE_SYNC_FAILED','SYNC_CONFIG_UPDATED'].map(a => (
                     <option key={a} value={a}>{a}</option>
                   ))}
                 </select>
@@ -602,6 +648,152 @@ export default function Licensing() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Sync (v3.5.0) */}
+        <TabsContent value="sync">
+          <div className="space-y-4">
+            {/* Sync Status Card */}
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-white text-base flex items-center gap-2">
+                  {syncStatus?.sync?.connected
+                    ? <Wifi className="w-5 h-5 text-emerald-400" />
+                    : <WifiOff className="w-5 h-5 text-zinc-500" />
+                  }
+                  {t('lic_sync_status') || 'Sync-Status'}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="p-3 bg-zinc-800/50 rounded" data-testid="sync-status-connection">
+                    <p className="text-xs text-zinc-400 mb-1">{t('lic_sync_connection') || 'Verbindung'}</p>
+                    <p className={`text-sm font-medium ${syncStatus?.sync?.connected ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                      {syncStatus?.sync?.connected
+                        ? (t('lic_sync_connected') || 'Server verbunden')
+                        : (t('lic_sync_offline') || 'Offline-Modus')
+                      }
+                    </p>
+                  </div>
+                  <div className="p-3 bg-zinc-800/50 rounded" data-testid="sync-status-last-sync">
+                    <p className="text-xs text-zinc-400 mb-1">{t('lic_sync_last_sync') || 'Letzter Sync'}</p>
+                    <p className="text-sm text-white">
+                      {syncStatus?.sync?.last_sync_at
+                        ? new Date(syncStatus.sync.last_sync_at).toLocaleString('de-DE')
+                        : '—'}
+                    </p>
+                  </div>
+                  <div className="p-3 bg-zinc-800/50 rounded" data-testid="sync-status-count">
+                    <p className="text-xs text-zinc-400 mb-1">{t('lic_sync_count') || 'Sync-Anzahl'}</p>
+                    <p className="text-sm text-white">{syncStatus?.sync?.sync_count || 0}</p>
+                  </div>
+                </div>
+                {syncStatus?.sync?.last_error && (
+                  <div className="p-3 bg-red-500/5 border border-red-500/20 rounded" data-testid="sync-status-error">
+                    <p className="text-xs text-red-400 flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      {syncStatus.sync.last_error}
+                    </p>
+                  </div>
+                )}
+                {/* Source info */}
+                {syncStatus?.checker?.last_check_source && (
+                  <div className="flex items-center gap-2 text-xs text-zinc-400">
+                    <Activity className="w-3.5 h-3.5" />
+                    {t('lic_sync_source') || 'Letzte Quelle'}: <span className="text-white">{syncStatus.checker.last_check_source}</span>
+                    {syncStatus.checker.last_check_status && (
+                      <StatusBadge status={syncStatus.checker.last_check_status} t={t} />
+                    )}
+                  </div>
+                )}
+                <Button size="sm" onClick={triggerSyncNow} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="sync-trigger-btn">
+                  <RefreshCw className="w-4 h-4 mr-1" /> {t('lic_sync_now') || 'Jetzt synchronisieren'}
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Sync Configuration Card */}
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-white text-base flex items-center gap-2">
+                  <Settings2 className="w-5 h-5 text-amber-500" />
+                  {t('lic_sync_config') || 'Sync-Konfiguration'}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <label className="text-sm text-zinc-300">{t('lic_sync_enabled') || 'Remote-Sync aktiviert'}</label>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={syncForm.enabled}
+                    onClick={() => setSyncForm(f => ({ ...f, enabled: !f.enabled }))}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${syncForm.enabled ? 'bg-emerald-500' : 'bg-zinc-700'}`}
+                    data-testid="sync-config-enabled-toggle"
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${syncForm.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-zinc-400">{t('lic_sync_server_url') || 'Server-URL'}</label>
+                    <input
+                      type="url"
+                      className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white"
+                      placeholder="https://central.example.com"
+                      value={syncForm.server_url}
+                      onChange={e => setSyncForm(f => ({ ...f, server_url: e.target.value }))}
+                      data-testid="sync-config-server-url"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-zinc-400">
+                      API-Key {syncConfig.api_key_set && <span className="text-emerald-400 ml-1">(gesetzt: {syncConfig.api_key_masked})</span>}
+                    </label>
+                    <input
+                      type="password"
+                      className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white"
+                      placeholder={syncConfig.api_key_set ? 'Leer lassen um beizubehalten' : 'dk_...'}
+                      value={syncForm.api_key}
+                      onChange={e => setSyncForm(f => ({ ...f, api_key: e.target.value }))}
+                      data-testid="sync-config-api-key"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-zinc-400">{t('lic_sync_interval') || 'Sync-Intervall (Stunden)'}</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={24}
+                      className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white"
+                      value={syncForm.interval_hours}
+                      onChange={e => setSyncForm(f => ({ ...f, interval_hours: parseInt(e.target.value) || 6 }))}
+                      data-testid="sync-config-interval"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs text-zinc-400">{t('lic_sync_device_name') || 'Gerätename'}</label>
+                    <input
+                      type="text"
+                      className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white"
+                      placeholder="Kiosk 1"
+                      value={syncForm.device_name}
+                      onChange={e => setSyncForm(f => ({ ...f, device_name: e.target.value }))}
+                      data-testid="sync-config-device-name"
+                    />
+                  </div>
+                </div>
+
+                <Button onClick={saveSyncConfig} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="sync-config-save-btn">
+                  <Save className="w-4 h-4 mr-1" /> {t('lic_sync_save') || 'Konfiguration speichern'}
+                </Button>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

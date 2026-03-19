@@ -6,7 +6,7 @@ Used by the CyclicLicenseChecker for hybrid operation.
 
 Design:
 - Non-blocking async HTTP via httpx
-- Simple API-key authentication
+- Simple API-key authentication via X-License-Key header
 - Returns license status dict or None on failure
 - Never raises — all errors are caught and logged
 - Tracks connection state for UI display
@@ -31,6 +31,7 @@ class LicenseSyncClient:
         self.last_sync_ok: Optional[bool] = None
         self.last_error: Optional[str] = None
         self.sync_count = 0
+        self._last_server_response: Optional[dict] = None
 
     async def sync(
         self,
@@ -40,20 +41,30 @@ class LicenseSyncClient:
         device_name: Optional[str] = None,
     ) -> Optional[dict]:
         """
-        Sync with central server. Returns license status dict or None.
+        Sync with central server. Returns license status dict or None on failure.
 
         POST {server_url}/api/licensing/sync
         Body: { install_id, device_name }
         Headers: X-License-Key: {api_key}
-        """
-        url = f"{server_url.rstrip('/')}/api/licensing/sync"
-        headers = {}
-        if api_key:
-            headers["X-License-Key"] = api_key
 
-        body = {
-            "install_id": install_id,
+        Expected response:
+        {
+            "license_status": "active|grace|expired|blocked|no_license",
+            "binding_status": "bound|unbound|mismatch",
+            "expiry": "ISO datetime or null",
+            "server_timestamp": "ISO datetime",
+            "plan_type": "standard|premium|test",
+            "customer_name": "..."
         }
+        """
+        if not server_url or not api_key:
+            self._mark_offline("No server URL or API key configured")
+            return None
+
+        url = f"{server_url.rstrip('/')}/api/licensing/sync"
+        headers = {"X-License-Key": api_key}
+
+        body = {"install_id": install_id}
         if device_name:
             body["device_name"] = device_name
 
@@ -68,8 +79,9 @@ class LicenseSyncClient:
                 self.last_sync_ok = True
                 self.last_error = None
                 self.sync_count += 1
+                self._last_server_response = data
                 logger.info(
-                    f"[SYNC] OK: status={data.get('status')} "
+                    f"[SYNC] OK: license_status={data.get('license_status')} "
                     f"binding={data.get('binding_status')} server={server_url}"
                 )
                 return data
@@ -107,5 +119,10 @@ class LicenseSyncClient:
             "mode": "remote" if self.connected else "local",
         }
 
+    def get_last_server_response(self) -> Optional[dict]:
+        """Return the last successful server response for cache update."""
+        return self._last_server_response
 
+
+# Module-level singleton
 license_sync_client = LicenseSyncClient()
