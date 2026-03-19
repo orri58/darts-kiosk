@@ -1176,7 +1176,7 @@ autostart.bat:
 - [x] ~~Lizenz-Audit-Log (alle Aktionen protokolliert)~~ → v3.4.5
 - [x] ~~Zentraler Lizenzserver + Hybrid Sync~~ → v3.5.0
 - [x] ~~Device Registration Flow mit Einmal-Token~~ → v3.5.1
-- [ ] Rollen-basierte Sichtbarkeit (Operator sieht nur eigene Kunden)
+- [x] ~~Rollenbasierte Sichtbarkeit / Multi-Tenant~~ → v3.5.2
 - [ ] Superadmin-Setup Wizard
 
 ### P2
