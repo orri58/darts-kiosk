@@ -1088,6 +1088,42 @@ autostart.bat:
   - 67/67 Tests bestanden (21 Unit + 18 E2E + 28 Regression)
   - NICHT GEAENDERT: Observer, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
 
+- v3.4.4: Mismatch Grace + Device Tracking (2026-03-19)
+  - NEUES FEATURE: Konfigurierbarer Grace-Zeitraum bei Geraete-Mismatch
+  - Mismatch Grace Logik:
+    - Erster Mismatch → mismatch_grace (Sessions erlaubt, Warning in UI)
+    - Innerhalb Grace-Fenster → mismatch_grace bleibt aktiv
+    - Nach Grace-Ablauf → mismatch_expired (Sessions blockiert)
+    - Grace-Dauer konfigurierbar (Standard: 48h, Bereich: 0-9999h)
+  - Device Tracking erweitert:
+    - mismatch_detected_at: Zeitpunkt der ersten Mismatch-Erkennung
+    - previous_install_id: Vorherige Install-ID vor Mismatch/Rebind
+  - Binding Trigger verfeinert:
+    - Auto-Bind NUR bei start_game (trigger_binding=True)
+    - unlock_board prueft nur, bindet NICHT (trigger_binding=False)
+  - _evaluate_mismatch_grace(): Zentrale Grace-Berechnung
+  - _get_binding_grace_hours(): Liest konfigurierbare Stunden aus Settings-Tabelle
+  - Neue API-Endpunkte:
+    - GET /api/licensing/binding-settings → binding_grace_hours
+    - POST /api/licensing/binding-settings → Aktualisierung
+  - Rebind erweitert:
+    - Loescht mismatch_detected_at
+    - Speichert previous_install_id
+  - Logging mit klaren Labels:
+    - BIND_CREATED, BIND_MISMATCH_DETECTED, BIND_GRACE_ACTIVE, BIND_BLOCKED
+  - Admin UI erweitert:
+    - Neue Badges: Mismatch (Grace) in Amber, Mismatch (Blockiert) in Rot
+    - mismatch_detected_at Timestamp sichtbar
+    - previous_install_id sichtbar
+    - Grace/Blocked Unterscheidung bei Rebind-Button
+  - Kiosk UI (LicenseOverlay.js):
+    - mismatch_grace: Gelbe Warning-Bar oben (nicht blockierend)
+    - mismatch_expired: Vollbild-Block-Overlay mit Lock-Icon
+  - i18n: 5 weitere DE/EN Keys (lic_binding_mismatch_grace/expired, lic_mismatch_since, lic_previous_id, lic_binding_grace_hours)
+  - DB-Migration: ALTER TABLE lic_devices ADD mismatch_detected_at, previous_install_id
+  - 91/91 Tests bestanden (71 Unit + 20 E2E)
+  - NICHT GEAENDERT: Observer, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls~~ → v3.3.1
@@ -1106,6 +1142,7 @@ autostart.bat:
 - [x] ~~Lizenzpruefung vor Session-Start (Kiosk-Integration)~~ → v3.4.2
 - [x] ~~Lizenz-Ablauf-Overlay im Kiosk-UI~~ → v3.4.2
 - [x] ~~Geraete-Bindung: install_id automatisch generieren beim ersten Start~~ → v3.4.3
+- [x] ~~Mismatch Grace + Device Tracking: Konfigurierbarer Grace-Zeitraum bei Mismatch~~ → v3.4.4
 - [ ] Zyklische Lizenzpruefung im Agent/Backend (z.B. alle 6h)
 - [ ] Rollen-basierte Sichtbarkeit (Operator sieht nur eigene Kunden)
 - [ ] Superadmin-Setup Wizard
