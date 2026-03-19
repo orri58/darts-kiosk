@@ -1174,6 +1174,7 @@ autostart.bat:
 - [x] ~~Mismatch Grace + Device Tracking: Konfigurierbarer Grace-Zeitraum bei Mismatch~~ → v3.4.4
 - [x] ~~Zyklische Lizenzpruefung im Agent/Backend (z.B. alle 6h)~~ → v3.4.5
 - [x] ~~Lizenz-Audit-Log (alle Aktionen protokolliert)~~ → v3.4.5
+- [x] ~~Zentraler Lizenzserver + Hybrid Sync~~ → v3.5.0
 - [ ] Rollen-basierte Sichtbarkeit (Operator sieht nur eigene Kunden)
 - [ ] Superadmin-Setup Wizard
 
@@ -1183,3 +1184,43 @@ autostart.bat:
 - [ ] Persist runtime state to JSON file
 - [ ] Betreiber-Remote-Dashboard (Umsatz + Geraetestatus)
 - [ ] Payment-Provider-Integration (Stripe/Rechnung)
+
+## v3.5.0 — Zentraler Lizenzserver + Hybrid Sync (2026-03-19)
+
+### Architektur
+```
+Zentraler Server (Port 8002, separate Deployment):
+  /api/licensing/sync      — Kiosk sync endpoint (X-License-Key auth)
+  /api/licensing/customers  — Admin CRUD
+  /api/licensing/locations   — Admin CRUD
+  /api/licensing/devices     — Admin CRUD (returns api_key)
+  /api/licensing/licenses    — Admin CRUD
+  /api/licensing/audit-log   — Sync audit trail
+  /api/health               — Health check
+
+Kiosk Backend (additiv, kein Rewrite):
+  /api/licensing/sync-config  — GET/POST Sync-Konfiguration
+  /api/licensing/sync-status  — GET Sync-Status (connected/offline)
+  /api/licensing/sync-now     — POST Manueller Sync-Trigger
+```
+
+### Implementierte Features
+- Separater zentraler Lizenzserver (`/app/central_server/`)
+- LicenseSyncClient: HTTP-Sync via httpx mit API-Key Auth
+- CyclicLicenseChecker: Hybrid-Modus (remote first → local fallback)
+- Offline-Fallback: KEIN Block bei Netzwerkfehler
+- Sync-Frequenz: Default 6h, konfigurierbar 1-24h
+- Admin UI: Neuer "Sync" Tab mit Status + Konfiguration
+- i18n: 18 neue DE/EN Keys für Sync
+- 18/18 Tests bestanden (100%)
+
+### Dateien
+- `central_server/server.py` — Zentraler Server
+- `central_server/database.py` — Eigene SQLite DB
+- `central_server/models.py` — Eigene Modelle
+- `backend/services/license_sync_client.py` — Sync-Client (erweitert)
+- `backend/services/cyclic_license_checker.py` — Hybrid-Checker (erweitert)
+- `backend/routers/licensing.py` — Neue Endpoints (sync-config, sync-status, sync-now)
+- `frontend/src/pages/admin/Licensing.js` — Neuer Sync-Tab
+- `frontend/src/i18n/translations.js` — Neue Übersetzungen
+
