@@ -173,6 +173,7 @@ class WSEventState:
     frames_received: int = 0
     match_relevant_frames: int = 0
     finish_trigger: Optional[str] = None  # What triggered the finish detection
+    variant: Optional[str] = None  # v3.3.2: Game variant (e.g., "Gotcha", "501")
 
     def reset(self):
         self.match_active = False
@@ -182,6 +183,7 @@ class WSEventState:
         self.last_game_event = None
         self.last_match_id = None
         self.finish_trigger = None
+        # variant NOT reset — persists for the session
 
 
 @dataclass
@@ -1189,6 +1191,28 @@ class AutodartsObserver:
             return True
         return False
 
+    def _extract_variant(self, payload) -> Optional[str]:
+        """Extract game variant from WS payload (e.g., 'gotcha', 'x01', 'cricket')."""
+        if not isinstance(payload, dict):
+            return None
+        for key in ('variant', 'gameMode', 'mode', 'gameType'):
+            val = payload.get(key)
+            if isinstance(val, str) and val:
+                return val
+        for container in ('data', 'body', 'match'):
+            nested = payload.get(container)
+            if isinstance(nested, dict):
+                for key in ('variant', 'gameMode', 'mode', 'gameType'):
+                    val = nested.get(key)
+                    if isinstance(val, str) and val:
+                        return val
+        return None
+
+    def _is_gotcha(self) -> bool:
+        """Check if current match is a Gotcha variant."""
+        variant = (self._ws_state.variant or "").lower()
+        return "gotcha" in variant
+
     def _classify_frame(self, raw: str, channel: str, payload) -> str:
         """
         Classify a WS frame based on Autodarts lifecycle signals.
@@ -1321,6 +1345,15 @@ class AutodartsObserver:
         # ═══ MATCH END (authoritative) ═══
         elif interpretation in ("match_end_gameshot_match", "match_end_state_finished",
                                 "match_end_game_finished", "match_finished_matchshot"):
+            # v3.3.2: Extract variant from payload if available
+            if payload:
+                _ev = self._extract_variant(payload)
+                if _ev and not ws.variant:
+                    ws.variant = _ev
+                    logger.info(
+                        f"[Observer:{self.board_id}] VARIANT_DETECTED "
+                        f"variant={_ev} source={interpretation}")
+
             # Duplicate match-ID guard: ignore repeat finish signals for already-finalized match
             current_mid = ws.last_match_id
             if current_mid and current_mid == self._last_finalized_match_id:
@@ -1331,6 +1364,21 @@ class AutodartsObserver:
 
             # v3.3.1: Separate confirmed (state frame) from pending (gameshot) signals
             is_confirmed = interpretation in ("match_end_state_finished", "match_end_game_finished")
+            is_gameshot_trigger = interpretation in ("match_end_gameshot_match", "match_finished_matchshot")
+
+            # v3.3.2: Gotcha variant guard — game_shot/matchshot are NOT reliable for Gotcha
+            # In Gotcha, opponent score resets and intermediate states can trigger game_shot
+            # with body.type=match, which is NOT a real match end.
+            if self._is_gotcha() and is_gameshot_trigger:
+                logger.info(
+                    f"[Observer:{self.board_id}] MATCH_FINISH_CANDIDATE variant=Gotcha "
+                    f"trigger={interpretation} confirmed=False "
+                    f"match_id={current_mid}")
+                logger.info(
+                    f"[Observer:{self.board_id}] MATCH_FINISH_REJECTED variant=Gotcha "
+                    f"reason=game_shot_without_confirmed_finished_state "
+                    f"trigger={interpretation} match_id={current_mid}")
+                return  # Do NOT set match_finished, do NOT schedule finalize
 
             if ws.match_finished:
                 if is_confirmed and ws.finish_trigger not in ("match_end_state_finished", "match_end_game_finished"):
@@ -1338,6 +1386,7 @@ class AutodartsObserver:
                     logger.info(
                         f"[Observer:{self.board_id}] MATCH_FINISH_CONFIRMED "
                         f"trigger={interpretation} match_id={current_mid} "
+                        f"variant={ws.variant or 'standard'} "
                         f"(upgrades pending trigger={ws.finish_trigger})")
                     ws.finish_trigger = interpretation
                     self._schedule_immediate_finalize(interpretation, ws.last_match_id)
@@ -1355,12 +1404,20 @@ class AutodartsObserver:
             logger.info(
                 f"[Observer:{self.board_id}] *** MATCH FINISH DETECTED *** "
                 f"trigger={interpretation} | match_id={ws.last_match_id} | "
-                f"confirmed={is_confirmed}"
+                f"confirmed={is_confirmed} | variant={ws.variant or 'unknown'}"
             )
-            logger.info(
-                f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED "
-                f"trigger={interpretation} match_id={ws.last_match_id}"
-            )
+
+            # v3.3.2: Log ACCEPTED with variant and confirmation details
+            if self._is_gotcha():
+                logger.info(
+                    f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED variant=Gotcha "
+                    f"trigger={interpretation} confirmed={is_confirmed} "
+                    f"match_id={ws.last_match_id}")
+            else:
+                logger.info(
+                    f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED "
+                    f"trigger={interpretation} match_id={ws.last_match_id} "
+                    f"variant={ws.variant or 'standard'}")
 
             if is_confirmed:
                 # State frame (finished=true) = authoritative → immediate finalize
@@ -1371,6 +1428,7 @@ class AutodartsObserver:
                 logger.info(
                     f"[Observer:{self.board_id}] MATCH_FINISH_PENDING "
                     f"trigger={interpretation} match_id={ws.last_match_id} "
+                    f"variant={ws.variant or 'standard'} "
                     f"(awaiting state frame confirmation or debounce)")
 
             # Always schedule safety net as backup

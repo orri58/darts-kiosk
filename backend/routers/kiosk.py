@@ -236,6 +236,22 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                         return {"should_lock": False, "should_teardown": True,
                                 "credits_remaining": 0, "board_status": board.status}
 
+                    # v3.3.2: Read game variant for Gotcha-safe finalization
+                    _game_variant = session.game_type if session else None
+                    _is_gotcha = "gotcha" in (_game_variant or "").lower()
+
+                    # v3.3.2: Defense-in-depth Gotcha guard
+                    # game_shot/matchshot triggers are unreliable for Gotcha
+                    if _is_gotcha and trigger in ("match_end_gameshot_match", "match_finished_matchshot"):
+                        logger.warning(
+                            f"[SESSION] finalize_blocked board={board_id} variant=Gotcha "
+                            f"reason=unconfirmed_finish trigger={trigger} "
+                            f"credits={session.credits_remaining}"
+                        )
+                        return {"should_lock": False, "should_teardown": False,
+                                "credits_remaining": session.credits_remaining,
+                                "board_status": board.status}
+
                     # ── Credit deduction ──
                     credits_before = session.credits_remaining
                     consume_credit = _should_deduct_credit(trigger) and session.pricing_mode == PricingMode.PER_GAME.value
@@ -280,7 +296,8 @@ async def _finalize_match_inner(board_id: str, trigger: str,
 
                     logger.info(
                         f"[SESSION] finalize committed board={board_id} "
-                        f"credits={credit_after} should_lock={should_lock} should_teardown={should_teardown}"
+                        f"credits={credit_after} should_lock={should_lock} should_teardown={should_teardown} "
+                        f"variant={_game_variant or 'standard'}"
                     )
 
                     # ── Match result + player stats ──
@@ -601,12 +618,25 @@ async def _on_game_started(board_id: str):
     _finalized.pop(board_id, None)
     _last_finalized_match.pop(board_id, None)
     try:
+        _game_variant = None
         async with AsyncSessionLocal() as db:
             async with db.begin():
                 result = await db.execute(select(Board).where(Board.board_id == board_id))
                 board = result.scalar_one_or_none()
                 if board:
                     board.status = BoardStatus.IN_GAME.value
+                    # v3.3.2: Read game variant for variant-aware finish detection
+                    _session = await get_active_session_for_board(db, board.id)
+                    if _session and _session.game_type:
+                        _game_variant = _session.game_type
+        # v3.3.2: Pass variant to observer for Gotcha-safe finish detection
+        if _game_variant:
+            obs = observer_manager.get(board_id)
+            if obs:
+                obs._ws_state.variant = _game_variant
+                logger.info(
+                    f"[Observer->Kiosk] VARIANT_SET board={board_id} "
+                    f"variant={_game_variant}")
         await board_ws.broadcast("board_status", {"board_id": board_id, "status": "in_game"})
         await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "start"})
     except Exception as e:
@@ -885,8 +915,8 @@ async def simulate_game_start(board_id: str, admin: User = Depends(require_admin
 
 
 @router.post("/kiosk/{board_id}/simulate-game-end")
-async def simulate_game_end(board_id: str, admin: User = Depends(require_admin)):
-    result = await _on_game_ended(board_id, "finished")
+async def simulate_game_end(board_id: str, trigger: str = "finished", admin: User = Depends(require_admin)):
+    result = await _on_game_ended(board_id, trigger)
     return {"message": f"Simulated game end on {board_id}", **result}
 
 
