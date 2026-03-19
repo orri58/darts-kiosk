@@ -1175,6 +1175,7 @@ autostart.bat:
 - [x] ~~Zyklische Lizenzpruefung im Agent/Backend (z.B. alle 6h)~~ → v3.4.5
 - [x] ~~Lizenz-Audit-Log (alle Aktionen protokolliert)~~ → v3.4.5
 - [x] ~~Zentraler Lizenzserver + Hybrid Sync~~ → v3.5.0
+- [x] ~~Device Registration Flow mit Einmal-Token~~ → v3.5.1
 - [ ] Rollen-basierte Sichtbarkeit (Operator sieht nur eigene Kunden)
 - [ ] Superadmin-Setup Wizard
 
