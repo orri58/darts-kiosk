@@ -14,7 +14,8 @@ import {
   Server,
   Wifi,
   Trophy,
-  BarChart3
+  BarChart3,
+  KeyRound
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
   { path: '/admin/discovery', icon: Wifi, labelKey: 'discovery', tid: 'nav-discovery', adminOnly: true },
   { path: '/admin/leaderboard', icon: Trophy, labelKey: 'leaderboard', tid: 'nav-leaderboard' },
   { path: '/admin/reports', icon: BarChart3, labelKey: 'reports', tid: 'nav-reports', adminOnly: true },
+  { path: '/admin/licensing', icon: KeyRound, labelKey: 'licensing', tid: 'nav-licensing', adminOnly: true },
 ];
 
 export default function AdminLayout() {

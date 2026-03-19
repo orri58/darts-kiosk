@@ -165,6 +165,35 @@ export default function AgentTab({ agentStatus, setAgentStatus, headers, t, fetc
               <StatusRow icon={Clock} label={t('agent_heartbeat')}
                 value={agentStatus.heartbeat ? new Date(agentStatus.heartbeat).toLocaleString('de-DE') : '-'}
                 testId="agent-heartbeat" />
+              {agentStatus.pid && (
+                <StatusRow icon={Info} label="PID" value={agentStatus.pid} testId="agent-pid" />
+              )}
+              {/* Autostart Status */}
+              {agentStatus.autostart && (
+                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid="agent-autostart-status">
+                  <div className="flex items-center gap-2">
+                    <PlayCircle className="w-4 h-4 text-zinc-500" />
+                    <span className="text-sm text-zinc-400">{t('agent_autostart')}</span>
+                  </div>
+                  {agentStatus.autostart.supported === false ? (
+                    <span className="text-xs text-zinc-500">{t('windows_only')}</span>
+                  ) : agentStatus.autostart.registered ? (
+                    <span className="text-sm text-emerald-400 flex items-center gap-1">
+                      <CheckCircle className="w-3.5 h-3.5" /> {t('agent_autostart_registered')}
+                    </span>
+                  ) : (
+                    <span className="text-sm text-amber-400 flex items-center gap-1">
+                      <AlertTriangle className="w-3.5 h-3.5" /> {t('agent_autostart_not_registered')}
+                    </span>
+                  )}
+                </div>
+              )}
+              {agentStatus.autostart?.task_status && (
+                <div className="pl-9 text-xs text-zinc-500 -mt-1" data-testid="agent-autostart-detail">
+                  Task: {agentStatus.autostart.task_status}
+                  {agentStatus.autostart.last_run && ` | ${t('agent_autostart_last_run')}: ${agentStatus.autostart.last_run}`}
+                </div>
+              )}
             </>
           )}
 

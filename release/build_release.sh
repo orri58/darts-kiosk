@@ -128,7 +128,10 @@ mkdir -p "${WIN_DIR}/kiosk_experimental"
 mkdir -p "${WIN_DIR}/agent"
 cp "${APP_DIR}/agent/darts_agent.py" "${WIN_DIR}/agent/"
 cp "${APP_DIR}/agent/start_agent.bat" "${WIN_DIR}/agent/"
+cp "${APP_DIR}/agent/start_agent_silent.vbs" "${WIN_DIR}/agent/"
+cp "${APP_DIR}/agent/setup_autostart.py" "${WIN_DIR}/agent/"
 cp "${APP_DIR}/agent/requirements.txt" "${WIN_DIR}/agent/"
+cp "${APP_DIR}/agent/AGENT_DEPLOYMENT.md" "${WIN_DIR}/agent/"
 log "Windows Agent kopiert"
 if [[ -d "${APP_DIR}/kiosk" ]]; then
     cp "${APP_DIR}/kiosk/"*.bat "${WIN_DIR}/kiosk_experimental/" 2>/dev/null || true
@@ -231,6 +234,7 @@ cp "${APP_DIR}/Dockerfile" "${LINUX_DIR}/" 2>/dev/null || true
 mkdir -p "${LINUX_DIR}/agent"
 cp "${APP_DIR}/agent/darts_agent.py" "${LINUX_DIR}/agent/"
 cp "${APP_DIR}/agent/requirements.txt" "${LINUX_DIR}/agent/"
+cp "${APP_DIR}/agent/AGENT_DEPLOYMENT.md" "${LINUX_DIR}/agent/"
 
 # Create offline-ready serve script (no node needed)
 cat > "${LINUX_DIR}/serve-frontend.py" << 'PYEOF'

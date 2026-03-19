@@ -317,12 +317,145 @@ class TestExePathValidation:
 class TestAgentVersion:
     """Test agent version is set correctly."""
 
-    def test_version_is_340(self):
+    def test_version_is_341(self):
         from agent.darts_agent import AGENT_VERSION
-        assert AGENT_VERSION == "3.4.0"
+        assert AGENT_VERSION == "3.4.1"
 
     def test_version_in_status(self):
         from agent.darts_agent import AutodartsDesktopManager, AgentHandler
-        # Just ensure the handler has the version
         assert hasattr(AgentHandler, 'server_version')
-        assert '3.4.0' in AgentHandler.server_version
+        assert '3.4.1' in AgentHandler.server_version
+
+
+# ═══════════════════════════════════════════════════════════════
+# Test 8: Single Instance Guard (v3.4.1)
+# ═══════════════════════════════════════════════════════════════
+
+class TestSingleInstanceGuard:
+    """Test the lockfile-based single instance mechanism."""
+
+    def test_acquire_lock_fresh(self, tmp_path):
+        """Lock can be acquired when no lockfile exists."""
+        from agent.darts_agent import acquire_instance_lock, release_instance_lock
+        lock_file = tmp_path / "test.lock"
+        assert acquire_instance_lock(lock_file) is True
+        assert lock_file.exists()
+        assert lock_file.read_text().strip() == str(os.getpid())
+        release_instance_lock()
+        assert not lock_file.exists()
+
+    def test_acquire_lock_stale(self, tmp_path):
+        """Stale lockfile (dead PID) is overwritten."""
+        from agent.darts_agent import acquire_instance_lock, release_instance_lock
+        lock_file = tmp_path / "test.lock"
+        # Write a PID that definitely doesn't exist
+        lock_file.write_text("999999999")
+        assert acquire_instance_lock(lock_file) is True
+        assert lock_file.read_text().strip() == str(os.getpid())
+        release_instance_lock()
+
+    def test_acquire_lock_active_blocks(self, tmp_path):
+        """Lock with our own PID blocks acquisition (simulates another instance)."""
+        from agent.darts_agent import acquire_instance_lock, release_instance_lock, _is_pid_alive
+        lock_file = tmp_path / "test.lock"
+        # Write our own PID (which IS alive)
+        lock_file.write_text(str(os.getpid()))
+        # A second acquire should fail since our PID is alive
+        result = acquire_instance_lock(lock_file)
+        assert result is False
+        # Cleanup
+        lock_file.unlink(missing_ok=True)
+
+    def test_acquire_lock_corrupt_file(self, tmp_path):
+        """Corrupt lockfile is overwritten."""
+        from agent.darts_agent import acquire_instance_lock, release_instance_lock
+        lock_file = tmp_path / "test.lock"
+        lock_file.write_text("not-a-pid")
+        assert acquire_instance_lock(lock_file) is True
+        release_instance_lock()
+
+    def test_is_pid_alive_self(self):
+        """Our own PID should be alive."""
+        from agent.darts_agent import _is_pid_alive
+        assert _is_pid_alive(os.getpid()) is True
+
+    def test_is_pid_alive_dead(self):
+        """A very high PID should not be alive."""
+        from agent.darts_agent import _is_pid_alive
+        assert _is_pid_alive(999999999) is False
+
+
+# ═══════════════════════════════════════════════════════════════
+# Test 9: Autostart Status (v3.4.1)
+# ═══════════════════════════════════════════════════════════════
+
+class TestAutostartStatus:
+    """Test autostart status detection."""
+
+    def test_autostart_not_windows(self):
+        """Non-Windows returns supported=False."""
+        from agent.darts_agent import get_autostart_status
+        if not IS_WINDOWS:
+            result = get_autostart_status()
+            assert result["supported"] is False
+            assert result["reason"] == "not_windows"
+
+    def test_status_includes_autostart_field(self):
+        """Status response includes the autostart field."""
+        from agent.darts_agent import (
+            AutodartsDesktopManager, SystemCommandService,
+            KioskControlManager, AgentHandler, AGENT_VERSION
+        )
+
+        handler_cls = type('TestHandlerAutostart', (AgentHandler,), {
+            'agent_secret': 'test-secret',
+            'autodarts': AutodartsDesktopManager(),
+            'system_cmd': SystemCommandService('http://localhost:8001'),
+            'kiosk_ctrl': KioskControlManager(),
+            'start_time': time.time(),
+            'autodarts_exe_path': '',
+        })
+
+        server = HTTPServer(('127.0.0.1', 0), handler_cls)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.handle_request, daemon=True)
+        thread.start()
+
+        import urllib.request
+        try:
+            resp = urllib.request.urlopen(f'http://127.0.0.1:{port}/status', timeout=3)
+            data = json.loads(resp.read())
+            assert 'autostart' in data
+            assert 'pid' in data
+            assert data['pid'] == os.getpid()  # handler runs in our process
+        finally:
+            server.server_close()
+
+    def test_status_includes_pid(self):
+        """Status response includes pid field."""
+        from agent.darts_agent import (
+            AutodartsDesktopManager, SystemCommandService,
+            KioskControlManager, AgentHandler
+        )
+
+        handler_cls = type('TestHandlerPID', (AgentHandler,), {
+            'agent_secret': 'test',
+            'autodarts': AutodartsDesktopManager(),
+            'system_cmd': SystemCommandService('http://localhost:8001'),
+            'kiosk_ctrl': KioskControlManager(),
+            'start_time': time.time(),
+            'autodarts_exe_path': '',
+        })
+
+        server = HTTPServer(('127.0.0.1', 0), handler_cls)
+        port = server.server_address[1]
+        thread = threading.Thread(target=server.handle_request, daemon=True)
+        thread.start()
+
+        import urllib.request
+        try:
+            resp = urllib.request.urlopen(f'http://127.0.0.1:{port}/status', timeout=3)
+            data = json.loads(resp.read())
+            assert data['pid'] == os.getpid()
+        finally:
+            server.server_close()

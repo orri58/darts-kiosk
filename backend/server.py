@@ -35,6 +35,7 @@ from backend.models import (
     User, Board, UserRole, BoardStatus,
     DEFAULT_PALETTES, DEFAULT_PRICING, DEFAULT_BRANDING
 )
+import backend.models.licensing  # noqa: F401 — registers licensing tables with Base
 from backend.dependencies import hash_password, get_or_create_setting, MODE
 
 # Services
@@ -46,6 +47,7 @@ from backend.services.mdns_service import mdns_service
 
 # Routers
 from backend.routers import auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
+from backend.routers import licensing as licensing_router
 
 # Configuration
 from backend.database import DATA_DIR
@@ -255,6 +257,7 @@ api_router.include_router(discovery.router)
 api_router.include_router(matches.router)
 api_router.include_router(stats.router)
 api_router.include_router(players.router)
+api_router.include_router(licensing_router.router)
 
 app.include_router(api_router)
 

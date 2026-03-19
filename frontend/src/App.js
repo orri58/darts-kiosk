@@ -18,6 +18,7 @@ import AdminSystem from "./pages/admin/System";
 import AdminDiscovery from "./pages/admin/Discovery";
 import AdminLeaderboard from "./pages/admin/Leaderboard";
 import AdminReports from "./pages/admin/Reports";
+import AdminLicensing from "./pages/admin/Licensing";
 import MatchPublicPage from "./pages/MatchPublicPage";
 import PublicLeaderboard from "./pages/PublicLeaderboard";
 import SetupWizard from "./pages/admin/SetupWizard";
@@ -65,6 +66,7 @@ function App() {
               <Route path="discovery" element={<AdminDiscovery />} />
               <Route path="leaderboard" element={<AdminLeaderboard />} />
               <Route path="reports" element={<AdminReports />} />
+              <Route path="licensing" element={<AdminLicensing />} />
             </Route>
             
             {/* Default redirect */}

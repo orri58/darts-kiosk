@@ -965,18 +965,93 @@ autostart.bat:
   - NICHT GEAENDERT: Observer core flow, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
   - Release: darts-kiosk-v3.4.0-windows.zip (2.1 MB), -linux.tar.gz (1.7 MB), -source.zip (21 MB)
 
+- v3.4.1: Agent Autostart Hardening + Lizenzsystem MVP (2026-03-19)
+  - PHASE 1: Agent Autostart Hardening
+    - Single Instance Guard: Lockfile-basiert (data/logs/agent.lock)
+      - PID-Pruefung: Stale Locks werden automatisch bereinigt
+      - Aktive PID: Neuer Start beendet sich sofort mit Logeintrag
+      - Clean Shutdown: Lockfile wird bei sauberem Stop entfernt
+    - Task Scheduler Setup: agent/setup_autostart.py
+      - Registriert Task "DartsKioskAgent" in Windows Task Scheduler
+      - Boot-Trigger (+15s Delay) + Logon-Trigger (+5s Delay)
+      - Hoechste Rechte (SYSTEM), Restart on Failure (3x/60s)
+      - Idempotent: Aktualisiert bestehenden Task statt doppelt anzulegen
+    - Unsichtbarer Start: agent/start_agent_silent.vbs
+      - VBS-Wrapper fuer pythonw.exe → kein Konsolenfenster
+      - Venv-Detection: .venv\Scripts\pythonw.exe → Fallback auf system Python
+    - Status-Erweiterung: Autostart-Status + PID im /status Endpoint
+    - Admin Panel: Autostart-Status sichtbar im Agent Tab
+  - PHASE 2: Lizenzsystem MVP
+    - NEUE MODELLE (backend/models/licensing.py):
+      - LicCustomer: Kunde (Name, Kontakt, Status)
+      - LicLocation: Standort (Customer-FK, Adresse, Status)
+      - LicDevice: Geraet (Location-FK, Board-ID, Install-ID, Status)
+      - License: Lizenz (Customer-FK, Plan, Status, Zeitraum, Grace)
+      - UserMembership: Rollen-Mapping (User-FK, Customer/Location-FK, SystemRole)
+      - Alle Tabellen mit 'lic_' Prefix — keine Aenderung bestehender Tabellen
+    - NEUE SERVICES (backend/services/license_service.py):
+      - Effektiver Lizenzstatus: active/grace/expired/blocked/no_license
+      - Lokaler Cache mit HMAC-Signatur (data/license_cache.json)
+      - Tamper-Detection: Manipulierte Cache-Dateien werden erkannt
+      - Grace Period: Konfigurierbar pro Lizenz (Standard 7 Tage)
+      - is_session_allowed(): Prueft ob neue Sessions erlaubt sind
+    - NEUE API (backend/routers/licensing.py, Prefix /api/licensing):
+      - CRUD: /customers, /locations, /devices, /licenses
+      - Aktionen: /licenses/{id}/block, /activate, /extend
+      - Status: /status (live), /status/cached (offline)
+      - Dashboard: /dashboard (Uebersichtszahlen)
+    - NEUE FRONTEND-SEITE (frontend/src/pages/admin/Licensing.js):
+      - Dashboard mit 6 Stat-Cards
+      - 4 Tabs: Kunden, Standorte, Geraete, Lizenzen
+      - Inline-Formulare fuer Erstellung
+      - Block/Activate/Extend Buttons pro Lizenz
+      - Navigation: Sidebar-Eintrag "Lizenzen" mit KeyRound-Icon
+    - Timezone-Safety: Alle datetime-Vergleiche mit _aware() fuer SQLite-Kompatibilitaet
+    - ~90 neue i18n Keys (DE/EN)
+  - NEUE DATEIEN:
+    - agent/setup_autostart.py, agent/start_agent_silent.vbs, agent/AGENT_DEPLOYMENT.md
+    - backend/models/licensing.py, backend/services/license_service.py, backend/routers/licensing.py
+    - frontend/src/pages/admin/Licensing.js
+    - backend/tests/test_v341_licensing.py (21 Tests)
+  - ERWEITERTE DATEIEN:
+    - agent/darts_agent.py: Version 3.4.1, Single Instance Guard, Autostart Status, PID in /status
+    - agent/start_agent.bat: Lockfile-Hints
+    - backend/server.py: licensing_router + models Import
+    - frontend/src/App.js: /admin/licensing Route
+    - frontend/src/pages/admin/AdminLayout.js: Navigation
+    - frontend/src/components/admin/AgentTab.js: Autostart+PID Anzeige
+    - frontend/src/i18n/translations.js: ~90 neue Keys
+    - release/build_release.sh: Neue Agent-Dateien
+  - Tests: 46 bestanden (25 Agent + 21 Licensing), 1 Skip
+  - Regressions-Test: 78 Core-Tests bestanden, 0 Failures
+  - NICHT GEAENDERT: Observer, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
+  - Release: darts-kiosk-v3.4.1 Windows (2.2 MB), Linux (1.7 MB), Source (21 MB)
+
 ## Remaining Backlog
 ### P1
-- [x] ~~Admin System Controls (Restart Backend, Reboot OS, Shutdown OS)~~ → v3.3.1
+- [x] ~~Admin System Controls~~ → v3.3.1
 - [x] ~~Board Wake/Desktop Supervision Hardening~~ → v3.3.1
-- [x] ~~Windows Kiosk Controls (Shell Switch, Task Manager Toggle)~~ → v3.3.3
+- [x] ~~Windows Kiosk Controls~~ → v3.3.3
 - [x] ~~Autodarts DOM Selector Tests~~ → v3.3.4
 - [x] ~~Selector Fallback + Robustness Layer~~ → v3.3.5
 - [x] ~~Windows Agent (separater Prozess)~~ → v3.4.0
-- [ ] Finish Experience Safety (Post-Match Delay UX Verbesserung)
-- [ ] Hard-Kiosk-Modus als optionaler separater Schritt (nach stabiler Runtime)
+- [x] ~~Agent Autostart Hardening~~ → v3.4.1
+- [x] ~~Lizenzsystem MVP (Architektur + Grundgeruest)~~ → v3.4.1
+- [ ] Finish Experience Safety (Post-Match Delay UX)
+- [ ] Hard-Kiosk-Modus als optionaler separater Schritt
+
+### P1 — Lizenzsystem Ausbau
+- [ ] Lizenzpruefung vor Session-Start (Kiosk-Integration)
+- [ ] Lizenz-Ablauf-Overlay im Kiosk-UI (Hinweis bei Grace/Expired)
+- [ ] Geraete-Bindung: install_id automatisch generieren beim ersten Start
+- [ ] Zyklische Lizenzpruefung im Agent/Backend (z.B. alle 6h)
+- [ ] Rollen-basierte Sichtbarkeit (Operator sieht nur eigene Kunden)
+- [ ] Superadmin-Setup Wizard
+- [ ] Lizenz-Audit-Log (alle Aktionen protokolliert)
 
 ### P2
 - [ ] Chromium Extension as alternative to Playwright observer
 - [ ] PWA Install Prompt for public leaderboard page
 - [ ] Persist runtime state to JSON file
+- [ ] Betreiber-Remote-Dashboard (Umsatz + Geraetestatus)
+- [ ] Payment-Provider-Integration (Stripe/Rechnung)

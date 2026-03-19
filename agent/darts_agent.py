@@ -38,7 +38,7 @@ from typing import Optional
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════
 
-AGENT_VERSION = "3.4.0"
+AGENT_VERSION = "3.4.1"
 IS_WINDOWS = platform.system() == "Windows"
 
 # Defaults (overridable via CLI args or env)
@@ -61,6 +61,107 @@ if IS_WINDOWS:
 _AUTODARTS_COOLDOWN = 60        # seconds between auto-start attempts
 _FOCUS_CORRECTION_DEBOUNCE = 10  # seconds between focus corrections
 _BACKEND_RESTART_COOLDOWN = 30   # seconds between backend restart attempts
+
+# Lockfile for single instance guard
+_LOCK_FILE: Optional[Path] = None
+
+
+# ═══════════════════════════════════════════════════════════════
+# SINGLE INSTANCE GUARD
+# ═══════════════════════════════════════════════════════════════
+
+def _is_pid_alive(pid: int) -> bool:
+    """Check if a process with the given PID is still running."""
+    if IS_WINDOWS:
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH", "/FO", "CSV"],
+                capture_output=True, text=True, timeout=5,
+                encoding="utf-8", errors="replace",
+            )
+            return str(pid) in (result.stdout or "")
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except (OSError, ProcessLookupError):
+            return False
+
+
+def acquire_instance_lock(lock_path: Path) -> bool:
+    """Try to acquire single-instance lock. Returns True if lock acquired."""
+    global _LOCK_FILE
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if lock_path.exists():
+        try:
+            old_pid = int(lock_path.read_text(encoding="utf-8").strip())
+            if _is_pid_alive(old_pid):
+                return False  # another instance is running
+            # Stale lock — process is dead
+        except (ValueError, OSError):
+            pass  # corrupt lock file — overwrite it
+
+    lock_path.write_text(str(os.getpid()), encoding="utf-8")
+    _LOCK_FILE = lock_path
+    return True
+
+
+def release_instance_lock():
+    """Remove the lockfile on clean shutdown."""
+    global _LOCK_FILE
+    if _LOCK_FILE and _LOCK_FILE.exists():
+        try:
+            _LOCK_FILE.unlink()
+        except OSError:
+            pass
+        _LOCK_FILE = None
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUTOSTART STATUS (Task Scheduler)
+# ═══════════════════════════════════════════════════════════════
+
+TASK_NAME = "DartsKioskAgent"
+
+
+def get_autostart_status() -> dict:
+    """Check if the agent is registered in Windows Task Scheduler."""
+    if not IS_WINDOWS:
+        return {"supported": False, "reason": "not_windows"}
+    try:
+        result = subprocess.run(
+            ["schtasks", "/Query", "/TN", TASK_NAME, "/FO", "LIST", "/V"],
+            capture_output=True, text=True, timeout=10,
+            encoding="utf-8", errors="replace",
+        )
+        if result.returncode != 0:
+            return {"supported": True, "registered": False}
+
+        stdout = result.stdout or ""
+        info = {"supported": True, "registered": True}
+        for line in stdout.splitlines():
+            line = line.strip()
+            if ":" not in line:
+                continue
+            key, val = line.split(":", 1)
+            key = key.strip().lower()
+            val = val.strip()
+            if "status" in key and "task" not in key:
+                info["task_status"] = val
+            elif "run as user" in key or "als benutzer" in key.lower():
+                info["run_as_user"] = val
+            elif "next run time" in key or "naechste" in key.lower():
+                info["next_run"] = val
+            elif "last run time" in key or "letzte" in key.lower():
+                info["last_run"] = val
+            elif "last result" in key or "letztes ergebnis" in key.lower():
+                info["last_result"] = val
+        return info
+    except Exception as e:
+        return {"supported": True, "registered": False, "error": str(e)}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -589,6 +690,7 @@ class AgentHandler(BaseHTTPRequestHandler):
         kiosk_window = detect_kiosk_window()
         shell = self.kiosk_ctrl.get_shell_status()
         taskmgr = self.kiosk_ctrl.get_task_manager_status()
+        autostart = get_autostart_status()
 
         self._respond(200, {
             "agent_online": True,
@@ -598,10 +700,12 @@ class AgentHandler(BaseHTTPRequestHandler):
             "is_windows": IS_WINDOWS,
             "uptime_s": int(uptime),
             "heartbeat": datetime.now(timezone.utc).isoformat(),
+            "pid": os.getpid(),
             "autodarts": self.autodarts.get_status(),
             "kiosk_window": kiosk_window,
             "shell": shell,
             "task_manager": taskmgr,
+            "autostart": autostart,
         })
 
     def _handle_autodarts_ensure(self):
@@ -681,7 +785,19 @@ def main():
         print("ERROR: No AGENT_SECRET configured. Set via --secret, env, or backend/.env")
         sys.exit(1)
 
+    # Setup logging BEFORE lock check so we can log the conflict
     setup_logging(args.log_dir)
+
+    # ── Single Instance Guard ──
+    lock_path = Path(args.log_dir) / "agent.lock"
+    if not acquire_instance_lock(lock_path):
+        try:
+            old_pid = int(lock_path.read_text(encoding="utf-8").strip())
+        except Exception:
+            old_pid = "?"
+        logger.warning(f"[AGENT] Another instance is already running (PID={old_pid}). Exiting.")
+        print(f"ERROR: Another agent instance is already running (PID={old_pid}). Exiting.")
+        sys.exit(0)
 
     logger.info("=" * 60)
     logger.info(f"Darts Kiosk Agent v{AGENT_VERSION}")
@@ -689,7 +805,9 @@ def main():
     logger.info(f"  Platform: {platform.system()} {platform.release()}")
     logger.info(f"  Backend:  {args.backend_url}")
     logger.info(f"  Log Dir:  {args.log_dir}")
+    logger.info(f"  PID:      {os.getpid()}")
     logger.info(f"  Windows:  {IS_WINDOWS}")
+    logger.info(f"  Lock:     {lock_path}")
     logger.info("=" * 60)
 
     # Initialize services
@@ -722,6 +840,7 @@ def main():
         pass
     finally:
         server.server_close()
+        release_instance_lock()
         logger.info("[AGENT] Stopped")
 
 
