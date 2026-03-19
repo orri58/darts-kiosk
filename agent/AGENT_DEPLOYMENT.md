@@ -1,5 +1,5 @@
 # Darts Kiosk Windows Agent — Deployment Guide
-## Version 3.4.1
+## Version 3.4.5
 
 ---
 
