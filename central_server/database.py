@@ -8,7 +8,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 
-SERVER_DATA_DIR = Path(os.environ.get("CENTRAL_DATA_DIR", "")) or (Path(__file__).resolve().parent / "data")
+_env_dir = os.environ.get("CENTRAL_DATA_DIR", "")
+SERVER_DATA_DIR = Path(_env_dir) if _env_dir else (Path(__file__).resolve().parent / "data")
 SERVER_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = SERVER_DATA_DIR / "central_licenses.sqlite"

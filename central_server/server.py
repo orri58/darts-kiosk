@@ -1,19 +1,20 @@
 """
-Central License Server — v3.5.0
+Central License Server — v3.5.1
 
 Separate FastAPI application that serves as the source of truth for license data.
 Kiosk devices sync periodically with this server.
 
-Endpoints:
+v3.5.0 Endpoints:
   POST /api/licensing/sync         — Kiosk sync endpoint (API-key authenticated)
-  GET  /api/licensing/devices      — List registered devices (admin)
-  POST /api/licensing/devices      — Register a new device (admin)
-  GET  /api/licensing/customers    — List customers (admin)
-  POST /api/licensing/customers    — Create customer (admin)
-  GET  /api/licensing/licenses     — List licenses (admin)
-  POST /api/licensing/licenses     — Create license (admin)
-  GET  /api/licensing/audit-log    — View sync audit log (admin)
+  GET/POST /api/licensing/customers, locations, devices, licenses — Admin CRUD
+  GET  /api/licensing/audit-log    — View audit log (admin)
   GET  /api/health                 — Health check
+
+v3.5.1 Endpoints (Registration Flow):
+  POST /api/registration-tokens           — Create registration token (admin)
+  GET  /api/registration-tokens           — List tokens (admin)
+  POST /api/registration-tokens/{id}/revoke — Revoke token (admin)
+  POST /api/register-device               — Register device with token (public/controlled)
 """
 import sys
 from pathlib import Path
@@ -22,8 +23,10 @@ _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
+import hashlib
 import logging
 import os
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -35,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from central_server.database import get_db, init_db, AsyncSessionLocal
 from central_server.models import (
     CentralCustomer, CentralLocation, CentralDevice, CentralLicense,
-    CentralAuditLog, LicenseStatus, CustomerStatus,
+    CentralAuditLog, RegistrationToken, LicenseStatus, CustomerStatus,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [CENTRAL] %(levelname)s %(message)s")
@@ -177,7 +180,8 @@ async def sync_license(
         customer = res.scalar_one_or_none()
 
     if not customer:
-        await _log_sync(db, device, "SYNC_NO_LICENSE", "No customer found in chain")
+        await _log_audit(db, "SYNC_NO_LICENSE", device_id=device.id, install_id=device.install_id,
+                         message="No customer found in chain")
         return {
             "license_status": "no_license",
             "binding_status": device.binding_status,
@@ -188,7 +192,8 @@ async def sync_license(
         }
 
     if customer.status == CustomerStatus.BLOCKED.value:
-        await _log_sync(db, device, "SYNC_BLOCKED", f"Customer {customer.name} is blocked")
+        await _log_audit(db, "SYNC_BLOCKED", device_id=device.id, install_id=device.install_id,
+                         message=f"Customer {customer.name} is blocked")
         return {
             "license_status": "blocked",
             "binding_status": device.binding_status,
@@ -208,7 +213,8 @@ async def sync_license(
     licenses = res.scalars().all()
 
     if not licenses:
-        await _log_sync(db, device, "SYNC_NO_LICENSE", f"No licenses for customer {customer.name}")
+        await _log_audit(db, "SYNC_NO_LICENSE", device_id=device.id, install_id=device.install_id,
+                         message=f"No licenses for customer {customer.name}")
         return {
             "license_status": "no_license",
             "binding_status": device.binding_status,
@@ -239,7 +245,8 @@ async def sync_license(
             best_status = effective
 
     if not best_lic:
-        await _log_sync(db, device, "SYNC_NO_LICENSE", "No valid license found")
+        await _log_audit(db, "SYNC_NO_LICENSE", device_id=device.id, install_id=device.install_id,
+                         message="No valid license found")
         return {
             "license_status": "no_license",
             "binding_status": device.binding_status,
@@ -252,9 +259,10 @@ async def sync_license(
     expiry = best_lic.ends_at.isoformat() if best_lic.ends_at else None
     grace_until = best_lic.grace_until.isoformat() if best_lic.grace_until else None
 
-    await _log_sync(
-        db, device, "SYNC_OK",
-        f"status={best_status} plan={best_lic.plan_type} customer={customer.name}",
+    await _log_audit(
+        db, "SYNC_OK",
+        device_id=device.id, install_id=device.install_id,
+        message=f"status={best_status} plan={best_lic.plan_type} customer={customer.name}",
     )
 
     return {
@@ -288,21 +296,6 @@ def _compute_status(lic, now):
     if now <= grace_end:
         return LicenseStatus.GRACE.value
     return LicenseStatus.EXPIRED.value
-
-
-async def _log_sync(db: AsyncSession, device: CentralDevice, action: str, message: str):
-    try:
-        entry = CentralAuditLog(
-            action=action,
-            device_id=device.id,
-            install_id=device.install_id,
-            message=message,
-            timestamp=_utcnow(),
-        )
-        db.add(entry)
-        await db.flush()
-    except Exception as e:
-        logger.error(f"[AUDIT] Failed: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -450,4 +443,353 @@ async def get_audit_log(limit: int = 50, _=Depends(verify_admin_token), db: Asyn
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "service": "central-license-server", "timestamp": _utcnow().isoformat()}
+    return {"status": "ok", "service": "central-license-server", "version": "3.5.1", "timestamp": _utcnow().isoformat()}
+
+
+# ═══════════════════════════════════════════════════════════════
+# REGISTRATION TOKEN HELPERS (v3.5.1)
+# ═══════════════════════════════════════════════════════════════
+
+def _hash_token(raw_token: str) -> str:
+    """SHA-256 hash of a registration token. Never store raw token."""
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+def _generate_reg_token() -> tuple:
+    """Generate a cryptographically secure registration token.
+    Returns (raw_token, token_hash, token_preview)."""
+    raw = f"drt_{secrets.token_urlsafe(32)}"
+    hashed = _hash_token(raw)
+    preview = f"{raw[:8]}...{raw[-4:]}"
+    return raw, hashed, preview
+
+
+def _ser_reg_token(t: RegistrationToken) -> dict:
+    return {
+        "id": t.id,
+        "token_preview": t.token_preview,
+        "customer_id": t.customer_id,
+        "location_id": t.location_id,
+        "license_id": t.license_id,
+        "device_name_template": t.device_name_template,
+        "expires_at": t.expires_at.isoformat() if t.expires_at else None,
+        "used_at": t.used_at.isoformat() if t.used_at else None,
+        "used_by_install_id": t.used_by_install_id,
+        "used_by_device_id": t.used_by_device_id,
+        "created_by": t.created_by,
+        "note": t.note,
+        "is_revoked": t.is_revoked,
+        "revoked_at": t.revoked_at.isoformat() if t.revoked_at else None,
+        "revoked_by": t.revoked_by,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "status": _token_status(t),
+    }
+
+
+def _token_status(t: RegistrationToken) -> str:
+    """Compute effective token status."""
+    if t.is_revoked:
+        return "revoked"
+    if t.used_at:
+        return "used"
+    now = _utcnow()
+    if t.expires_at and _aware(t.expires_at) < now:
+        return "expired"
+    return "active"
+
+
+# ═══════════════════════════════════════════════════════════════
+# REGISTRATION TOKEN CRUD (Admin)
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/registration-tokens")
+async def create_registration_token(
+    data: dict,
+    _=Depends(verify_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a one-time registration token.
+    Body: {
+        "customer_id": "...",          (optional but recommended)
+        "location_id": "...",          (optional but recommended)
+        "license_id": "...",           (optional)
+        "device_name_template": "...", (optional)
+        "expires_in_hours": 72,        (default: 72h)
+        "note": "..."                  (optional)
+    }
+    Returns the raw token ONCE. It will never be shown again.
+    """
+    raw_token, token_hash, preview = _generate_reg_token()
+    expires_in = int(data.get("expires_in_hours", 72))
+    expires_at = _utcnow() + timedelta(hours=expires_in)
+
+    token = RegistrationToken(
+        token_hash=token_hash,
+        token_preview=preview,
+        customer_id=data.get("customer_id"),
+        location_id=data.get("location_id"),
+        license_id=data.get("license_id"),
+        device_name_template=data.get("device_name_template"),
+        expires_at=expires_at,
+        created_by=data.get("created_by", "superadmin"),
+        note=data.get("note"),
+    )
+    db.add(token)
+    await db.flush()
+
+    await _log_audit(db, "REG_TOKEN_CREATED", message=f"Token {preview} created, expires {expires_at.isoformat()}")
+
+    logger.info(f"[REG] Token created: {preview} expires={expires_at.isoformat()}")
+
+    result = _ser_reg_token(token)
+    result["raw_token"] = raw_token  # Only returned ONCE at creation
+    return result
+
+
+@app.get("/api/registration-tokens")
+async def list_registration_tokens(
+    status: str = None,
+    _=Depends(verify_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """List registration tokens. Optional filter by status: active, used, expired, revoked."""
+    stmt = select(RegistrationToken).order_by(RegistrationToken.created_at.desc())
+    result = await db.execute(stmt)
+    tokens = result.scalars().all()
+
+    serialized = [_ser_reg_token(t) for t in tokens]
+    if status:
+        serialized = [t for t in serialized if t["status"] == status]
+    return serialized
+
+
+@app.post("/api/registration-tokens/{token_id}/revoke")
+async def revoke_registration_token(
+    token_id: str,
+    data: dict = None,
+    _=Depends(verify_admin_token),
+    db: AsyncSession = Depends(get_db),
+):
+    """Revoke a registration token. Cannot be undone."""
+    result = await db.execute(
+        select(RegistrationToken).where(RegistrationToken.id == token_id)
+    )
+    token = result.scalar_one_or_none()
+    if not token:
+        raise HTTPException(404, "Token not found")
+    if token.is_revoked:
+        raise HTTPException(400, "Token already revoked")
+    if token.used_at:
+        raise HTTPException(400, "Token already used — cannot revoke")
+
+    token.is_revoked = True
+    token.revoked_at = _utcnow()
+    token.revoked_by = (data or {}).get("revoked_by", "superadmin")
+    await db.flush()
+
+    await _log_audit(db, "REG_TOKEN_REVOKED", message=f"Token {token.token_preview} revoked")
+
+    logger.info(f"[REG] Token revoked: {token.token_preview}")
+    return _ser_reg_token(token)
+
+
+# ═══════════════════════════════════════════════════════════════
+# DEVICE REGISTRATION (Public/Controlled)
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/register-device")
+async def register_device(
+    body: dict,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Register a new device using a one-time registration token.
+
+    Body: {
+        "token": "drt_...",           (required — raw token)
+        "install_id": "...",          (required)
+        "device_name": "...",         (optional)
+        "hostname": "...",            (optional)
+        "app_version": "...",         (optional)
+    }
+
+    Security:
+    - Token must be valid, unused, not expired, not revoked
+    - install_id must not already be bound to another device
+    - No silent overwrites — hard errors on conflicts
+    """
+    raw_token = body.get("token")
+    install_id = body.get("install_id")
+    device_name = body.get("device_name")
+
+    if not raw_token:
+        raise HTTPException(400, "Missing registration token")
+    if not install_id:
+        raise HTTPException(400, "Missing install_id")
+
+    # Step 1: Find and validate token
+    token_hash = _hash_token(raw_token)
+    result = await db.execute(
+        select(RegistrationToken).where(RegistrationToken.token_hash == token_hash)
+    )
+    token = result.scalar_one_or_none()
+
+    if not token:
+        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id,
+                         message="Invalid registration token")
+        raise HTTPException(403, "Invalid registration token")
+
+    if token.is_revoked:
+        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id,
+                         message=f"Token {token.token_preview} is revoked")
+        raise HTTPException(403, "Registration token has been revoked")
+
+    if token.used_at:
+        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id,
+                         message=f"Token {token.token_preview} already used")
+        raise HTTPException(403, "Registration token has already been used")
+
+    now = _utcnow()
+    if token.expires_at and _aware(token.expires_at) < now:
+        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id,
+                         message=f"Token {token.token_preview} expired at {token.expires_at.isoformat()}")
+        raise HTTPException(403, "Registration token has expired")
+
+    # Step 2: Check for install_id conflicts
+    existing = await db.execute(
+        select(CentralDevice).where(CentralDevice.install_id == install_id)
+    )
+    existing_device = existing.scalar_one_or_none()
+    if existing_device:
+        await _log_audit(db, "DEVICE_REGISTERED_BIND_CONFLICT", install_id=install_id,
+                         device_id=existing_device.id,
+                         message=f"install_id {install_id} already bound to device {existing_device.id}")
+        raise HTTPException(409, f"install_id already bound to device {existing_device.id}. Rebind requires Superadmin.")
+
+    # Step 3: Resolve customer/location from token
+    location_id = token.location_id
+    customer_id = token.customer_id
+
+    if location_id and not customer_id:
+        loc_result = await db.execute(select(CentralLocation).where(CentralLocation.id == location_id))
+        loc = loc_result.scalar_one_or_none()
+        if loc:
+            customer_id = loc.customer_id
+
+    if not location_id and not customer_id:
+        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id,
+                         message="Token has no customer/location assignment")
+        raise HTTPException(400, "Token has no customer or location assigned — cannot register device")
+
+    # Step 4: Create device with API key + bind install_id
+    api_key = f"dk_{secrets.token_urlsafe(32)}"
+    effective_name = device_name or token.device_name_template or f"Kiosk-{install_id[:8]}"
+
+    new_device = CentralDevice(
+        location_id=location_id,
+        install_id=install_id,
+        api_key=api_key,
+        device_name=effective_name,
+        status="active",
+        binding_status="bound",
+        last_sync_at=now,
+        last_sync_ip=request.client.host if request.client else None,
+        sync_count=0,
+        registered_via_token_id=token.id,
+    )
+    db.add(new_device)
+    await db.flush()
+
+    # Step 5: Mark token as used
+    token.used_at = now
+    token.used_by_install_id = install_id
+    token.used_by_device_id = new_device.id
+    await db.flush()
+
+    # Step 6: Resolve license info for response
+    license_status = "no_license"
+    license_id = token.license_id
+    plan_type = None
+    expiry = None
+    customer_name = None
+
+    if customer_id:
+        cust_result = await db.execute(select(CentralCustomer).where(CentralCustomer.id == customer_id))
+        cust = cust_result.scalar_one_or_none()
+        if cust:
+            customer_name = cust.name
+
+    if license_id:
+        lic_result = await db.execute(select(CentralLicense).where(CentralLicense.id == license_id))
+        lic = lic_result.scalar_one_or_none()
+        if lic:
+            license_status = _compute_status(lic, now)
+            plan_type = lic.plan_type
+            expiry = lic.ends_at.isoformat() if lic.ends_at else None
+    elif customer_id:
+        # Find best license for customer/location
+        conditions = [CentralLicense.customer_id == customer_id]
+        if location_id:
+            conditions.append(
+                (CentralLicense.location_id == location_id) | (CentralLicense.location_id.is_(None))
+            )
+        lic_result = await db.execute(select(CentralLicense).where(and_(*conditions)))
+        lics = lic_result.scalars().all()
+        if lics:
+            best = max(lics, key=lambda x: {"active": 5, "test": 4, "grace": 3, "expired": 1, "blocked": 0}.get(_compute_status(x, now), 0))
+            license_status = _compute_status(best, now)
+            plan_type = best.plan_type
+            license_id = best.id
+            expiry = best.ends_at.isoformat() if best.ends_at else None
+
+    await _log_audit(
+        db, "DEVICE_REGISTERED",
+        device_id=new_device.id,
+        install_id=install_id,
+        license_id=license_id,
+        message=f"Device {effective_name} registered via token {token.token_preview}. "
+                f"Customer={customer_name} License={license_status}",
+    )
+    await _log_audit(db, "REG_TOKEN_USED", message=f"Token {token.token_preview} used by {install_id}")
+
+    logger.info(f"[REG] Device registered: {effective_name} install_id={install_id[:12]}... api_key={api_key[:12]}...")
+
+    return {
+        "success": True,
+        "device_id": new_device.id,
+        "device_name": effective_name,
+        "api_key": api_key,
+        "customer_id": customer_id,
+        "customer_name": customer_name,
+        "location_id": location_id,
+        "license_id": license_id,
+        "license_status": license_status,
+        "plan_type": plan_type,
+        "expiry": expiry,
+        "binding_status": "bound",
+        "server_timestamp": now.isoformat(),
+    }
+
+
+async def _log_audit(
+    db: AsyncSession,
+    action: str,
+    device_id: str = None,
+    install_id: str = None,
+    license_id: str = None,
+    message: str = None,
+):
+    """Write to central audit log."""
+    try:
+        entry = CentralAuditLog(
+            action=action,
+            device_id=device_id,
+            install_id=install_id,
+            license_id=license_id,
+            message=message,
+            timestamp=_utcnow(),
+        )
+        db.add(entry)
+        await db.flush()
+    except Exception as e:
+        logger.error(f"[AUDIT] Failed: {e}")

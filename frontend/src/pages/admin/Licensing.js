@@ -5,7 +5,8 @@ import {
   KeyRound, Building2, MapPin, Monitor, FileKey,
   Plus, RefreshCw, Ban, CheckCircle, Clock, ArrowUpRight,
   Users, AlertTriangle, Shield, Link2, Unlink, Fingerprint,
-  ScrollText, Filter, Activity, Wifi, WifiOff, Server, Settings2, Save
+  ScrollText, Filter, Activity, Wifi, WifiOff, Server, Settings2, Save,
+  Ticket, Copy, XCircle, Eye
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -127,6 +128,12 @@ const AUDIT_COLORS = {
   REMOTE_SYNC_OK: 'text-emerald-400 bg-emerald-500/10',
   REMOTE_SYNC_FAILED: 'text-amber-400 bg-amber-500/10',
   SYNC_CONFIG_UPDATED: 'text-blue-400 bg-blue-500/10',
+  REG_TOKEN_CREATED: 'text-blue-400 bg-blue-500/10',
+  REG_TOKEN_REVOKED: 'text-red-400 bg-red-500/10',
+  REG_TOKEN_USED: 'text-cyan-400 bg-cyan-500/10',
+  DEVICE_REGISTERED: 'text-emerald-400 bg-emerald-500/10',
+  DEVICE_REGISTRATION_FAILED: 'text-red-400 bg-red-500/10',
+  DEVICE_REGISTERED_BIND_CONFLICT: 'text-red-400 bg-red-500/10',
 };
 
 function AuditBadge({ action }) {
@@ -134,6 +141,23 @@ function AuditBadge({ action }) {
   return (
     <span className={`text-xs px-1.5 py-0.5 rounded font-mono whitespace-nowrap ${colorClass}`} data-testid={`lic-audit-badge-${action}`}>
       {action}
+    </span>
+  );
+}
+
+const TOKEN_STATUS_COLORS = {
+  active: 'text-emerald-400 bg-emerald-500/10',
+  used: 'text-blue-400 bg-blue-500/10',
+  expired: 'text-zinc-400 bg-zinc-500/10',
+  revoked: 'text-red-400 bg-red-500/10',
+};
+
+function TokenStatusBadge({ status }) {
+  const colorClass = TOKEN_STATUS_COLORS[status] || TOKEN_STATUS_COLORS.expired;
+  const labels = { active: 'Aktiv', used: 'Verwendet', expired: 'Abgelaufen', revoked: 'Widerrufen' };
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded font-medium ${colorClass}`} data-testid={`token-status-${status}`}>
+      {labels[status] || status}
     </span>
   );
 }
@@ -156,10 +180,15 @@ export default function Licensing() {
   const [syncConfig, setSyncConfig] = useState({ enabled: false, server_url: '', api_key_masked: '', api_key_set: false, interval_hours: 6, device_name: '' });
   const [syncForm, setSyncForm] = useState({ server_url: '', api_key: '', interval_hours: 6, device_name: '', enabled: false });
   const [syncStatus, setSyncStatus] = useState(null);
+  const [regTokens, setRegTokens] = useState([]);
+  const [showTokenForm, setShowTokenForm] = useState(false);
+  const [tokenForm, setTokenForm] = useState({ customer_id: '', location_id: '', license_id: '', device_name_template: '', expires_in_hours: 72, note: '' });
+  const [newRawToken, setNewRawToken] = useState(null);
+  const [regStatus, setRegStatus] = useState(null);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [dash, cust, loc, dev, lic, identity, checkSt, syncCfg, syncSt] = await Promise.all([
+      const [dash, cust, loc, dev, lic, identity, checkSt, syncCfg, syncSt, regSt] = await Promise.all([
         axios.get(`${API}/licensing/dashboard`, { headers }),
         axios.get(`${API}/licensing/customers`, { headers }),
         axios.get(`${API}/licensing/locations`, { headers }),
@@ -169,6 +198,7 @@ export default function Licensing() {
         axios.get(`${API}/licensing/check-status`, { headers }).catch(() => ({ data: null })),
         axios.get(`${API}/licensing/sync-config`, { headers }).catch(() => ({ data: {} })),
         axios.get(`${API}/licensing/sync-status`, { headers }).catch(() => ({ data: null })),
+        axios.get(`${API}/licensing/registration-status`).catch(() => ({ data: null })),
       ]);
       setDashboard(dash.data);
       setCustomers(cust.data);
@@ -188,6 +218,7 @@ export default function Licensing() {
         });
       }
       setSyncStatus(syncSt.data);
+      setRegStatus(regSt.data);
     } catch (err) {
       toast.error('Lizenzdaten konnten nicht geladen werden');
     }
@@ -273,6 +304,65 @@ export default function Licensing() {
     }
   };
 
+  // === Registration Token Functions (v3.5.1) ===
+
+  const fetchRegTokens = async () => {
+    try {
+      // Tokens are on the CENTRAL server — use sync config URL
+      const syncCfgUrl = syncConfig.server_url || syncForm.server_url;
+      if (!syncCfgUrl) {
+        toast.error('Keine zentrale Server-URL konfiguriert');
+        return;
+      }
+      const res = await axios.get(`${syncCfgUrl}/api/registration-tokens`, {
+        headers: { Authorization: 'Bearer admin-secret-token' },
+      });
+      setRegTokens(res.data);
+    } catch (err) {
+      toast.error('Tokens konnten nicht geladen werden: ' + (err.response?.data?.detail || err.message));
+    }
+  };
+
+  const createRegToken = async () => {
+    try {
+      const syncCfgUrl = syncConfig.server_url || syncForm.server_url;
+      if (!syncCfgUrl) {
+        toast.error('Keine zentrale Server-URL konfiguriert');
+        return;
+      }
+      const body = { ...tokenForm };
+      if (!body.customer_id) delete body.customer_id;
+      if (!body.location_id) delete body.location_id;
+      if (!body.license_id) delete body.license_id;
+      if (!body.device_name_template) delete body.device_name_template;
+      if (!body.note) delete body.note;
+
+      const res = await axios.post(`${syncCfgUrl}/api/registration-tokens`, body, {
+        headers: { Authorization: 'Bearer admin-secret-token', 'Content-Type': 'application/json' },
+      });
+      setNewRawToken(res.data.raw_token);
+      setShowTokenForm(false);
+      setTokenForm({ customer_id: '', location_id: '', license_id: '', device_name_template: '', expires_in_hours: 72, note: '' });
+      fetchRegTokens();
+      toast.success('Token erstellt');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Token konnte nicht erstellt werden');
+    }
+  };
+
+  const revokeRegToken = async (tokenId) => {
+    try {
+      const syncCfgUrl = syncConfig.server_url || syncForm.server_url;
+      await axios.post(`${syncCfgUrl}/api/registration-tokens/${tokenId}/revoke`, {}, {
+        headers: { Authorization: 'Bearer admin-secret-token' },
+      });
+      toast.success('Token widerrufen');
+      fetchRegTokens();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Fehler');
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="licensing-page">
       <div className="flex items-center justify-between">
@@ -315,6 +405,9 @@ export default function Licensing() {
           </TabsTrigger>
           <TabsTrigger value="sync" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="lic-tab-sync">
             <Server className="w-4 h-4 mr-1" /> {t('lic_sync') || 'Sync'}
+          </TabsTrigger>
+          <TabsTrigger value="tokens" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="lic-tab-tokens" onClick={() => fetchRegTokens()}>
+            <Ticket className="w-4 h-4 mr-1" /> {t('lic_reg_tokens') || 'Tokens'}
           </TabsTrigger>
         </TabsList>
 
@@ -619,7 +712,9 @@ export default function Licensing() {
                   {['LICENSE_CREATED','LICENSE_ACTIVATED','LICENSE_BLOCKED','LICENSE_EXTENDED',
                     'BIND_CREATED','BIND_MISMATCH_DETECTED','BIND_BLOCKED','DEVICE_REBOUND',
                     'LICENSE_CHECK_SUCCESS','LICENSE_CHECK_FAILED',
-                    'REMOTE_SYNC_OK','REMOTE_SYNC_FAILED','SYNC_CONFIG_UPDATED'].map(a => (
+                    'REMOTE_SYNC_OK','REMOTE_SYNC_FAILED','SYNC_CONFIG_UPDATED',
+                    'REG_TOKEN_CREATED','REG_TOKEN_REVOKED','REG_TOKEN_USED',
+                    'DEVICE_REGISTERED','DEVICE_REGISTRATION_FAILED','DEVICE_REGISTERED_BIND_CONFLICT'].map(a => (
                     <option key={a} value={a}>{a}</option>
                   ))}
                 </select>
@@ -791,6 +886,145 @@ export default function Licensing() {
                 <Button onClick={saveSyncConfig} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="sync-config-save-btn">
                   <Save className="w-4 h-4 mr-1" /> {t('lic_sync_save') || 'Konfiguration speichern'}
                 </Button>
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        {/* Registration Tokens (v3.5.1) */}
+        <TabsContent value="tokens">
+          <div className="space-y-4">
+            {/* Registration Status */}
+            {regStatus && (
+              <Card className="bg-zinc-900 border-zinc-800">
+                <CardContent className="py-3 flex items-center gap-3">
+                  <Monitor className="w-4 h-4 text-zinc-400" />
+                  <span className="text-sm text-zinc-300">{t('lic_reg_this_device') || 'Dieses Geraet'}:</span>
+                  <span className={`text-sm font-medium ${regStatus.status === 'registered' ? 'text-emerald-400' : 'text-amber-400'}`} data-testid="reg-device-status">
+                    {regStatus.status === 'registered' ? (t('lic_reg_registered') || 'Registriert') : (t('lic_reg_unregistered') || 'Nicht registriert')}
+                  </span>
+                  {regStatus.device_name && <span className="text-xs text-zinc-500">({regStatus.device_name})</span>}
+                  {regStatus.customer_name && <span className="text-xs text-zinc-500">Kunde: {regStatus.customer_name}</span>}
+                </CardContent>
+              </Card>
+            )}
+
+            {/* New Token Created Banner */}
+            {newRawToken && (
+              <Card className="bg-emerald-500/10 border-emerald-500/30">
+                <CardContent className="py-4">
+                  <div className="flex items-start gap-3">
+                    <CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-sm text-emerald-300 font-medium mb-2">{t('lic_reg_token_created') || 'Neuer Token erstellt — Nur jetzt sichtbar!'}</p>
+                      <div className="flex items-center gap-2 p-2 bg-black/30 rounded font-mono text-sm text-white break-all" data-testid="reg-new-raw-token">
+                        <span className="flex-1">{newRawToken}</span>
+                        <button onClick={() => { navigator.clipboard?.writeText(newRawToken); toast.success('Kopiert'); }} className="text-emerald-400 hover:text-white flex-shrink-0">
+                          <Copy className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-2">{t('lic_reg_token_warning') || 'Diesen Code sicher aufbewahren. Er wird nicht erneut angezeigt.'}</p>
+                      <Button size="sm" onClick={() => setNewRawToken(null)} className="mt-2 bg-zinc-700 hover:bg-zinc-600 text-white text-xs">
+                        {t('lic_reg_dismiss') || 'Verstanden'}
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Token Management */}
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardHeader className="pb-3 flex flex-row items-center justify-between">
+                <CardTitle className="text-white text-base flex items-center gap-2">
+                  <Ticket className="w-5 h-5 text-amber-500" />
+                  {t('lic_reg_tokens') || 'Registration Tokens'}
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" onClick={fetchRegTokens} className="bg-zinc-700 hover:bg-zinc-600 text-white" data-testid="reg-refresh-btn">
+                    <RefreshCw className="w-4 h-4" />
+                  </Button>
+                  <Button size="sm" onClick={() => setShowTokenForm(!showTokenForm)} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="reg-create-btn">
+                    <Plus className="w-4 h-4 mr-1" /> {t('lic_reg_create') || 'Token erstellen'}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Create Token Form */}
+                {showTokenForm && (
+                  <div className="p-4 bg-zinc-800/50 rounded-lg space-y-3 border border-zinc-700" data-testid="reg-token-form">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-zinc-400">{t('lic_customer') || 'Kunde'}</label>
+                        <select className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white" value={tokenForm.customer_id} onChange={e => setTokenForm(f => ({...f, customer_id: e.target.value}))} data-testid="reg-form-customer">
+                          <option value="">-- Optional --</option>
+                          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-zinc-400">{t('lic_location') || 'Standort'}</label>
+                        <select className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white" value={tokenForm.location_id} onChange={e => setTokenForm(f => ({...f, location_id: e.target.value}))} data-testid="reg-form-location">
+                          <option value="">-- Optional --</option>
+                          {locations.filter(l => !tokenForm.customer_id || l.customer_id === tokenForm.customer_id).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-zinc-400">{t('lic_reg_expires') || 'Gueltig (Stunden)'}</label>
+                        <input type="number" min={1} max={720} className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white" value={tokenForm.expires_in_hours} onChange={e => setTokenForm(f => ({...f, expires_in_hours: parseInt(e.target.value) || 72}))} data-testid="reg-form-expires" />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-zinc-400">{t('lic_reg_device_template') || 'Geraetename-Vorlage'}</label>
+                        <input type="text" className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white" placeholder="Kiosk Board 1" value={tokenForm.device_name_template} onChange={e => setTokenForm(f => ({...f, device_name_template: e.target.value}))} data-testid="reg-form-device-template" />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-xs text-zinc-400">{t('lic_reg_note') || 'Notiz'}</label>
+                        <input type="text" className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white" placeholder="Fuer neuen Standort..." value={tokenForm.note} onChange={e => setTokenForm(f => ({...f, note: e.target.value}))} data-testid="reg-form-note" />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button onClick={createRegToken} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="reg-form-submit">
+                        <Ticket className="w-4 h-4 mr-1" /> {t('lic_reg_generate') || 'Token generieren'}
+                      </Button>
+                      <Button onClick={() => setShowTokenForm(false)} className="bg-zinc-700 hover:bg-zinc-600 text-white">
+                        {t('cancel') || 'Abbrechen'}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Token List */}
+                {regTokens.length === 0 && !showTokenForm && (
+                  <p className="text-sm text-zinc-500">{t('lic_reg_no_tokens') || 'Keine Registration Tokens vorhanden. Erstellen Sie einen Token, um ein neues Geraet zu registrieren.'}</p>
+                )}
+                {regTokens.length > 0 && (
+                  <div className="space-y-2 max-h-[500px] overflow-y-auto">
+                    {regTokens.map(tk => (
+                      <div key={tk.id} className="p-3 bg-zinc-800/50 rounded-lg flex items-center gap-3" data-testid={`reg-token-${tk.id}`}>
+                        <div className="flex-shrink-0">
+                          <TokenStatusBadge status={tk.status} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-white font-mono">{tk.token_preview}</span>
+                            {tk.note && <span className="text-xs text-zinc-500 truncate">— {tk.note}</span>}
+                          </div>
+                          <div className="flex items-center gap-3 mt-1 text-xs text-zinc-500">
+                            {tk.expires_at && <span>Ablauf: {new Date(tk.expires_at).toLocaleString('de-DE')}</span>}
+                            {tk.created_by && <span>Von: {tk.created_by}</span>}
+                            {tk.used_by_install_id && <span className="text-emerald-400">Benutzt von: {tk.used_by_install_id.substring(0, 12)}...</span>}
+                          </div>
+                        </div>
+                        {tk.status === 'active' && (
+                          <Button size="sm" onClick={() => revokeRegToken(tk.id)} className="bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs" data-testid={`reg-revoke-${tk.id}`}>
+                            <XCircle className="w-3.5 h-3.5 mr-1" /> {t('lic_reg_revoke') || 'Widerrufen'}
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
           </div>

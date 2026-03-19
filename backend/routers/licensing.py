@@ -9,6 +9,7 @@ Prefix: /api/licensing
 """
 import logging
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -646,3 +647,103 @@ async def trigger_sync_now(admin: User = Depends(require_admin)):
     import asyncio
     asyncio.create_task(cyclic_license_checker._run_check())
     return {"triggered": True, "message": "Hybrid sync triggered"}
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# DEVICE REGISTRATION (v3.5.1)
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/registration-status")
+async def get_registration_status():
+    """Return device registration status. Public endpoint (no auth needed for kiosk UI)."""
+    from backend.services.device_registration_client import device_registration_client
+    from backend.services.device_identity_service import device_identity_service
+    status = device_registration_client.get_status()
+    status["install_id"] = device_identity_service.get_install_id()
+    return status
+
+
+@router.post("/register-device")
+async def register_device_via_token(data: dict):
+    """Register this kiosk device using a one-time registration token.
+    Body: { "token": "drt_...", "device_name": "Kiosk 1" }
+    This is a public endpoint — the token itself provides authorization.
+    Registration MUST succeed online. No offline fallback.
+    """
+    from backend.services.device_registration_client import device_registration_client
+    from backend.services.device_identity_service import device_identity_service
+    from backend.models import Settings
+
+    install_id = device_identity_service.get_install_id()
+    token = data.get("token", "").strip()
+    device_name = data.get("device_name", "").strip() or None
+
+    if not token:
+        raise HTTPException(status_code=400, detail="Kein Registrierungstoken angegeben")
+
+    # Get server URL from sync config
+    try:
+        async with AsyncSession(bind=None) as _:
+            pass
+    except Exception:
+        pass
+
+    server_url = None
+    try:
+        from backend.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            stmt = select(Settings).where(Settings.key == "license_sync_config")
+            result = await db.execute(stmt)
+            s = result.scalar_one_or_none()
+            if s and s.value:
+                server_url = s.value.get("server_url")
+    except Exception:
+        pass
+
+    if not server_url:
+        # Also check if data dict has server_url
+        server_url = data.get("server_url", "").strip() or None
+
+    if not server_url:
+        raise HTTPException(status_code=400, detail="Keine Server-URL konfiguriert. Bitte zuerst unter Sync-Konfiguration eintragen.")
+
+    import platform
+    hostname = platform.node()
+    app_version = None
+    try:
+        version_file = Path(__file__).resolve().parent.parent.parent / "VERSION"
+        if version_file.exists():
+            app_version = version_file.read_text().strip()
+    except Exception:
+        pass
+
+    result = await device_registration_client.register(
+        server_url=server_url,
+        token=token,
+        install_id=install_id,
+        device_name=device_name,
+        hostname=hostname,
+        app_version=app_version,
+    )
+
+    if result.get("success"):
+        # Log locally
+        try:
+            from backend.database import AsyncSessionLocal as ASL
+            async with ASL() as db:
+                await audit_log_service.log(
+                    db, "DEVICE_REGISTERED",
+                    install_id=install_id,
+                    new_value={"device_id": result.get("device_id"), "customer": result.get("customer_name")},
+                    message=f"Device registered via token. Customer={result.get('customer_name')}",
+                )
+                await db.commit()
+        except Exception:
+            pass
+        return result
+    else:
+        status_code = result.get("status_code", 400)
+        if status_code >= 500:
+            status_code = 502
+        raise HTTPException(status_code=status_code, detail=result.get("error", "Registrierung fehlgeschlagen"))

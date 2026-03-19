@@ -937,13 +937,19 @@ async def kiosk_license_status(db: AsyncSession = Depends(get_db)):
     """Public endpoint for the kiosk UI to check license status.
     Returns the effective license status without requiring auth.
     The kiosk needs this to show overlay/warnings.
-    v3.4.3: includes install_id for device binding check."""
+    v3.4.3: includes install_id for device binding check.
+    v3.5.1: includes registration_status for unregistered device detection."""
     try:
         from backend.services.license_service import license_service
         from backend.services.device_identity_service import device_identity_service
+        from backend.services.device_registration_client import device_registration_client
+
         _install_id = device_identity_service.get_install_id()
+        reg_status = device_registration_client.registration_status
+
         status = await license_service.get_effective_status(db, install_id=_install_id)
         status["install_id"] = _install_id
+        status["registration_status"] = reg_status
         license_service.save_to_cache(status)
         return status
     except Exception as e:
@@ -958,7 +964,7 @@ async def kiosk_license_status(db: AsyncSession = Depends(get_db)):
         except Exception:
             pass
         # Fail-open: return active to avoid blocking on errors
-        return {"status": "active", "source": "fallback_error"}
+        return {"status": "active", "source": "fallback_error", "registration_status": "registered"}
 
 
 

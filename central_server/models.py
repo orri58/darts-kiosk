@@ -1,6 +1,7 @@
 """
 Central License Server — Models
 Mirror of licensing models from the kiosk, but in the central server's own DB.
+v3.5.1: Added RegistrationToken model for device onboarding.
 """
 from sqlalchemy import Column, String, Integer, Boolean, DateTime, Text, ForeignKey, JSON
 from sqlalchemy.orm import relationship
@@ -82,6 +83,7 @@ class CentralDevice(Base):
     last_sync_at = Column(DateTime, nullable=True)
     last_sync_ip = Column(String(50), nullable=True)
     sync_count = Column(Integer, default=0)
+    registered_via_token_id = Column(String(36), nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -107,6 +109,30 @@ class CentralLicense(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     customer = relationship("CentralCustomer", back_populates="licenses")
+
+
+class RegistrationToken(Base):
+    """One-time registration token for device onboarding (v3.5.1)."""
+    __tablename__ = "registration_tokens"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    token_hash = Column(String(128), nullable=False, unique=True, index=True)
+    token_preview = Column(String(12), nullable=False)
+    customer_id = Column(String(36), ForeignKey("customers.id"), nullable=True, index=True)
+    location_id = Column(String(36), ForeignKey("locations.id"), nullable=True)
+    license_id = Column(String(36), ForeignKey("licenses.id"), nullable=True)
+    device_name_template = Column(String(100), nullable=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    used_by_install_id = Column(String(64), nullable=True)
+    used_by_device_id = Column(String(36), nullable=True)
+    created_by = Column(String(100), nullable=True)
+    note = Column(Text, nullable=True)
+    is_revoked = Column(Boolean, default=False)
+    revoked_at = Column(DateTime, nullable=True)
+    revoked_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
 class CentralAuditLog(Base):
