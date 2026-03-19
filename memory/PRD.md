@@ -1124,6 +1124,35 @@ autostart.bat:
   - 91/91 Tests bestanden (71 Unit + 20 E2E)
   - NICHT GEAENDERT: Observer, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
 
+- v3.4.5: Zyklische Lizenzpruefung + Audit-Log (2026-03-19)
+  - NEUES FEATURE: Background License Checker
+    - Laeuft automatisch beim Serverstart + alle 6h (konfigurierbar)
+    - Intervall konfigurierbar via Settings (license_check_interval_hours)
+    - Fail-Safe: Bei Fehlern bleibt letzter gueltiger Cache aktiv
+    - Status-Tracking: last_check_at, last_check_status, check_count
+    - Manueller Trigger via POST /api/licensing/check-now
+  - NEUES FEATURE: Immutables Audit-Log (lic_audit_log Tabelle)
+    - Felder: id, timestamp, action, license_id, device_id, install_id, previous_value, new_value, actor, message
+    - Geloggte Events: LICENSE_CREATED, LICENSE_ACTIVATED, LICENSE_BLOCKED, LICENSE_EXTENDED,
+      BIND_CREATED, BIND_MISMATCH_DETECTED, BIND_BLOCKED, DEVICE_REBOUND, LICENSE_CHECK_SUCCESS, LICENSE_CHECK_FAILED
+    - Zentraler AuditLogService (append-only, never raises)
+    - Integration in alle bestehenden Lizenz-Aktionen
+  - Neue Services:
+    - audit_log_service.py: Zentraler Audit-Logger
+    - cyclic_license_checker.py: asyncio Background-Task
+  - Neue API-Endpunkte:
+    - GET /api/licensing/audit-log (mit Filter: action, license_id, device_id, Pagination)
+    - GET /api/licensing/check-status (Checker-Status)
+    - POST /api/licensing/check-now (manueller Trigger)
+  - Admin UI: Neuer "Audit-Log" Tab in Licensing
+    - Farbcodierte Event-Badges (gruen=Erfolg, gelb=Warnung, rot=Blockierung, cyan=Erweiterung)
+    - Filter-Dropdown nach Event-Typ
+    - "Jetzt pruefen" Button mit letztem Check-Status
+    - Scrollbare Event-Liste
+  - i18n: 7 neue DE/EN Keys (lic_audit_log, lic_check_now, lic_last_check, etc.)
+  - 117/117 Tests bestanden (82 Unit + 35 E2E)
+  - NICHT GEAENDERT: Observer, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls~~ → v3.3.1
@@ -1143,10 +1172,10 @@ autostart.bat:
 - [x] ~~Lizenz-Ablauf-Overlay im Kiosk-UI~~ → v3.4.2
 - [x] ~~Geraete-Bindung: install_id automatisch generieren beim ersten Start~~ → v3.4.3
 - [x] ~~Mismatch Grace + Device Tracking: Konfigurierbarer Grace-Zeitraum bei Mismatch~~ → v3.4.4
-- [ ] Zyklische Lizenzpruefung im Agent/Backend (z.B. alle 6h)
+- [x] ~~Zyklische Lizenzpruefung im Agent/Backend (z.B. alle 6h)~~ → v3.4.5
+- [x] ~~Lizenz-Audit-Log (alle Aktionen protokolliert)~~ → v3.4.5
 - [ ] Rollen-basierte Sichtbarkeit (Operator sieht nur eigene Kunden)
 - [ ] Superadmin-Setup Wizard
-- [ ] Lizenz-Audit-Log (alle Aktionen protokolliert)
 
 ### P2
 - [ ] Chromium Extension as alternative to Playwright observer
