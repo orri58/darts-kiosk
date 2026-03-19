@@ -4,7 +4,8 @@ import { toast } from 'sonner';
 import {
   KeyRound, Building2, MapPin, Monitor, FileKey,
   Plus, RefreshCw, Ban, CheckCircle, Clock, ArrowUpRight,
-  Users, AlertTriangle, Shield, Link2, Unlink, Fingerprint
+  Users, AlertTriangle, Shield, Link2, Unlink, Fingerprint,
+  ScrollText, Filter, Activity
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -110,6 +111,30 @@ function BindingBadge({ status, t }) {
   );
 }
 
+const AUDIT_COLORS = {
+  LICENSE_CREATED: 'text-blue-400 bg-blue-500/10',
+  LICENSE_ACTIVATED: 'text-emerald-400 bg-emerald-500/10',
+  LICENSE_BLOCKED: 'text-red-400 bg-red-500/10',
+  LICENSE_EXTENDED: 'text-cyan-400 bg-cyan-500/10',
+  LICENSE_EXPIRED: 'text-zinc-400 bg-zinc-500/10',
+  BIND_CREATED: 'text-emerald-400 bg-emerald-500/10',
+  BIND_MISMATCH_DETECTED: 'text-amber-400 bg-amber-500/10',
+  BIND_GRACE_ACTIVE: 'text-amber-400 bg-amber-500/10',
+  BIND_BLOCKED: 'text-red-400 bg-red-500/10',
+  DEVICE_REBOUND: 'text-cyan-400 bg-cyan-500/10',
+  LICENSE_CHECK_SUCCESS: 'text-emerald-400 bg-emerald-500/10',
+  LICENSE_CHECK_FAILED: 'text-red-400 bg-red-500/10',
+};
+
+function AuditBadge({ action }) {
+  const colorClass = AUDIT_COLORS[action] || 'text-zinc-400 bg-zinc-500/10';
+  return (
+    <span className={`text-xs px-1.5 py-0.5 rounded font-mono whitespace-nowrap ${colorClass}`} data-testid={`lic-audit-badge-${action}`}>
+      {action}
+    </span>
+  );
+}
+
 export default function Licensing() {
   const { token } = useAuth();
   const { t } = useI18n();
@@ -122,16 +147,20 @@ export default function Licensing() {
   const [licenses, setLicenses] = useState([]);
   const [showForm, setShowForm] = useState(null);
   const [deviceIdentity, setDeviceIdentity] = useState(null);
+  const [auditLog, setAuditLog] = useState({ entries: [], total: 0 });
+  const [auditFilter, setAuditFilter] = useState({ action: '', limit: 30 });
+  const [checkStatus, setCheckStatus] = useState(null);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [dash, cust, loc, dev, lic, identity] = await Promise.all([
+      const [dash, cust, loc, dev, lic, identity, checkSt] = await Promise.all([
         axios.get(`${API}/licensing/dashboard`, { headers }),
         axios.get(`${API}/licensing/customers`, { headers }),
         axios.get(`${API}/licensing/locations`, { headers }),
         axios.get(`${API}/licensing/devices`, { headers }),
         axios.get(`${API}/licensing/licenses`, { headers }),
         axios.get(`${API}/licensing/device-identity`, { headers }).catch(() => ({ data: null })),
+        axios.get(`${API}/licensing/check-status`, { headers }).catch(() => ({ data: null })),
       ]);
       setDashboard(dash.data);
       setCustomers(cust.data);
@@ -139,6 +168,7 @@ export default function Licensing() {
       setDevices(dev.data);
       setLicenses(lic.data);
       setDeviceIdentity(identity.data);
+      setCheckStatus(checkSt.data);
     } catch (err) {
       toast.error('Lizenzdaten konnten nicht geladen werden');
     }
@@ -183,6 +213,25 @@ export default function Licensing() {
     }
   };
 
+  const fetchAuditLog = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({ limit: auditFilter.limit });
+      if (auditFilter.action) params.set('action', auditFilter.action);
+      const res = await axios.get(`${API}/licensing/audit-log?${params}`, { headers });
+      setAuditLog(res.data);
+    } catch { /* silent */ }
+  }, [token, auditFilter]);
+
+  const triggerCheck = async () => {
+    try {
+      await axios.post(`${API}/licensing/check-now`, {}, { headers });
+      toast.success(t('lic_check_triggered'));
+      setTimeout(() => { fetchAll(); fetchAuditLog(); }, 2000);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Fehler');
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="licensing-page">
       <div className="flex items-center justify-between">
@@ -219,6 +268,9 @@ export default function Licensing() {
           </TabsTrigger>
           <TabsTrigger value="licenses" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="lic-tab-licenses">
             <FileKey className="w-4 h-4 mr-1" /> {t('lic_licenses')}
+          </TabsTrigger>
+          <TabsTrigger value="audit" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="lic-tab-audit" onClick={() => fetchAuditLog()}>
+            <ScrollText className="w-4 h-4 mr-1" /> {t('lic_audit_log')}
           </TabsTrigger>
         </TabsList>
 
@@ -486,6 +538,68 @@ export default function Licensing() {
                   </div>
                 );
               })}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Audit Log */}
+        <TabsContent value="audit">
+          <Card className="bg-zinc-900 border-zinc-800">
+            <CardHeader className="pb-3 flex flex-row items-center justify-between">
+              <CardTitle className="text-white text-base">{t('lic_audit_log')}</CardTitle>
+              <div className="flex items-center gap-2">
+                {checkStatus && (
+                  <span className="text-xs text-zinc-400" data-testid="lic-check-status">
+                    {t('lic_last_check')}: {checkStatus.last_check_at ? new Date(checkStatus.last_check_at).toLocaleString('de-DE') : '—'}
+                    {checkStatus.last_check_ok === false && <span className="text-red-400 ml-1">({t('lic_check_failed')})</span>}
+                    {checkStatus.last_check_ok === true && <span className="text-emerald-400 ml-1">OK</span>}
+                  </span>
+                )}
+                <Button size="sm" onClick={triggerCheck} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="lic-trigger-check-btn">
+                  <Activity className="w-4 h-4 mr-1" /> {t('lic_check_now')}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {/* Filter */}
+              <div className="flex items-center gap-2 mb-3">
+                <Filter className="w-4 h-4 text-zinc-400" />
+                <select
+                  className="bg-zinc-800 border border-zinc-700 text-sm text-white rounded px-2 py-1"
+                  value={auditFilter.action}
+                  onChange={e => { setAuditFilter(f => ({ ...f, action: e.target.value })); setTimeout(fetchAuditLog, 100); }}
+                  data-testid="lic-audit-filter-action"
+                >
+                  <option value="">{t('lic_all_events')}</option>
+                  {['LICENSE_CREATED','LICENSE_ACTIVATED','LICENSE_BLOCKED','LICENSE_EXTENDED',
+                    'BIND_CREATED','BIND_MISMATCH_DETECTED','BIND_BLOCKED','DEVICE_REBOUND',
+                    'LICENSE_CHECK_SUCCESS','LICENSE_CHECK_FAILED'].map(a => (
+                    <option key={a} value={a}>{a}</option>
+                  ))}
+                </select>
+                <span className="text-xs text-zinc-500">{auditLog.total} {t('lic_entries')}</span>
+              </div>
+
+              {/* Entries */}
+              {auditLog.entries.length === 0 && <p className="text-sm text-zinc-500">{t('lic_no_data')}</p>}
+              <div className="space-y-1.5 max-h-[500px] overflow-y-auto">
+                {auditLog.entries.map(e => (
+                  <div key={e.id} className="flex items-start gap-3 p-2 bg-zinc-800/50 rounded text-xs" data-testid={`lic-audit-${e.id}`}>
+                    <div className="flex-shrink-0 w-[140px] text-zinc-500">
+                      {e.timestamp ? new Date(e.timestamp).toLocaleString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit', day: '2-digit', month: '2-digit' }) : '—'}
+                    </div>
+                    <div className="flex-shrink-0">
+                      <AuditBadge action={e.action} />
+                    </div>
+                    <div className="flex-1 text-zinc-300 break-all">
+                      {e.message || e.action}
+                      {e.actor && e.actor !== 'system' && (
+                        <span className="text-zinc-500 ml-2">({e.actor})</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

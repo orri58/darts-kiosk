@@ -123,6 +123,16 @@ class LicenseValidationService:
                         logger.info(
                             f"[BIND_CREATED] board={board_id} install_id={install_id} device={board_device.id}"
                         )
+                        try:
+                            from backend.services.audit_log_service import audit_log_service
+                            await audit_log_service.log(
+                                db, "BIND_CREATED", device_id=board_device.id,
+                                install_id=install_id,
+                                new_value={"board_id": board_id, "binding_status": "bound"},
+                                message=f"Auto-bind via board_id={board_id}",
+                            )
+                        except Exception:
+                            pass
                     else:
                         # Not binding yet, just resolving chain
                         binding_status = "unbound"
@@ -139,6 +149,17 @@ class LicenseValidationService:
                         board_device, install_id, now, grace_hours
                     )
                     await db.flush()
+                    # v3.4.5: Audit log
+                    try:
+                        from backend.services.audit_log_service import audit_log_service
+                        audit_action = "BIND_MISMATCH_DETECTED" if binding_status == "mismatch_grace" else "BIND_BLOCKED"
+                        await audit_log_service.log(
+                            db, audit_action, device_id=board_device.id, install_id=install_id,
+                            previous_value={"install_id": board_device.install_id, "board_id": board_id},
+                            message=f"Board {board_id}: {binding_status}",
+                        )
+                    except Exception:
+                        pass
 
         # Resolve device → location → customer chain
         if device_id and not location_id:
@@ -243,6 +264,7 @@ class LicenseValidationService:
         """
         Evaluate mismatch grace period on a device.
         Updates device fields in-place (caller must flush).
+        Audit logging is handled by the caller (async context).
 
         Returns: "mismatch_grace" | "mismatch_expired"
         """
@@ -315,6 +337,19 @@ class LicenseValidationService:
             dev = bound_devices[0]
             binding = self._evaluate_mismatch_grace(dev, install_id, now, grace_hours)
             await db.flush()
+            # v3.4.5: Audit log for mismatch events
+            try:
+                from backend.services.audit_log_service import audit_log_service
+                if binding == "mismatch_grace" and not dev.previous_install_id:
+                    pass  # Already logged by _evaluate_mismatch_grace logger
+                audit_action = "BIND_MISMATCH_DETECTED" if binding == "mismatch_grace" else "BIND_BLOCKED"
+                await audit_log_service.log(
+                    db, audit_action, device_id=dev.id, install_id=install_id,
+                    previous_value={"install_id": dev.install_id},
+                    message=f"{binding}: expected={dev.install_id} got={install_id}",
+                )
+            except Exception:
+                pass
             return binding
 
         # No bound devices yet
@@ -331,6 +366,16 @@ class LicenseValidationService:
             db.add(new_device)
             await db.flush()
             logger.info(f"[BIND_CREATED] install_id={install_id} device={new_device.id} location={location_id}")
+            try:
+                from backend.services.audit_log_service import audit_log_service
+                await audit_log_service.log(
+                    db, "BIND_CREATED", device_id=new_device.id,
+                    install_id=install_id,
+                    new_value={"location_id": location_id, "binding_status": "bound"},
+                    message=f"First bind at location {location_id}",
+                )
+            except Exception:
+                pass
             return "first_bind"
 
         return "unbound"

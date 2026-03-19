@@ -23,6 +23,7 @@ from backend.models.licensing import (
     LicenseStatus, DeviceStatus, CustomerStatus, SystemRole,
 )
 from backend.services.license_service import license_service
+from backend.services.audit_log_service import audit_log_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/licensing", tags=["licensing"])
@@ -213,6 +214,11 @@ async def create_license(data: dict, admin: User = Depends(require_admin), db: A
     db.add(lic)
     await db.flush()
     logger.info(f"[LICENSE] License created: plan={lic.plan_type} customer={data['customer_id']} status={lic.status}")
+    await audit_log_service.log(
+        db, "LICENSE_CREATED", license_id=lic.id, actor=admin.username,
+        new_value={"plan_type": lic.plan_type, "status": lic.status, "customer_id": data["customer_id"]},
+        message=f"License created: {lic.plan_type} for customer {data['customer_id']}",
+    )
     return _serialize_license(lic)
 
 
@@ -252,6 +258,10 @@ async def block_license(license_id: str, admin: User = Depends(require_admin), d
     lic.status = LicenseStatus.BLOCKED.value
     await db.flush()
     logger.info(f"[LICENSE] License BLOCKED: id={license_id}")
+    await audit_log_service.log(
+        db, "LICENSE_BLOCKED", license_id=license_id, actor=admin.username,
+        previous_value={"status": "active"}, new_value={"status": "blocked"},
+    )
     return _serialize_license(lic)
 
 
@@ -264,6 +274,10 @@ async def activate_license(license_id: str, admin: User = Depends(require_admin)
     lic.status = LicenseStatus.ACTIVE.value
     await db.flush()
     logger.info(f"[LICENSE] License ACTIVATED: id={license_id}")
+    await audit_log_service.log(
+        db, "LICENSE_ACTIVATED", license_id=license_id, actor=admin.username,
+        previous_value={"status": "blocked"}, new_value={"status": "active"},
+    )
     return _serialize_license(lic)
 
 
@@ -288,6 +302,11 @@ async def extend_license(license_id: str, data: dict, admin: User = Depends(requ
         lic.status = LicenseStatus.ACTIVE.value
     await db.flush()
     logger.info(f"[LICENSE] License EXTENDED: id={license_id} +{days}d → ends_at={lic.ends_at.isoformat()}")
+    await audit_log_service.log(
+        db, "LICENSE_EXTENDED", license_id=license_id, actor=admin.username,
+        new_value={"days": days, "ends_at": lic.ends_at.isoformat(), "status": lic.status},
+        message=f"+{days}d → {lic.ends_at.isoformat()}",
+    )
     return _serialize_license(lic)
 
 
@@ -384,11 +403,12 @@ async def rebind_device(
     if "error" in result:
         raise HTTPException(404, result["error"])
 
-    from backend.dependencies import log_audit
-    await log_audit(
-        db, admin, "device_rebind",
-        entity_type="device", entity_id=device_id,
-        details={"old_install_id": result.get("old_install_id"), "new_install_id": new_install_id},
+    await audit_log_service.log(
+        db, "DEVICE_REBOUND", device_id=device_id, install_id=new_install_id,
+        actor=admin.username,
+        previous_value={"install_id": result.get("old_install_id")},
+        new_value={"install_id": new_install_id},
+        message=f"Rebound: {result.get('old_install_id')} → {new_install_id}",
     )
 
     logger.info(
@@ -437,3 +457,85 @@ async def update_binding_settings(
 
     logger.info(f"[LICENSE] Binding grace hours updated to {hours} by {admin.username}")
     return {"binding_grace_hours": int(hours)}
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUDIT LOG (v3.4.5)
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/audit-log")
+async def get_audit_log(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+    limit: int = 50,
+    offset: int = 0,
+    action: str = None,
+    license_id: str = None,
+    device_id: str = None,
+):
+    """Return audit log entries with optional filters."""
+    from backend.models.licensing import LicAuditLog
+    stmt = select(LicAuditLog).order_by(LicAuditLog.timestamp.desc())
+
+    if action:
+        stmt = stmt.where(LicAuditLog.action == action)
+    if license_id:
+        stmt = stmt.where(LicAuditLog.license_id == license_id)
+    if device_id:
+        stmt = stmt.where(LicAuditLog.device_id == device_id)
+
+    # Total count (with same filters)
+    from sqlalchemy import func
+    count_stmt = select(func.count(LicAuditLog.id))
+    if action:
+        count_stmt = count_stmt.where(LicAuditLog.action == action)
+    if license_id:
+        count_stmt = count_stmt.where(LicAuditLog.license_id == license_id)
+    if device_id:
+        count_stmt = count_stmt.where(LicAuditLog.device_id == device_id)
+
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar() or 0
+
+    stmt = stmt.offset(offset).limit(limit)
+    result = await db.execute(stmt)
+    entries = result.scalars().all()
+
+    return {
+        "total": total,
+        "entries": [
+            {
+                "id": e.id,
+                "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+                "action": e.action,
+                "license_id": e.license_id,
+                "device_id": e.device_id,
+                "install_id": e.install_id,
+                "previous_value": e.previous_value,
+                "new_value": e.new_value,
+                "actor": e.actor,
+                "message": e.message,
+            }
+            for e in entries
+        ],
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# LICENSE CHECK STATUS (v3.4.5)
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/check-status")
+async def get_license_check_status(admin: User = Depends(require_admin)):
+    """Return the status of the cyclic license checker."""
+    from backend.services.cyclic_license_checker import cyclic_license_checker
+    return cyclic_license_checker.get_status()
+
+
+@router.post("/check-now")
+async def trigger_license_check(admin: User = Depends(require_admin)):
+    """Manually trigger a license check cycle."""
+    from backend.services.cyclic_license_checker import cyclic_license_checker
+    import asyncio
+    asyncio.create_task(cyclic_license_checker._run_check())
+    return {"triggered": True, "message": "License check triggered"}

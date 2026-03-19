@@ -159,3 +159,24 @@ class UserMembership(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUDIT LOG (v3.4.5)
+# ═══════════════════════════════════════════════════════════════
+
+class LicAuditLog(Base):
+    """Immutable audit trail for all licensing events."""
+    __tablename__ = "lic_audit_log"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    timestamp = Column(DateTime, nullable=False, default=_utcnow, index=True)
+    action = Column(String(50), nullable=False, index=True)
+    license_id = Column(String(36), nullable=True, index=True)
+    device_id = Column(String(36), nullable=True, index=True)
+    install_id = Column(String(64), nullable=True)
+    previous_value = Column(JSON, nullable=True)
+    new_value = Column(JSON, nullable=True)
+    actor = Column(String(100), nullable=False, default="system")  # system, admin username, etc.
+    message = Column(Text, nullable=True)

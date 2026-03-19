@@ -229,11 +229,16 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Autodarts Desktop startup check failed (non-critical): {exc}")
 
+    # v3.4.5: Start cyclic license checker
+    from backend.services.cyclic_license_checker import cyclic_license_checker
+    await cyclic_license_checker.start()
+
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
     logger.info(f"Autodarts mode: {os.environ.get('AUTODARTS_MODE', 'observer')}")
     yield
     # Shutdown: stop watchdog, close all observers
+    await cyclic_license_checker.stop()
     await stop_watchdog()
     from backend.services.autodarts_observer import observer_manager
     await observer_manager.close_all()

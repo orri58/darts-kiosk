@@ -114,8 +114,8 @@ class TestDeviceBinding:
 
         result = await svc._check_device_binding(mock_db, install_id, location_id, now, 48, trigger_binding=True)
         assert result == "first_bind"
-        # Verify device was added
-        mock_db.add.assert_called_once()
+        # Verify device was added (+ audit log entry)
+        assert mock_db.add.call_count >= 1
 
     @pytest.mark.asyncio
     async def test_same_device_returns_bound(self):
