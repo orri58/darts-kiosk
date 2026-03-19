@@ -650,6 +650,31 @@ async def trigger_sync_now(admin: User = Depends(require_admin)):
 
 
 
+@router.get("/central-server-url")
+async def get_central_server_url():
+    """Return the configured central server URL (for kiosk registration overlay).
+    Public endpoint — needed before registration."""
+    import os
+    # 1. Check env var (set in .env or build)
+    url = os.environ.get("CENTRAL_SERVER_URL", "").strip()
+    if url:
+        return {"url": url, "source": "env", "configured": True}
+    # 2. Check sync config in DB
+    try:
+        from backend.database import AsyncSessionLocal
+        from backend.models import Settings
+        async with AsyncSessionLocal() as db:
+            stmt = select(Settings).where(Settings.key == "license_sync_config")
+            result = await db.execute(stmt)
+            s = result.scalar_one_or_none()
+            if s and s.value and s.value.get("server_url"):
+                return {"url": s.value["server_url"], "source": "sync_config", "configured": True}
+    except Exception:
+        pass
+    return {"url": "", "source": "none", "configured": False}
+
+
+
 # ═══════════════════════════════════════════════════════════════
 # DEVICE REGISTRATION (v3.5.1)
 # ═══════════════════════════════════════════════════════════════

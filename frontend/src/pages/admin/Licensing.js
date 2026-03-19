@@ -6,8 +6,9 @@ import {
   Plus, RefreshCw, Ban, CheckCircle, Clock, ArrowUpRight,
   Users, AlertTriangle, Shield, Link2, Unlink, Fingerprint,
   ScrollText, Filter, Activity, Wifi, WifiOff, Server, Settings2, Save,
-  Ticket, Copy, XCircle, Eye
+  Ticket, Copy, XCircle, Eye, QrCode, ChevronRight, Package
 } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
@@ -15,6 +16,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const CENTRAL_API = `${process.env.REACT_APP_BACKEND_URL}/api/central`;
 
 const STATUS_COLORS = {
   active: 'text-emerald-400 bg-emerald-500/10',
@@ -162,6 +164,263 @@ function TokenStatusBadge({ status }) {
   );
 }
 
+const DURATION_PRESETS = [
+  { label: '1 Stunde', value: 1 },
+  { label: '24 Stunden', value: 24 },
+  { label: '7 Tage', value: 168 },
+  { label: '30 Tage', value: 720 },
+  { label: 'Benutzerdefiniert', value: 0 },
+];
+
+function TokenDisplay({ rawToken, onDismiss }) {
+  const [showQr, setShowQr] = useState(false);
+  const copyToken = () => {
+    navigator.clipboard?.writeText(rawToken);
+    toast.success('Token kopiert');
+  };
+  return (
+    <Card className="border-emerald-500/30 bg-emerald-500/5">
+      <CardContent className="py-5">
+        <div className="flex items-start gap-3">
+          <CheckCircle className="w-6 h-6 text-emerald-400 mt-0.5 flex-shrink-0" />
+          <div className="flex-1">
+            <p className="text-emerald-300 font-semibold mb-1">Registrierungscode erstellt</p>
+            <p className="text-xs text-zinc-400 mb-3">Diesen Code auf dem neuen Kiosk-PC eingeben. Er wird nur einmal angezeigt.</p>
+
+            {/* Large token display */}
+            <div className="p-4 bg-black/40 rounded-xl border border-emerald-500/20 mb-3" data-testid="reg-new-raw-token">
+              <p className="text-2xl font-mono text-white tracking-wider text-center break-all select-all">{rawToken}</p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button size="sm" onClick={copyToken} className="bg-emerald-600 hover:bg-emerald-500 text-white" data-testid="reg-copy-token-btn">
+                <Copy className="w-4 h-4 mr-1" /> Kopieren
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setShowQr(!showQr)}
+                className="border-zinc-600 text-zinc-300" data-testid="reg-qr-toggle-btn">
+                <QrCode className="w-4 h-4 mr-1" /> {showQr ? 'QR ausblenden' : 'QR-Code zeigen'}
+              </Button>
+              <Button size="sm" variant="outline" onClick={onDismiss} className="border-zinc-600 text-zinc-300 ml-auto">
+                Verstanden
+              </Button>
+            </div>
+
+            {showQr && (
+              <div className="mt-4 flex justify-center p-4 bg-white rounded-xl" data-testid="reg-qr-code">
+                <QRCodeSVG value={rawToken} size={200} />
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DeviceWizard({ customers, locations, licenses, headers, onCreated, onCancel }) {
+  const [step, setStep] = useState(1);
+  const [form, setForm] = useState({
+    customer_id: '', location_id: '', license_id: '',
+    device_name_template: '', duration: 24, customDuration: 72, note: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const filteredLocations = locations.filter(l => !form.customer_id || l.customer_id === form.customer_id);
+  const filteredLicenses = licenses.filter(l => !form.customer_id || l.customer_id === form.customer_id);
+  const selectedCustomer = customers.find(c => c.id === form.customer_id);
+  const selectedLocation = filteredLocations.find(l => l.id === form.location_id);
+  const expiresHours = form.duration === 0 ? form.customDuration : form.duration;
+
+  const handleCreate = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const body = { expires_in_hours: expiresHours };
+      if (form.customer_id) body.customer_id = form.customer_id;
+      if (form.location_id) body.location_id = form.location_id;
+      if (form.license_id) body.license_id = form.license_id;
+      if (form.device_name_template) body.device_name_template = form.device_name_template;
+      if (form.note) body.note = form.note;
+
+      const res = await axios.post(`${CENTRAL_API}/registration-tokens`, body, {
+        headers: { ...headers, 'Content-Type': 'application/json' },
+      });
+      onCreated(res.data.raw_token);
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status === 502) setError('Zentraler Server nicht erreichbar. Bitte Verbindung prüfen.');
+      else if (status === 403) setError('Keine Berechtigung. Nur Administratoren können Tokens erstellen.');
+      else setError(err?.response?.data?.detail || 'Token konnte nicht erstellt werden.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card className="border-amber-500/30 bg-zinc-900">
+      <CardContent className="py-5 space-y-5">
+        {/* Steps indicator */}
+        <div className="flex items-center gap-2 text-xs">
+          {['Kunde & Standort', 'Details', 'Erstellen'].map((label, i) => (
+            <div key={i} className="flex items-center gap-1">
+              <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold
+                ${step > i + 1 ? 'bg-emerald-500 text-white' : step === i + 1 ? 'bg-amber-500 text-black' : 'bg-zinc-700 text-zinc-400'}`}>
+                {step > i + 1 ? '✓' : i + 1}
+              </span>
+              <span className={step === i + 1 ? 'text-white font-medium' : 'text-zinc-500'}>{label}</span>
+              {i < 2 && <ChevronRight className="w-3 h-3 text-zinc-600 mx-1" />}
+            </div>
+          ))}
+        </div>
+
+        {error && (
+          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm flex items-center gap-2" data-testid="wizard-error">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" /> {error}
+          </div>
+        )}
+
+        {/* Step 1: Customer & Location */}
+        {step === 1 && (
+          <div className="space-y-4" data-testid="wizard-step-1">
+            <div>
+              <label className="block text-sm text-zinc-300 mb-1.5">Kunde auswählen *</label>
+              <select className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white"
+                value={form.customer_id} onChange={e => setForm(f => ({...f, customer_id: e.target.value, location_id: '', license_id: ''}))}
+                data-testid="wizard-customer-select">
+                <option value="">— Bitte wählen —</option>
+                {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            {form.customer_id && (
+              <div>
+                <label className="block text-sm text-zinc-300 mb-1.5">Standort auswählen</label>
+                <select className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white"
+                  value={form.location_id} onChange={e => setForm(f => ({...f, location_id: e.target.value}))}
+                  data-testid="wizard-location-select">
+                  <option value="">— Optional —</option>
+                  {filteredLocations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={onCancel} className="border-zinc-600 text-zinc-300">Abbrechen</Button>
+              <Button onClick={() => setStep(2)} disabled={!form.customer_id}
+                className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="wizard-next-1">
+                Weiter <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 2: Details */}
+        {step === 2 && (
+          <div className="space-y-4" data-testid="wizard-step-2">
+            <div>
+              <label className="block text-sm text-zinc-300 mb-1.5">Gültigkeitsdauer</label>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                {DURATION_PRESETS.map(p => (
+                  <button key={p.value} type="button"
+                    onClick={() => setForm(f => ({...f, duration: p.value}))}
+                    className={`px-3 py-2 rounded-lg text-sm transition-all border ${
+                      form.duration === p.value
+                        ? 'border-amber-500 bg-amber-500/10 text-amber-400 font-medium'
+                        : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-500'
+                    }`}
+                    data-testid={`wizard-duration-${p.value}`}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+              {form.duration === 0 && (
+                <div className="mt-2 flex items-center gap-2">
+                  <input type="number" min={1} max={8760}
+                    className="bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white w-24"
+                    value={form.customDuration}
+                    onChange={e => setForm(f => ({...f, customDuration: parseInt(e.target.value) || 72}))}
+                    data-testid="wizard-custom-duration" />
+                  <span className="text-sm text-zinc-400">Stunden</span>
+                </div>
+              )}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm text-zinc-300 mb-1.5">Gerätename (optional)</label>
+                <input type="text" className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white"
+                  placeholder="z.B. Dartboard 3" value={form.device_name_template}
+                  onChange={e => setForm(f => ({...f, device_name_template: e.target.value}))}
+                  data-testid="wizard-device-name" />
+              </div>
+              <div>
+                <label className="block text-sm text-zinc-300 mb-1.5">Notiz (optional)</label>
+                <input type="text" className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white"
+                  placeholder="z.B. Für neues Board im EG" value={form.note}
+                  onChange={e => setForm(f => ({...f, note: e.target.value}))}
+                  data-testid="wizard-note" />
+              </div>
+            </div>
+            {filteredLicenses.length > 0 && (
+              <div>
+                <label className="block text-sm text-zinc-300 mb-1.5">Lizenz zuweisen (optional)</label>
+                <select className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white"
+                  value={form.license_id} onChange={e => setForm(f => ({...f, license_id: e.target.value}))}
+                  data-testid="wizard-license-select">
+                  <option value="">— Keine Zuweisung —</option>
+                  {filteredLicenses.map(l => (
+                    <option key={l.id} value={l.id}>{l.plan_type} — Max. {l.max_devices} Geräte ({l.status})</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="flex justify-between pt-2">
+              <Button variant="outline" onClick={() => setStep(1)} className="border-zinc-600 text-zinc-300">Zurück</Button>
+              <Button onClick={() => setStep(3)} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="wizard-next-2">
+                Weiter <ChevronRight className="w-4 h-4 ml-1" />
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {/* Step 3: Summary & Create */}
+        {step === 3 && (
+          <div className="space-y-4" data-testid="wizard-step-3">
+            <div className="p-4 bg-zinc-800/80 rounded-xl space-y-2">
+              <p className="text-sm text-zinc-300 font-medium mb-3">Zusammenfassung</p>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <span className="text-zinc-500">Kunde</span>
+                <span className="text-white">{selectedCustomer?.name || '—'}</span>
+                <span className="text-zinc-500">Standort</span>
+                <span className="text-white">{selectedLocation?.name || 'Nicht zugewiesen'}</span>
+                <span className="text-zinc-500">Gerätename</span>
+                <span className="text-white">{form.device_name_template || 'Wird bei Registrierung vergeben'}</span>
+                <span className="text-zinc-500">Gültig für</span>
+                <span className="text-white">
+                  {expiresHours < 24 ? `${expiresHours} Stunde(n)` : `${Math.round(expiresHours / 24)} Tag(e)`}
+                </span>
+                {form.note && <>
+                  <span className="text-zinc-500">Notiz</span>
+                  <span className="text-white">{form.note}</span>
+                </>}
+              </div>
+            </div>
+            <div className="flex justify-between pt-2">
+              <Button variant="outline" onClick={() => setStep(2)} className="border-zinc-600 text-zinc-300">Zurück</Button>
+              <Button onClick={handleCreate} disabled={loading}
+                className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="wizard-create-btn">
+                {loading ? (
+                  <div className="w-5 h-5 border-2 border-black/30 border-t-black rounded-full animate-spin" />
+                ) : (
+                  <><Ticket className="w-4 h-4 mr-1" /> Registrierungscode erstellen</>
+                )}
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Licensing() {
   const { token } = useAuth();
   const { t } = useI18n();
@@ -182,29 +441,9 @@ export default function Licensing() {
   const [syncStatus, setSyncStatus] = useState(null);
   const [regTokens, setRegTokens] = useState([]);
   const [showTokenForm, setShowTokenForm] = useState(false);
-  const [tokenForm, setTokenForm] = useState({ customer_id: '', location_id: '', license_id: '', device_name_template: '', expires_in_hours: 72, note: '' });
   const [newRawToken, setNewRawToken] = useState(null);
   const [regStatus, setRegStatus] = useState(null);
-
-  // v3.5.2: Central server auth state
-  const [centralAuth, setCentralAuth] = useState({ token: null, user: null });
-  const [centralLoginForm, setCentralLoginForm] = useState({ username: '', password: '' });
-  const isCentralSuperadmin = centralAuth.user?.role === 'superadmin';
-  const centralHeaders = centralAuth.token ? { Authorization: `Bearer ${centralAuth.token}` } : { Authorization: 'Bearer admin-secret-token' };
-
-  const getCentralUrl = () => syncConfig.server_url || syncForm.server_url || '';
-
-  const loginToCentral = async () => {
-    const url = getCentralUrl();
-    if (!url) { toast.error('Keine zentrale Server-URL'); return; }
-    try {
-      const res = await axios.post(`${url}/api/auth/login`, centralLoginForm);
-      setCentralAuth({ token: res.data.access_token, user: res.data.user });
-      toast.success(`Angemeldet als ${res.data.user.display_name || res.data.user.username}`);
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Login fehlgeschlagen');
-    }
-  };
+  const [tokenFilter, setTokenFilter] = useState('all');
 
   const fetchAll = useCallback(async () => {
     try {
@@ -324,57 +563,28 @@ export default function Licensing() {
     }
   };
 
-  // === Registration Token Functions (v3.5.1) ===
+  // === Registration Token Functions (v3.5.4 — unified proxy) ===
 
   const fetchRegTokens = async () => {
     try {
-      const syncCfgUrl = getCentralUrl();
-      if (!syncCfgUrl) {
-        toast.error('Keine zentrale Server-URL konfiguriert');
-        return;
-      }
-      const res = await axios.get(`${syncCfgUrl}/api/registration-tokens`, { headers: centralHeaders });
+      const res = await axios.get(`${CENTRAL_API}/registration-tokens`, { headers });
       setRegTokens(res.data);
     } catch (err) {
-      toast.error('Tokens konnten nicht geladen werden: ' + (err.response?.data?.detail || err.message));
-    }
-  };
-
-  const createRegToken = async () => {
-    try {
-      const syncCfgUrl = getCentralUrl();
-      if (!syncCfgUrl) {
-        toast.error('Keine zentrale Server-URL konfiguriert');
-        return;
+      if (err?.response?.status === 502) {
+        toast.error('Zentraler Server nicht erreichbar');
+      } else {
+        toast.error('Tokens konnten nicht geladen werden');
       }
-      const body = { ...tokenForm };
-      if (!body.customer_id) delete body.customer_id;
-      if (!body.location_id) delete body.location_id;
-      if (!body.license_id) delete body.license_id;
-      if (!body.device_name_template) delete body.device_name_template;
-      if (!body.note) delete body.note;
-
-      const res = await axios.post(`${syncCfgUrl}/api/registration-tokens`, body, {
-        headers: { ...centralHeaders, 'Content-Type': 'application/json' },
-      });
-      setNewRawToken(res.data.raw_token);
-      setShowTokenForm(false);
-      setTokenForm({ customer_id: '', location_id: '', license_id: '', device_name_template: '', expires_in_hours: 72, note: '' });
-      fetchRegTokens();
-      toast.success('Token erstellt');
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Token konnte nicht erstellt werden');
     }
   };
 
   const revokeRegToken = async (tokenId) => {
     try {
-      const syncCfgUrl = getCentralUrl();
-      await axios.post(`${syncCfgUrl}/api/registration-tokens/${tokenId}/revoke`, {}, { headers: centralHeaders });
+      await axios.post(`${CENTRAL_API}/registration-tokens/${tokenId}/revoke`, {}, { headers });
       toast.success('Token widerrufen');
       fetchRegTokens();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Fehler');
+      toast.error(err?.response?.data?.detail || 'Fehler beim Widerrufen');
     }
   };
 
@@ -422,7 +632,7 @@ export default function Licensing() {
             <Server className="w-4 h-4 mr-1" /> {t('lic_sync') || 'Sync'}
           </TabsTrigger>
           <TabsTrigger value="tokens" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="lic-tab-tokens" onClick={() => fetchRegTokens()}>
-            <Ticket className="w-4 h-4 mr-1" /> {t('lic_reg_tokens') || 'Tokens'}
+            <Ticket className="w-4 h-4 mr-1" /> Registrierung
           </TabsTrigger>
         </TabsList>
 
@@ -906,55 +1116,17 @@ export default function Licensing() {
           </div>
         </TabsContent>
 
-        {/* Registration Tokens (v3.5.1) */}
+        {/* Registration & Geräte-Onboarding (v3.5.4) */}
         <TabsContent value="tokens">
           <div className="space-y-4">
-            {/* Central Server Login (v3.5.2) */}
-            {!centralAuth.token && getCentralUrl() && (
-              <Card className="bg-zinc-900 border-zinc-800">
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-white text-base flex items-center gap-2">
-                    <Shield className="w-5 h-5 text-amber-500" />
-                    {t('lic_central_login') || 'Am zentralen Server anmelden'}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex items-end gap-3">
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-zinc-400">Benutzername</label>
-                      <input type="text" className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white w-48" value={centralLoginForm.username} onChange={e => setCentralLoginForm(f => ({...f, username: e.target.value}))} data-testid="central-login-username" />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label className="text-xs text-zinc-400">Passwort</label>
-                      <input type="password" className="bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white w-48" value={centralLoginForm.password} onChange={e => setCentralLoginForm(f => ({...f, password: e.target.value}))} onKeyDown={e => e.key === 'Enter' && loginToCentral()} data-testid="central-login-password" />
-                    </div>
-                    <Button onClick={loginToCentral} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="central-login-btn">Anmelden</Button>
-                  </div>
-                  <p className="text-xs text-zinc-500 mt-2">Server: {getCentralUrl()}</p>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Logged in indicator */}
-            {centralAuth.user && (
-              <div className="flex items-center gap-3 p-2 bg-zinc-800/50 rounded text-sm" data-testid="central-user-info">
-                <Shield className="w-4 h-4 text-emerald-400" />
-                <span className="text-zinc-300">Angemeldet: <span className="text-white font-medium">{centralAuth.user.display_name || centralAuth.user.username}</span></span>
-                <span className={`text-xs px-2 py-0.5 rounded ${centralAuth.user.role === 'superadmin' ? 'text-amber-400 bg-amber-500/10' : 'text-blue-400 bg-blue-500/10'}`}>
-                  {centralAuth.user.role}
-                </span>
-                <button onClick={() => setCentralAuth({ token: null, user: null })} className="text-xs text-zinc-500 hover:text-white ml-auto">Abmelden</button>
-              </div>
-            )}
-
             {/* Registration Status */}
             {regStatus && (
               <Card className="bg-zinc-900 border-zinc-800">
                 <CardContent className="py-3 flex items-center gap-3">
                   <Monitor className="w-4 h-4 text-zinc-400" />
-                  <span className="text-sm text-zinc-300">{t('lic_reg_this_device') || 'Dieses Geraet'}:</span>
+                  <span className="text-sm text-zinc-300">Dieses Gerät:</span>
                   <span className={`text-sm font-medium ${regStatus.status === 'registered' ? 'text-emerald-400' : 'text-amber-400'}`} data-testid="reg-device-status">
-                    {regStatus.status === 'registered' ? (t('lic_reg_registered') || 'Registriert') : (t('lic_reg_unregistered') || 'Nicht registriert')}
+                    {regStatus.status === 'registered' ? 'Registriert' : 'Nicht registriert'}
                   </span>
                   {regStatus.device_name && <span className="text-xs text-zinc-500">({regStatus.device_name})</span>}
                   {regStatus.customer_name && <span className="text-xs text-zinc-500">Kunde: {regStatus.customer_name}</span>}
@@ -964,122 +1136,101 @@ export default function Licensing() {
 
             {/* New Token Created Banner */}
             {newRawToken && (
-              <Card className="bg-emerald-500/10 border-emerald-500/30">
-                <CardContent className="py-4">
-                  <div className="flex items-start gap-3">
-                    <CheckCircle className="w-5 h-5 text-emerald-400 mt-0.5" />
-                    <div className="flex-1">
-                      <p className="text-sm text-emerald-300 font-medium mb-2">{t('lic_reg_token_created') || 'Neuer Token erstellt — Nur jetzt sichtbar!'}</p>
-                      <div className="flex items-center gap-2 p-2 bg-black/30 rounded font-mono text-sm text-white break-all" data-testid="reg-new-raw-token">
-                        <span className="flex-1">{newRawToken}</span>
-                        <button onClick={() => { navigator.clipboard?.writeText(newRawToken); toast.success('Kopiert'); }} className="text-emerald-400 hover:text-white flex-shrink-0">
-                          <Copy className="w-4 h-4" />
-                        </button>
-                      </div>
-                      <p className="text-xs text-zinc-500 mt-2">{t('lic_reg_token_warning') || 'Diesen Code sicher aufbewahren. Er wird nicht erneut angezeigt.'}</p>
-                      <Button size="sm" onClick={() => setNewRawToken(null)} className="mt-2 bg-zinc-700 hover:bg-zinc-600 text-white text-xs">
-                        {t('lic_reg_dismiss') || 'Verstanden'}
-                      </Button>
-                    </div>
-                  </div>
+              <TokenDisplay rawToken={newRawToken} onDismiss={() => setNewRawToken(null)} />
+            )}
+
+            {/* "Gerät vorbereiten" Wizard */}
+            {showTokenForm ? (
+              <DeviceWizard
+                customers={customers}
+                locations={locations}
+                licenses={licenses}
+                headers={headers}
+                onCreated={(rawToken) => {
+                  setNewRawToken(rawToken);
+                  setShowTokenForm(false);
+                  fetchRegTokens();
+                }}
+                onCancel={() => setShowTokenForm(false)}
+              />
+            ) : (
+              <Card className="bg-zinc-900 border-zinc-800">
+                <CardContent className="py-6 text-center">
+                  <Package className="w-10 h-10 text-amber-500 mx-auto mb-3" />
+                  <p className="text-white font-medium mb-1">Neues Gerät einrichten</p>
+                  <p className="text-sm text-zinc-400 mb-4 max-w-md mx-auto">
+                    Erstellen Sie einen Registrierungscode, den ein Techniker auf dem neuen Kiosk-PC eingibt.
+                  </p>
+                  <Button onClick={() => setShowTokenForm(true)} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="reg-create-btn">
+                    <Plus className="w-4 h-4 mr-1" /> Gerät vorbereiten
+                  </Button>
                 </CardContent>
               </Card>
             )}
 
-            {/* Token Management */}
+            {/* Token-Liste */}
             <Card className="bg-zinc-900 border-zinc-800">
               <CardHeader className="pb-3 flex flex-row items-center justify-between">
                 <CardTitle className="text-white text-base flex items-center gap-2">
                   <Ticket className="w-5 h-5 text-amber-500" />
-                  {t('lic_reg_tokens') || 'Registration Tokens'}
+                  Registrierungscodes
                 </CardTitle>
                 <div className="flex items-center gap-2">
+                  {/* Filter */}
+                  <select className="bg-zinc-800 border border-zinc-700 text-xs text-white rounded px-2 py-1"
+                    value={tokenFilter} onChange={e => setTokenFilter(e.target.value)} data-testid="reg-filter">
+                    <option value="all">Alle</option>
+                    <option value="active">Aktiv</option>
+                    <option value="used">Verwendet</option>
+                    <option value="expired">Abgelaufen</option>
+                    <option value="revoked">Widerrufen</option>
+                  </select>
                   <Button size="sm" onClick={fetchRegTokens} className="bg-zinc-700 hover:bg-zinc-600 text-white" data-testid="reg-refresh-btn">
                     <RefreshCw className="w-4 h-4" />
                   </Button>
-                  {/* Create Token: superadmin only */}
-                  {isCentralSuperadmin && (
-                    <Button size="sm" onClick={() => setShowTokenForm(!showTokenForm)} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="reg-create-btn">
-                      <Plus className="w-4 h-4 mr-1" /> {t('lic_reg_create') || 'Token erstellen'}
-                    </Button>
-                  )}
                 </div>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Create Token Form */}
-                {showTokenForm && isCentralSuperadmin && (
-                  <div className="p-4 bg-zinc-800/50 rounded-lg space-y-3 border border-zinc-700" data-testid="reg-token-form">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs text-zinc-400">{t('lic_customer') || 'Kunde'}</label>
-                        <select className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white" value={tokenForm.customer_id} onChange={e => setTokenForm(f => ({...f, customer_id: e.target.value}))} data-testid="reg-form-customer">
-                          <option value="">-- Optional --</option>
-                          {customers.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                        </select>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs text-zinc-400">{t('lic_location') || 'Standort'}</label>
-                        <select className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white" value={tokenForm.location_id} onChange={e => setTokenForm(f => ({...f, location_id: e.target.value}))} data-testid="reg-form-location">
-                          <option value="">-- Optional --</option>
-                          {locations.filter(l => !tokenForm.customer_id || l.customer_id === tokenForm.customer_id).map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs text-zinc-400">{t('lic_reg_expires') || 'Gueltig (Stunden)'}</label>
-                        <input type="number" min={1} max={720} className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white" value={tokenForm.expires_in_hours} onChange={e => setTokenForm(f => ({...f, expires_in_hours: parseInt(e.target.value) || 72}))} data-testid="reg-form-expires" />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs text-zinc-400">{t('lic_reg_device_template') || 'Geraetename-Vorlage'}</label>
-                        <input type="text" className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white" placeholder="Kiosk Board 1" value={tokenForm.device_name_template} onChange={e => setTokenForm(f => ({...f, device_name_template: e.target.value}))} data-testid="reg-form-device-template" />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="text-xs text-zinc-400">{t('lic_reg_note') || 'Notiz'}</label>
-                        <input type="text" className="bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm text-white" placeholder="Fuer neuen Standort..." value={tokenForm.note} onChange={e => setTokenForm(f => ({...f, note: e.target.value}))} data-testid="reg-form-note" />
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button onClick={createRegToken} className="bg-amber-500 hover:bg-amber-600 text-black" data-testid="reg-form-submit">
-                        <Ticket className="w-4 h-4 mr-1" /> {t('lic_reg_generate') || 'Token generieren'}
-                      </Button>
-                      <Button onClick={() => setShowTokenForm(false)} className="bg-zinc-700 hover:bg-zinc-600 text-white">
-                        {t('cancel') || 'Abbrechen'}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Token List */}
-                {regTokens.length === 0 && !showTokenForm && (
-                  <p className="text-sm text-zinc-500">{t('lic_reg_no_tokens') || 'Keine Registration Tokens vorhanden.'}</p>
+              <CardContent className="space-y-2">
+                {regTokens.length === 0 && (
+                  <p className="text-sm text-zinc-500 text-center py-4">Noch keine Registrierungscodes erstellt.</p>
                 )}
                 {regTokens.length > 0 && (
                   <div className="space-y-2 max-h-[500px] overflow-y-auto">
-                    {regTokens.map(tk => (
-                      <div key={tk.id} className="p-3 bg-zinc-800/50 rounded-lg flex items-center gap-3" data-testid={`reg-token-${tk.id}`}>
-                        <div className="flex-shrink-0">
-                          <TokenStatusBadge status={tk.status} />
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm text-white font-mono">{tk.token_preview}</span>
-                            {tk.note && <span className="text-xs text-zinc-500 truncate">— {tk.note}</span>}
+                    {regTokens
+                      .filter(tk => tokenFilter === 'all' || tk.status === tokenFilter)
+                      .map(tk => {
+                        const cust = customers.find(c => c.id === tk.customer_id);
+                        return (
+                          <div key={tk.id} className="p-3 bg-zinc-800/50 rounded-lg flex items-start gap-3" data-testid={`reg-token-${tk.id}`}>
+                            <div className="flex-shrink-0 mt-0.5">
+                              <TokenStatusBadge status={tk.status} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-sm text-white font-mono">{tk.token_preview}</span>
+                                {cust && <span className="text-xs text-zinc-400 bg-zinc-700/50 px-1.5 py-0.5 rounded">{cust.name}</span>}
+                                {tk.note && <span className="text-xs text-zinc-500 italic truncate">— {tk.note}</span>}
+                              </div>
+                              <div className="flex items-center gap-3 mt-1 text-xs text-zinc-500 flex-wrap">
+                                {tk.expires_at && <span>Ablauf: {new Date(tk.expires_at).toLocaleString('de-DE')}</span>}
+                                {tk.used_by_install_id && (
+                                  <span className="text-emerald-400 flex items-center gap-1">
+                                    <CheckCircle className="w-3 h-3" /> Gerät: {tk.used_by_install_id.substring(0, 12)}...
+                                  </span>
+                                )}
+                                {tk.created_by && <span>Erstellt von: {tk.created_by}</span>}
+                              </div>
+                            </div>
+                            {tk.status === 'active' && (
+                              <Button size="sm" onClick={() => revokeRegToken(tk.id)}
+                                className="bg-red-500/10 hover:bg-red-500/20 text-red-400 text-xs flex-shrink-0"
+                                data-testid={`reg-revoke-${tk.id}`}>
+                                <XCircle className="w-3.5 h-3.5 mr-1" /> Widerrufen
+                              </Button>
+                            )}
                           </div>
-                          <div className="flex items-center gap-3 mt-1 text-xs text-zinc-500">
-                            {tk.expires_at && <span>Ablauf: {new Date(tk.expires_at).toLocaleString('de-DE')}</span>}
-                            {tk.created_by && <span>Von: {tk.created_by}</span>}
-                            {tk.used_by_install_id && <span className="text-emerald-400">Benutzt von: {tk.used_by_install_id.substring(0, 12)}...</span>}
-                          </div>
-                        </div>
-                        {/* Revoke: superadmin only */}
-                        {tk.status === 'active' && isCentralSuperadmin && (
-                          <Button size="sm" onClick={() => revokeRegToken(tk.id)} className="bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs" data-testid={`reg-revoke-${tk.id}`}>
-                            <XCircle className="w-3.5 h-3.5 mr-1" /> {t('lic_reg_revoke') || 'Widerrufen'}
-                          </Button>
-                        )}
-                      </div>
-                    ))}
+                        );
+                    })}
                   </div>
                 )}
               </CardContent>
