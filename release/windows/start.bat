@@ -1,11 +1,11 @@
 @echo off
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
-title Darts Kiosk - Gestartet
+title Darts Kiosk v3.5.3 - Gestartet
 cd /d "%~dp0"
 echo.
 echo ================================================================
-echo   DARTS KIOSK - Starten (Production)
+echo   DARTS KIOSK v3.5.3 - Production Start
 echo ================================================================
 echo.
 
@@ -61,16 +61,18 @@ if not exist "data\db" mkdir "data\db"
 if not exist "data\downloads" mkdir "data\downloads"
 if not exist "data\app_backups" mkdir "data\app_backups"
 if not exist "data\chrome_profile\!BOARD_ID!" mkdir "data\chrome_profile\!BOARD_ID!"
+if not exist "data\kiosk_ui_profile" mkdir "data\kiosk_ui_profile"
 
 REM === Kill old processes ===
-echo [1/4] Alte Prozesse beenden...
+echo [1/5] Alte Prozesse beenden...
 taskkill /F /FI "WINDOWTITLE eq Darts Backend" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Darts Overlay" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq DartsKiosk*" >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq Darts Agent" >nul 2>&1
 timeout /t 2 /nobreak >nul
 
 REM === Detect LAN IP ===
-echo [2/4] Netzwerk-IP erkennen...
+echo [2/5] Netzwerk-IP erkennen...
 set "LAN_IP="
 for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
     if not defined LAN_IP (
@@ -82,6 +84,12 @@ if not defined LAN_IP (
     set "LAN_IP=127.0.0.1"
 ) else (
     echo   [OK]   LAN-IP: !LAN_IP!
+)
+
+REM === Read Central Server URL from .env ===
+set "CENTRAL_URL="
+for /f "tokens=1,* delims==" %%a in ('type "backend\.env" 2^>nul ^| findstr "CENTRAL_SERVER_URL"') do (
+    set "CENTRAL_URL=%%b"
 )
 
 REM === Detect Google Chrome ===
@@ -102,7 +110,7 @@ if defined CHROME_PATH (
 )
 
 REM === Start Backend ===
-echo [3/4] Backend starten (Port !BACKEND_PORT!, 0.0.0.0)...
+echo [3/5] Backend starten (Port !BACKEND_PORT!, 0.0.0.0)...
 start "Darts Backend" /MIN "%~dp0_run_backend.bat"
 echo   [OK] Backend gestartet
 
@@ -126,8 +134,17 @@ if !BACKEND_READY!==0 (
     echo   [WARN] Backend nicht erreichbar. Pruefe logs\backend.log
 )
 
+REM === Start Agent ===
+echo [4/5] Windows Agent starten...
+if exist "agent\start_agent.bat" (
+    start "Darts Agent" /MIN cmd /c "cd /d "%~dp0agent" && start_agent.bat"
+    echo   [OK] Agent gestartet
+) else (
+    echo   [INFO] Kein Agent vorhanden - uebersprungen
+)
+
 REM === Launch Kiosk + Overlay ===
-echo [4/4] Kiosk-Modus starten...
+echo [5/5] Kiosk-Modus starten...
 
 REM Start Credits Overlay
 if exist "%~dp0credits_overlay.py" (
@@ -138,9 +155,6 @@ if exist "%~dp0credits_overlay.py" (
 )
 
 REM Launch Kiosk UI in Chrome kiosk mode
-REM NOTE: Uses a SEPARATE profile (kiosk_ui_profile) so the Autodarts profile
-REM (data\chrome_profile\BOARD-1) stays exclusively owned by the Playwright observer.
-if not exist "data\kiosk_ui_profile" mkdir "data\kiosk_ui_profile"
 if defined CHROME_PATH (
     echo   [OK] Starte Kiosk-UI im Chrome-Vollbild-Modus...
     start "" "!CHROME_PATH!" --kiosk --user-data-dir="%~dp0data\kiosk_ui_profile" --no-first-run --no-default-browser-check --disable-translate --disable-infobars --autoplay-policy=no-user-gesture-required "http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!"
@@ -151,18 +165,26 @@ if defined CHROME_PATH (
 echo.
 echo ================================================================
 echo.
-echo   Darts Kiosk laeuft!
+echo   Darts Kiosk v3.5.3 laeuft!
 echo   Board: !BOARD_ID!
 echo.
-echo   === Zugriff (alle Geraete im LAN) ===
-echo   Kiosk:        http://!LAN_IP!:!BACKEND_PORT!/kiosk/!BOARD_ID!
-echo   Admin-Panel:  http://!LAN_IP!:!BACKEND_PORT!/admin
-echo   Backend-API:  http://!LAN_IP!:!BACKEND_PORT!/api/health
+echo   === Lokaler Zugriff ===
+echo   Kiosk:              http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!
+echo   Admin-Panel:        http://localhost:!BACKEND_PORT!/admin
+echo   Betreiber-Portal:   http://localhost:!BACKEND_PORT!/operator
 echo.
-echo   === Lokal ===
-echo   Kiosk:        http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!
-echo   Admin-Panel:  http://localhost:!BACKEND_PORT!/admin
+echo   === LAN-Zugriff (alle Geraete im Netzwerk) ===
+echo   Kiosk:              http://!LAN_IP!:!BACKEND_PORT!/kiosk/!BOARD_ID!
+echo   Admin-Panel:        http://!LAN_IP!:!BACKEND_PORT!/admin
+echo   Betreiber-Portal:   http://!LAN_IP!:!BACKEND_PORT!/operator
 echo.
+if defined CENTRAL_URL (
+echo   === Zentraler Server ===
+echo   URL:                !CENTRAL_URL!
+echo   Sync:               Automatisch (via License Sync Client^)
+echo   Proxy:              http://localhost:!BACKEND_PORT!/api/central/
+echo.
+)
 echo   Zum Beenden: stop.bat oder Taste druecken
 echo.
 echo ================================================================
@@ -175,5 +197,6 @@ echo Alle Dienste werden beendet...
 taskkill /F /FI "WINDOWTITLE eq Darts Backend" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq Darts Overlay" >nul 2>&1
 taskkill /F /FI "WINDOWTITLE eq DartsKiosk*" >nul 2>&1
+taskkill /F /FI "WINDOWTITLE eq Darts Agent" >nul 2>&1
 echo Alle Dienste beendet.
 endlocal

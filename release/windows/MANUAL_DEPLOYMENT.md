@@ -1,9 +1,10 @@
-# Darts Kiosk - Manuelle Windows-Bereitstellung
+# Darts Kiosk v3.5.3 - Windows Deployment Guide
 
 ## Uebersicht
 
-Diese Anleitung beschreibt den empfohlenen Deployment-Pfad fuer Windows.
-Der Ansatz ist bewusst manuell und transparent - jeder Schritt ist nachvollziehbar.
+Diese Anleitung beschreibt das vollstaendige Deployment eines Darts Kiosk-PCs,
+inklusive Anbindung an den zentralen Lizenzserver (api.dartcontrol.io),
+Device Registration, Agent-Autostart und Kiosk-Modus.
 
 ## Systemanforderungen
 
@@ -11,21 +12,35 @@ Der Ansatz ist bewusst manuell und transparent - jeder Schritt ist nachvollziehb
 - Python 3.11+ (https://python.org/downloads)
   - WICHTIG: Bei Installation "Add to PATH" aktivieren
 - Google Chrome (https://google.com/chrome)
-- Netzwerkverbindung fuer LAN-Zugriff (optional)
+- Netzwerk/Internet (fuer Lizenz-Sync mit api.dartcontrol.io)
 
-## Schritt 1: Dateien entpacken
-
-ZIP entpacken nach `C:\DartsKiosk` (oder beliebiger Pfad):
+## Verzeichnisstruktur
 
 ```
 C:\DartsKiosk\
-  backend\
-  frontend\
-  setup_windows.bat
-  start.bat
-  stop.bat
-  run_backend.py
-  VERSION
+  backend\               <- Backend-Server (FastAPI)
+  frontend\              <- Frontend (React, pre-built)
+  central_server\        <- Zentraler Lizenzserver (optional, nur fuer Self-Hosting)
+  agent\                 <- Windows Agent (Autostart, Monitoring)
+  kiosk_experimental\    <- Hard-Kiosk-Modus (experimentell)
+  data\                  <- Datenbank, Assets, Backups
+  logs\                  <- Log-Dateien
+  setup_windows.bat      <- Einmalige Einrichtung
+  start.bat              <- System starten
+  stop.bat               <- System stoppen
+  run_backend.py         <- Backend-Launcher mit Watchdog
+  VERSION                <- Aktuelle Version
+```
+
+---
+
+## Schritt 1: Dateien entpacken
+
+ZIP entpacken nach `C:\DartsKiosk`:
+
+```
+Rechtsklick auf darts-kiosk-v3.5.3-windows.zip -> "Alle extrahieren..."
+Ziel: C:\DartsKiosk
 ```
 
 ## Schritt 2: Einmalige Einrichtung
@@ -38,13 +53,52 @@ Das Script erledigt automatisch:
 1. Verzeichnisse erstellen (data, logs)
 2. backend\.env aus Vorlage erstellen
 3. Python Virtual Environment (.venv) erstellen
-4. Backend-Pakete installieren (FastAPI, SQLAlchemy, etc.)
+4. Backend-Pakete installieren
 5. Playwright Chromium installieren
 6. Frontend-Pakete installieren
 
 Dauer: ca. 5-10 Minuten beim ersten Mal.
 
-## Schritt 3: System starten
+## Schritt 3: Konfiguration (.env anpassen)
+
+Oeffnen Sie `backend\.env` in einem Texteditor und pruefen Sie:
+
+```env
+# === Datenbank ===
+DATABASE_URL=sqlite+aiosqlite:///./data/db/darts.sqlite
+SYNC_DATABASE_URL=sqlite:///./data/db/darts.sqlite
+DATA_DIR=./data
+
+# === Sicherheit (AENDERN!) ===
+JWT_SECRET=IHR-SICHERES-PASSWORT-HIER
+AGENT_SECRET=IHR-AGENT-GEHEIMNIS-HIER
+
+# === Zentraler Lizenzserver ===
+CENTRAL_SERVER_URL=https://api.dartcontrol.io
+
+# === Board-Konfiguration ===
+BOARD_ID=BOARD-1
+MODE=STANDALONE
+
+# === Autodarts ===
+AUTODARTS_URL=https://play.autodarts.io
+AUTODARTS_MODE=observer
+AUTODARTS_HEADLESS=false
+AUTODARTS_MOCK=false
+
+# === Updates ===
+UPDATE_CHECK_ENABLED=true
+UPDATE_CHECK_INTERVAL_HOURS=24
+GITHUB_REPO=
+GITHUB_TOKEN=
+```
+
+WICHTIG:
+- `JWT_SECRET` und `AGENT_SECRET` unbedingt aendern!
+- `CENTRAL_SERVER_URL` zeigt auf den produktiven Lizenzserver
+- `BOARD_ID` pro Dartboard eindeutig vergeben (BOARD-1, BOARD-2, etc.)
+
+## Schritt 4: System starten
 
 ```
 Doppelklick auf: start.bat
@@ -52,22 +106,89 @@ Doppelklick auf: start.bat
 
 Das Script:
 1. Aktiviert die Python .venv
-2. Startet den Backend-Server (Port 8001)
-3. Oeffnet Chrome im Kiosk-Modus
+2. Prueft Abhaengigkeiten
+3. Erkennt die LAN-IP
+4. Startet den Backend-Server (Port 8001, 0.0.0.0)
+5. Startet den Windows Agent (Monitoring)
+6. Startet Credits-Overlay
+7. Oeffnet Chrome im Kiosk-Modus
 
-## Schritt 4: System stoppen
+## Schritt 5: Geraet registrieren
 
+Beim ersten Start zeigt der Kiosk ein "Registrierungs-Overlay".
+
+1. Betreiber-Admin erstellt im Admin-Panel einen Registration-Token
+   (Admin -> Licensing -> Tokens -> Neuer Token)
+2. Token auf dem Kiosk-PC eingeben
+3. Das Geraet registriert sich automatisch beim zentralen Server
+
+Danach synchronisiert der Kiosk regelmaessig seine Lizenz.
+
+## Schritt 6: Lizenz-Sync konfigurieren
+
+Im Admin-Panel unter "Licensing" -> "Sync":
+- Server-URL: https://api.dartcontrol.io (sollte vorausgefuellt sein)
+- Sync aktivieren
+- Interval: z.B. alle 4 Stunden
+
+Der Sync-Client arbeitet offline-faehig:
+- Bei Verbindung: Holt aktuelle Lizenz vom Server
+- Ohne Verbindung: Verwendet lokalen Cache
+
+---
+
+## Zugriff
+
+### Lokal (auf dem Kiosk-PC)
+| Funktion | URL |
+|----------|-----|
+| Kiosk-UI | http://localhost:8001/kiosk/BOARD-1 |
+| Admin-Panel | http://localhost:8001/admin |
+| Betreiber-Portal | http://localhost:8001/operator |
+| API Health | http://localhost:8001/api/health |
+
+### LAN (andere Geraete im Netzwerk)
+| Funktion | URL |
+|----------|-----|
+| Kiosk-UI | http://[LAN-IP]:8001/kiosk/BOARD-1 |
+| Admin-Panel | http://[LAN-IP]:8001/admin |
+| Betreiber-Portal | http://[LAN-IP]:8001/operator |
+
+Die LAN-IP wird beim Start angezeigt (z.B. 192.168.1.100).
+
+### Betreiber-Portal
+Das Betreiber-Portal unter /operator ist ein separates, read-only Portal fuer
+Betreiber. Login mit den Betreiber-Zugangsdaten vom zentralen Server.
+
+Funktionen:
+- Uebersicht (Dashboard mit Statusanzeige)
+- Geraete (Online/Offline, Binding-Status)
+- Lizenzen (Aktiv/Grace/Abgelaufen)
+- Kunden und Standorte
+- Aktivitaetsprotokoll
+
+---
+
+## Agent (Autostart)
+
+Der Windows Agent ueberwacht den Kiosk-Betrieb.
+
+### Automatischen Start einrichten
 ```
-Doppelklick auf: stop.bat
+cd C:\DartsKiosk\agent
+python setup_autostart.py
 ```
 
-Oder: Im start.bat-Fenster `S` druecken.
+Oder manuell ueber Task Scheduler (siehe unten).
+
+### Agent-Funktionen
+- Ueberwacht Backend-Prozess
+- Startet Backend bei Absturz neu
+- Meldet Status an Master-PC (im AGENT-Modus)
 
 ---
 
 ## Automatischer Start (Task Scheduler)
-
-Fuer den Dauerbetrieb kann der Start automatisiert werden.
 
 ### Variante A: Task Scheduler GUI
 
@@ -76,253 +197,82 @@ Fuer den Dauerbetrieb kann der Start automatisiert werden.
 3. Tab "Allgemein":
    - Name: `DartsKiosk`
    - "Mit hoechsten Privilegien ausfuehren" aktivieren
-   - Konfigurieren fuer: Windows 10
 4. Tab "Trigger":
    - Neu -> "Bei Anmeldung"
-   - Ggf. spezifischen Benutzer waehlen
 5. Tab "Aktionen":
-   - Neu -> "Programm starten"
-   - Programm: `cmd.exe`
-   - Argumente: `/c "C:\DartsKiosk\start.bat"`
+   - Neu -> Programm starten
+   - Programm: `C:\DartsKiosk\start.bat`
    - Starten in: `C:\DartsKiosk`
-6. Tab "Einstellungen":
-   - "Aufgabe bei Bedarf ausfuehren" aktivieren
-   - "Aufgabe nicht beenden" waehlen bei Zeitlimit
-7. OK -> Fertig
+6. Tab "Bedingungen":
+   - "Nur starten, wenn Netzwerk verfuegbar" deaktivieren
+7. OK
 
-### Variante B: Kommandozeile (als Administrator)
-
-```cmd
-schtasks /create ^
-    /tn "DartsKiosk" ^
-    /tr "cmd.exe /c \"C:\DartsKiosk\start.bat\"" ^
-    /sc onlogon ^
-    /rl highest ^
-    /f
-```
-
-### Task entfernen
+### Variante B: Per Befehl
 
 ```cmd
-schtasks /delete /tn "DartsKiosk" /f
-```
-
-### Task manuell ausfuehren
-
-```cmd
-schtasks /run /tn "DartsKiosk"
+schtasks /create /tn "DartsKiosk" /tr "C:\DartsKiosk\start.bat" /sc onlogon /rl highest
 ```
 
 ---
 
-## Chrome Kiosk-Modus (manuell)
-
-Falls Chrome separat gestartet werden soll:
-
-```cmd
-"C:\Program Files\Google\Chrome\Application\chrome.exe" ^
-    --kiosk ^
-    --user-data-dir="C:\DartsKiosk\data\kiosk_ui_profile" ^
-    --no-first-run ^
-    --disable-infobars ^
-    --disable-session-crashed-bubble ^
-    --disable-translate ^
-    "http://localhost:8001/kiosk/BOARD-1"
-```
-
-Chrome Kiosk-Modus beenden: `Alt+F4`
-
----
-
-## Backend manuell starten
-
-```cmd
-cd C:\DartsKiosk
-.venv\Scripts\activate.bat
-python run_backend.py
-```
-
-Backend-Health pruefen:
-```
-http://localhost:8001/api/health
-```
-
-Admin-Panel:
-```
-http://localhost:8001/admin
-```
-
----
-
-## LAN-Zugriff
-
-Der Backend-Server bindet standardmaessig auf `0.0.0.0:8001`.
-Andere Geraete im LAN koennen zugreifen via:
+## System stoppen
 
 ```
-http://<IP-DES-KIOSK-PC>:8001
+Doppelklick auf: stop.bat
 ```
 
-### Firewall-Regel (als Administrator)
-
-```cmd
-netsh advfirewall firewall add rule ^
-    name="DartsKiosk Backend" ^
-    dir=in action=allow ^
-    protocol=TCP localport=8001
-```
-
----
-
-## Energieoptionen (Standby deaktivieren)
-
-```cmd
-powercfg -change -standby-timeout-ac 0
-powercfg -change -monitor-timeout-ac 0
-```
-
----
-
-## Verzeichnisstruktur nach Einrichtung
-
-```
-C:\DartsKiosk\
-  backend\          Backend-Quellcode + .env
-  frontend\         React-Build (statisch)
-  data\
-    db\             SQLite-Datenbank
-    assets\         Uploads, Sounds
-    backups\        Automatische DB-Backups
-    chrome_profile\ Autodarts Chrome-Profil
-    kiosk_ui_profile\ Kiosk Chrome-Profil
-  logs\             Log-Dateien
-  .venv\            Python Virtual Environment
-  start.bat         Start-Script
-  stop.bat          Stop-Script
-  setup_windows.bat Einmaliges Setup
-  run_backend.py    Backend-Starter
-  VERSION           Versionsnummer
-```
+Oder: Im start.bat-Fenster eine Taste druecken.
 
 ---
 
 ## Troubleshooting
 
 ### Backend startet nicht
-1. `.venv\Scripts\activate.bat` ausfuehren
-2. `python run_backend.py` manuell starten
-3. Fehlermeldung lesen
+- Pruefe `logs\backend.log`
+- Pruefe ob Port 8001 frei ist: `netstat -an | findstr 8001`
+- Pruefe .env Konfiguration
 
-### Chrome zeigt Fehler
-1. `data\kiosk_ui_profile` loeschen (Chrome-Cache)
-2. Chrome neu starten
+### Lizenz-Sync fehlgeschlagen
+- Pruefe Internetverbindung
+- Pruefe `CENTRAL_SERVER_URL` in backend\.env
+- Pruefe ob api.dartcontrol.io erreichbar ist: `curl https://api.dartcontrol.io/api/health`
+- Der Kiosk funktioniert offline mit dem lokalen Cache weiter
 
-### Autodarts-Login abgelaufen
-1. Chrome-Profil unter `data\chrome_profile\BOARD-1` pruefen
-2. Ggf. manuell bei Autodarts einloggen
+### Betreiber-Portal zeigt "Server nicht erreichbar"
+- Pruefe ob `CENTRAL_SERVER_URL` korrekt in backend\.env gesetzt ist
+- Der Proxy leitet Anfragen an den zentralen Server weiter
+- Ohne Verbindung zum zentralen Server ist das Portal nicht nutzbar
 
-### Port 8001 belegt
-1. `netstat -ano | findstr 8001`
-2. Prozess beenden oder Port in backend\.env aendern
+### Chrome startet nicht im Kiosk-Modus
+- Pruefe ob Chrome installiert ist
+- Alle Chrome-Fenster schliessen vor dem Start
+- Ggf. Chrome-Profil loeschen: `data\kiosk_ui_profile`
 
----
-
-## Spaetere Haertung (optional, nicht fuer Erstbetrieb)
-
-Die folgenden Schritte sind OPTIONAL und sollten erst durchgefuehrt werden,
-wenn die Runtime stabil laeuft und manuell verifiziert wurde.
-
-### 1. Dedizierter Kiosk-Benutzer erstellen (als Administrator)
-
-```cmd
-net user DartsKiosk <PASSWORT> /add
-net localgroup Users DartsKiosk /add
-wmic useraccount where "name='DartsKiosk'" set PasswordExpires=false
-```
-
-Berechtigungen fuer den Kiosk-User setzen:
-```cmd
-icacls "C:\DartsKiosk" /grant "DartsKiosk:(OI)(CI)F" /T
-```
-
-### 2. Windows Auto-Login (als Administrator)
-
-```cmd
-reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d "1" /f
-reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultUserName /t REG_SZ /d "DartsKiosk" /f
-reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultPassword /t REG_SZ /d "<PASSWORT>" /f
-reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v DefaultDomainName /t REG_SZ /d "%COMPUTERNAME%" /f
-```
-
-Auto-Login deaktivieren:
-```cmd
-reg add "HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon" /v AutoAdminLogon /t REG_SZ /d "0" /f
-```
-
-### 3. Taskleiste automatisch ausblenden
-
-Rechtsklick auf Taskleiste -> Taskleisteneinstellungen:
-- "Taskleiste automatisch ausblenden" aktivieren
-
-Oder per Registry (erfordert Ab-/Anmeldung):
-```cmd
-reg add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StuckRects3" /v Settings /t REG_BINARY /d ... /f
-```
-(Manuelle Einstellung per GUI ist zuverlaessiger)
-
-### 4. Windows Update Neustart verhindern (als Administrator)
-
-```cmd
-reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU" /v NoAutoRebootWithLoggedOnUsers /t REG_DWORD /d 1 /f
-```
-
-### 5. Benachrichtigungen reduzieren
-
-```cmd
-reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows\Explorer" /v DisableNotificationCenter /t REG_DWORD /d 1 /f
-```
-
-### 6. Energieoptionen (ausfuehrlich)
-
-```cmd
-powercfg -change -standby-timeout-ac 0
-powercfg -change -monitor-timeout-ac 0
-powercfg -change -hibernate-timeout-ac 0
-powercfg -change -standby-timeout-dc 0
-powercfg -change -monitor-timeout-dc 0
-```
-
-### 7. Firewall fuer LAN-Zugriff (als Administrator)
-
-```cmd
-netsh advfirewall firewall add rule name="DartsKiosk Backend" dir=in action=allow protocol=TCP localport=8001
-```
-
-Regel entfernen:
-```cmd
-netsh advfirewall firewall delete rule name="DartsKiosk Backend"
-```
-
-### 8. Chrome immer im Vollbild starten
-
-Chrome mit `--kiosk` Flag startet automatisch im Vollbild-Modus.
-Die start.bat macht das bereits. Kiosk-Modus beenden: `Alt+F4`.
+### Agent funktioniert nicht
+- Pruefe `agent\AGENT_DEPLOYMENT.md` fuer Details
+- Agent benoetigt psutil: `pip install psutil`
 
 ---
 
-## NICHT empfohlen (experimentell)
+## Updates
 
-Die folgenden Massnahmen sind EXPERIMENTELL und koennen das System
-in einen nicht-bootfaehigen Zustand versetzen:
+Updates koennen ueber den integrierten Updater eingespielt werden:
 
-- Windows Shell ersetzen (explorer.exe -> custom script)
-- Task-Manager per Policy komplett deaktivieren
-- Desktop/Explorer per Policy komplett deaktivieren
-- Globale Kiosk-Policies anwenden
+1. Im Admin-Panel: System -> Updates pruefen
+2. Oder manuell: `python updater.py`
 
-Dateien dafuer finden sich unter `kiosk_experimental\`.
-NUR verwenden mit:
-- Funktionierendem System-Backup / Recovery-Medium
-- Zugang zum abgesicherten Modus
-- Verstaendnis der Registry-Aenderungen
-- Getesteter Runtime (alle Flows stabil)
+Fuer manuelle Updates:
+1. System stoppen (stop.bat)
+2. Neues ZIP entpacken (backend/ und frontend/ ersetzen)
+3. NICHT ueberschreiben: data/, logs/, backend/.env
+4. System starten (start.bat)
+
+---
+
+## Sicherheitshinweise
+
+- `JWT_SECRET` und `AGENT_SECRET` immer aendern (keine Default-Werte!)
+- Admin-Passwort nach erstem Login aendern
+- Chrome Kiosk-Modus verhindert Zugriff auf andere Anwendungen
+- Firewall: Port 8001 nur im lokalen Netzwerk freigeben
+- Updates regelmaessig einspielen

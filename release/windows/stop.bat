@@ -15,6 +15,9 @@ taskkill /F /FI "WINDOWTITLE eq Darts Overlay" >nul 2>&1
 echo Stoppe Kiosk Chrome...
 taskkill /F /FI "WINDOWTITLE eq DartsKiosk*" >nul 2>&1
 
+echo Stoppe Agent...
+taskkill /F /FI "WINDOWTITLE eq Darts Agent" >nul 2>&1
+
 echo.
 echo ================================================================
 echo   Alle Dienste beendet.

@@ -130,8 +130,15 @@ python -m pip install -r requirements.txt 2>&1 | findstr /I "error"
 cd /d "%~dp0"
 
 REM Fallback for critical packages
-python -m pip install fastapi uvicorn sqlalchemy aiosqlite pydantic python-jose passlib bcrypt python-multipart python-dotenv apscheduler slowapi pillow qrcode zeroconf websockets playwright >nul 2>&1
+python -m pip install fastapi uvicorn sqlalchemy aiosqlite pydantic python-jose passlib bcrypt python-multipart python-dotenv apscheduler slowapi pillow qrcode zeroconf websockets playwright httpx PyJWT >nul 2>&1
 echo   [OK] Backend-Pakete installiert
+
+REM Agent dependencies
+if exist "agent\requirements.txt" (
+    echo   Installiere Agent-Pakete...
+    python -m pip install -r agent\requirements.txt >nul 2>&1
+    echo   [OK] Agent-Pakete installiert
+)
 
 REM === 5. Validate critical imports ===
 echo.
@@ -214,14 +221,22 @@ cd /d "%~dp0"
 REM === Done ===
 echo.
 echo ================================================================
-echo   SETUP ABGESCHLOSSEN!
+echo   SETUP v3.5.3 ABGESCHLOSSEN!
 echo.
-echo   Naechster Schritt: start.bat ausfuehren
+echo   Naechster Schritt:
+echo   1. backend\.env pruefen (CENTRAL_SERVER_URL, JWT_SECRET)
+echo   2. start.bat ausfuehren
+echo.
+echo   Enthaltene Komponenten:
+echo   - Backend mit License Sync Client
+echo   - Frontend mit Betreiber-Portal
+echo   - Windows Agent (Autostart)
+echo   - Autodarts Integration (Playwright)
 echo.
 echo   Hinweise:
 echo   - Python-Pakete sind in .venv installiert
 echo   - start.bat aktiviert die .venv automatisch
-echo   - Bei Problemen: check_requirements.bat erneut ausfuehren
+echo   - Deployment-Anleitung: MANUAL_DEPLOYMENT.md
 echo ================================================================
 echo.
 pause
