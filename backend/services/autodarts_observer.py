@@ -2046,68 +2046,46 @@ class AutodartsObserver:
     # ═══════════════════════════════════════════════════════════════
 
     async def _detect_state_dom(self) -> ObserverState:
-        """DOM-based state detection (fallback). Three-tier detection."""
+        """DOM-based state detection with prioritized fallback resolution. v3.3.5"""
         if not self._page_alive():
             return ObserverState.UNKNOWN
         try:
-            signals = await self._page.evaluate("""() => {
-                var inGame = !!(
-                    document.querySelector('[class*="scoreboard"]') ||
-                    document.querySelector('[class*="dart-input"]') ||
-                    document.querySelector('[class*="throw"]') ||
-                    document.querySelector('[class*="scoring"]') ||
-                    document.querySelector('[class*="game-view"]') ||
-                    document.querySelector('[class*="match-view"]') ||
-                    document.querySelector('[class*="player-score"]') ||
-                    document.querySelector('[class*="turn"]') ||
-                    document.querySelector('[class*="match"][class*="running"]') ||
-                    document.querySelector('[data-testid*="match"]') ||
-                    document.querySelector('#match')
-                );
-
-                var allButtons = Array.from(document.querySelectorAll('button, a[role="button"], [class*="btn"]'));
-                var buttonTexts = allButtons.map(function(b) { return (b.textContent || '').trim().toLowerCase(); });
-
-                var hasRematchBtn = buttonTexts.some(function(t) {
-                    return /rematch|nochmal spielen|play again|erneut spielen/i.test(t);
-                });
-                var hasShareBtn = buttonTexts.some(function(t) {
-                    return /share|teilen|share result|ergebnis teilen/i.test(t);
-                });
-                var hasNewGameBtn = buttonTexts.some(function(t) {
-                    return /new game|neues spiel|new match|neues match/i.test(t);
-                });
-                var hasPostMatchUI = !!(
-                    document.querySelector('[class*="post-match"]') ||
-                    document.querySelector('[class*="match-summary"]') ||
-                    document.querySelector('[class*="match-end"]') ||
-                    document.querySelector('[class*="game-over"]')
-                );
-                var strongMatchEnd = hasRematchBtn || hasShareBtn || hasNewGameBtn || hasPostMatchUI;
-
-                var hasGenericResult = !!(
-                    document.querySelector('[class*="result"]') ||
-                    document.querySelector('[class*="winner"]') ||
-                    document.querySelector('[class*="finished"]') ||
-                    document.querySelector('[class*="match-result"]') ||
-                    document.querySelector('[class*="leg-result"]')
-                );
-
-                return {
-                    inGame: inGame,
-                    strongMatchEnd: strongMatchEnd,
-                    hasGenericResult: hasGenericResult,
-                    hasRematchBtn: hasRematchBtn,
-                    hasShareBtn: hasShareBtn,
-                    hasNewGameBtn: hasNewGameBtn,
-                    hasPostMatchUI: hasPostMatchUI
-                };
-            }""")
+            from backend.autodarts_selectors import build_detect_state_js
+            js = build_detect_state_js()
+            signals = await self._page.evaluate(js)
 
             in_game = signals.get('inGame', False)
             strong_match_end = signals.get('strongMatchEnd', False)
             has_generic_result = signals.get('hasGenericResult', False)
 
+            # v3.3.5: Diagnostic logging for fallback usage
+            groups = signals.get('_groups', {})
+            for group_name, info in groups.items():
+                if info and info.get('found'):
+                    if info.get('priority') == 'fallback':
+                        logger.info(
+                            f"[SELECTOR] fallback_used group={group_name} "
+                            f"selector={info.get('css')} name={info.get('name')}")
+                    elif info.get('priority') == 'primary':
+                        logger.debug(
+                            f"[SELECTOR] primary_hit group={group_name} "
+                            f"selector={info.get('css')}")
+
+            evidence = signals.get('_evidence', [])
+            if in_game and evidence:
+                logger.debug(
+                    f"[SELECTOR] heuristic_state state=in_game "
+                    f"evidence={','.join(evidence)} count={len(evidence)}")
+
+            # Check for missing groups (soft-fail warning)
+            all_groups_empty = all(
+                not (info and info.get('found'))
+                for info in groups.values()
+            )
+            if all_groups_empty and not signals.get('hasRematchBtn') and not signals.get('hasShareBtn') and not signals.get('hasNewGameBtn'):
+                logger.debug(f"[SELECTOR] no_dom_signals board={self.board_id} (WS/console may still be active)")
+
+            # Decision logic (unchanged from v3.3.4)
             if strong_match_end:
                 return ObserverState.FINISHED
             if in_game:

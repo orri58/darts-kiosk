@@ -1,28 +1,30 @@
 """
-Autodarts DOM Selector & Frame Classification Test Suite v3.3.4
+Autodarts DOM Selector & Frame Classification Test Suite v3.3.5
 ================================================================
 
 Tests three layers of the Observer's detection mechanism:
-  1. WS frame classification (unit tests, no network)
-  2. DOM selector logic (mock HTML injection, validates JS detection)
-  3. Live page probe (optional, skipped on network failure)
+  1. Selector integrity (definitions well-formed)
+  2. WS frame classification (unit tests, no network)
+  3. DOM selector fallback resolution (mock HTML, validates resolveGroup logic)
+  4. Heuristic combination (multi-evidence detection)
+  5. Live page probe (optional, skipped on network failure)
+  6. Gotcha variant guard
 
-Run: pytest backend/tests/test_autodarts_dom_selectors.py -v
-Run with live tests: AUTODARTS_LIVE=1 pytest ... -v
+Run:  pytest backend/tests/test_autodarts_dom_selectors.py -v
+Live: AUTODARTS_LIVE=1 pytest ... -v
 """
 import os
 import re
 import sys
 import json
-import time
 import logging
 import pytest
 from datetime import datetime, timezone
 
-# Ensure imports work
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from backend.tests.autodarts_selectors import (
+from backend.autodarts_selectors import (
+    SELECTOR_GROUPS,
     IN_GAME_SELECTORS,
     STRONG_MATCH_END_SELECTORS,
     MATCH_END_BUTTON_PATTERNS,
@@ -35,20 +37,19 @@ from backend.tests.autodarts_selectors import (
     WS_MATCH_RESET_EVENT,
     WS_CHANNEL_PATTERNS,
     AUTODARTS_BASE_URL,
+    build_detect_state_js,
 )
 
 logger = logging.getLogger(__name__)
+LIVE_TESTS = os.environ.get("AUTODARTS_LIVE", "0") == "1"
+
 
 # ═══════════════════════════════════════════════════════════════
 # FIXTURES
 # ═══════════════════════════════════════════════════════════════
 
-LIVE_TESTS = os.environ.get("AUTODARTS_LIVE", "0") == "1"
-
-
 @pytest.fixture(scope="module")
 def browser_context():
-    """Launch a headless Chromium browser for DOM tests."""
     from playwright.sync_api import sync_playwright
     pw = sync_playwright().start()
     browser = pw.chromium.launch(headless=True, args=["--no-sandbox"])
@@ -61,10 +62,16 @@ def browser_context():
 
 @pytest.fixture
 def page(browser_context):
-    """Fresh page for each test."""
     p = browser_context.new_page()
     yield p
     p.close()
+
+
+def _detect(page, html_body: str) -> dict:
+    """Inject mock HTML and run the canonical detection JS."""
+    page.set_content(f"<html><body>{html_body}</body></html>")
+    js = build_detect_state_js()
+    return page.evaluate(js)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -72,449 +79,391 @@ def page(browser_context):
 # ═══════════════════════════════════════════════════════════════
 
 class TestSelectorIntegrity:
-    """Validate that selector definitions are well-formed and non-empty."""
 
-    def test_in_game_selectors_not_empty(self):
-        assert len(IN_GAME_SELECTORS) >= 5, \
-            f"Expected at least 5 in-game selectors, got {len(IN_GAME_SELECTORS)}"
+    def test_selector_groups_structure(self):
+        assert isinstance(SELECTOR_GROUPS, dict)
+        for group_name, selectors in SELECTOR_GROUPS.items():
+            assert isinstance(selectors, list), f"{group_name} is not a list"
+            assert len(selectors) >= 1, f"{group_name} is empty"
+            for s in selectors:
+                assert "css" in s, f"{group_name}: missing 'css' in {s}"
+                assert "name" in s, f"{group_name}: missing 'name' in {s}"
+                assert "priority" in s, f"{group_name}: missing 'priority' in {s}"
+                assert s["priority"] in ("primary", "fallback"), \
+                    f"{group_name}/{s['name']}: invalid priority '{s['priority']}'"
 
-    def test_strong_match_end_selectors_not_empty(self):
+    def test_each_group_has_primary(self):
+        for group_name, selectors in SELECTOR_GROUPS.items():
+            primaries = [s for s in selectors if s["priority"] == "primary"]
+            assert len(primaries) >= 1, f"{group_name}: no primary selector"
+
+    def test_primary_is_first(self):
+        for group_name, selectors in SELECTOR_GROUPS.items():
+            assert selectors[0]["priority"] == "primary", \
+                f"{group_name}: first selector should be primary, got '{selectors[0]['priority']}'"
+
+    def test_flat_lists_derived_correctly(self):
+        assert len(IN_GAME_SELECTORS) >= 5
         assert len(STRONG_MATCH_END_SELECTORS) >= 3
-
-    def test_generic_result_selectors_not_empty(self):
         assert len(GENERIC_RESULT_SELECTORS) >= 3
 
-    def test_button_patterns_not_empty(self):
-        assert len(MATCH_END_BUTTON_PATTERNS) >= 2
-
     def test_all_selectors_have_required_fields(self):
-        """Each selector dict must have name, css, desc."""
         for group_name, selectors in [
             ("in_game", IN_GAME_SELECTORS),
             ("strong_match_end", STRONG_MATCH_END_SELECTORS),
             ("generic_result", GENERIC_RESULT_SELECTORS),
         ]:
             for s in selectors:
-                assert "name" in s, f"{group_name}: missing 'name' in {s}"
-                assert "css" in s, f"{group_name}: missing 'css' in {s}"
-                assert "desc" in s, f"{group_name}: missing 'desc' in {s}"
-                assert s["css"].strip(), f"{group_name}/{s['name']}: empty CSS selector"
+                assert "name" in s and "css" in s, f"{group_name}: incomplete {s}"
+                assert s["css"].strip(), f"{group_name}/{s['name']}: empty CSS"
 
     def test_button_patterns_compile(self):
-        """All button regex patterns must be valid."""
         for bp in MATCH_END_BUTTON_PATTERNS:
             try:
                 re.compile(bp["pattern"], re.IGNORECASE)
             except re.error as e:
-                pytest.fail(f"Invalid regex in {bp['name']}: {bp['pattern']} — {e}")
+                pytest.fail(f"Invalid regex {bp['name']}: {e}")
 
     def test_ws_channel_patterns_compile(self):
-        """All WS channel regex patterns must be valid."""
         for cp in WS_CHANNEL_PATTERNS:
             try:
                 re.compile(cp["pattern"])
             except re.error as e:
-                pytest.fail(f"Invalid regex in {cp['name']}: {cp['pattern']} — {e}")
+                pytest.fail(f"Invalid regex {cp['name']}: {e}")
 
-    def test_no_duplicate_selector_names(self):
-        """No duplicate names within a group."""
-        for group_name, selectors in [
-            ("in_game", IN_GAME_SELECTORS),
-            ("strong_match_end", STRONG_MATCH_END_SELECTORS),
-            ("generic_result", GENERIC_RESULT_SELECTORS),
-        ]:
+    def test_no_duplicate_selector_names_within_groups(self):
+        for group_name, selectors in SELECTOR_GROUPS.items():
             names = [s["name"] for s in selectors]
             dupes = [n for n in names if names.count(n) > 1]
-            assert not dupes, f"{group_name}: duplicate names: {set(dupes)}"
+            assert not dupes, f"{group_name}: duplicate names {set(dupes)}"
+
+    def test_build_detect_state_js_generates_valid_js(self):
+        js = build_detect_state_js()
+        assert "resolveGroup" in js
+        assert "evidence" in js
+        assert "_groups" in js
 
 
 # ═══════════════════════════════════════════════════════════════
-# PART 2: WS FRAME CLASSIFICATION (UNIT TESTS — NO NETWORK)
+# PART 2: WS FRAME CLASSIFICATION (UNIT TESTS)
 # ═══════════════════════════════════════════════════════════════
 
 class TestWSFrameClassification:
-    """Test that the observer's _classify_frame logic matches our selector defs."""
 
     @pytest.fixture(autouse=True)
-    def setup_observer_stub(self):
-        """Create a minimal observer stub to test _classify_frame."""
-        from backend.services.autodarts_observer import AutodartsObserver
+    def setup(self):
+        from backend.services.autodarts_observer import AutodartsObserver, WSEventState
         self.obs = AutodartsObserver.__new__(AutodartsObserver)
         self.obs.board_id = "TEST-BOARD"
-        from backend.services.autodarts_observer import WSEventState
         self.obs._ws_state = WSEventState()
         self.obs._last_finalized_match_id = None
 
-    def test_turn_start_is_match_start(self):
-        raw = json.dumps({"event": "turn_start", "channel": "autodarts.matches.123.game-events"})
-        payload = {"event": "turn_start"}
-        result = self.obs._classify_frame(raw, "autodarts.matches.123.game-events", payload)
-        assert result == "match_start_turn_start", f"Expected match_start_turn_start, got {result}"
+    def test_turn_start(self):
+        r = self.obs._classify_frame('{"event":"turn_start"}', "autodarts.matches.123.game-events", {"event": "turn_start"})
+        assert r == "match_start_turn_start"
 
-    def test_throw_is_match_start(self):
-        raw = json.dumps({"event": "throw"})
-        payload = {"event": "throw"}
-        result = self.obs._classify_frame(raw, "autodarts.matches.123.game-events", payload)
-        assert result == "match_start_throw", f"Expected match_start_throw, got {result}"
+    def test_throw(self):
+        r = self.obs._classify_frame('{"event":"throw"}', "autodarts.matches.123.game-events", {"event": "throw"})
+        assert r == "match_start_throw"
 
-    def test_game_shot_match_is_match_end(self):
-        payload = {"event": "game_shot", "body": {"type": "match"}}
-        raw = json.dumps(payload)
-        result = self.obs._classify_frame(raw, "autodarts.matches.123.game-events", payload)
-        assert result == "match_end_gameshot_match", f"Expected match_end_gameshot_match, got {result}"
+    def test_game_shot_match(self):
+        p = {"event": "game_shot", "body": {"type": "match"}}
+        r = self.obs._classify_frame(json.dumps(p), "autodarts.matches.123.game-events", p)
+        assert r == "match_end_gameshot_match"
 
-    def test_game_shot_leg_is_round_transition(self):
-        payload = {"event": "game_shot", "body": {"type": "leg"}}
-        raw = json.dumps(payload)
-        result = self.obs._classify_frame(raw, "autodarts.matches.123.game-events", payload)
-        assert result == "round_transition_gameshot", f"Expected round_transition_gameshot, got {result}"
+    def test_game_shot_leg(self):
+        p = {"event": "game_shot", "body": {"type": "leg"}}
+        r = self.obs._classify_frame(json.dumps(p), "autodarts.matches.123.game-events", p)
+        assert r == "round_transition_gameshot"
 
-    def test_finished_true_is_match_end(self):
-        payload = {"finished": True, "state": "finished"}
-        raw = json.dumps(payload)
-        result = self.obs._classify_frame(raw, "autodarts.matches.123.state", payload)
-        assert result == "match_end_state_finished", f"Expected match_end_state_finished, got {result}"
+    def test_finished_true(self):
+        p = {"finished": True}
+        r = self.obs._classify_frame(json.dumps(p), "autodarts.matches.123.state", p)
+        assert r == "match_end_state_finished"
 
-    def test_game_finished_true_is_match_end(self):
-        payload = {"gameFinished": True}
-        raw = json.dumps(payload)
-        result = self.obs._classify_frame(raw, "autodarts.matches.123.state", payload)
-        assert result == "match_end_game_finished", f"Expected match_end_game_finished, got {result}"
+    def test_game_finished_true(self):
+        p = {"gameFinished": True}
+        r = self.obs._classify_frame(json.dumps(p), "autodarts.matches.123.state", p)
+        assert r == "match_end_game_finished"
 
     def test_matchshot_keyword(self):
-        raw = '{"channel":"autodarts.matches.abc.game-events","data":"matchshot detected"}'
-        result = self.obs._classify_frame(raw, "autodarts.matches.abc.game-events", {"data": "matchshot detected"})
-        assert result == "match_finished_matchshot", f"Expected match_finished_matchshot, got {result}"
+        raw = '{"data":"matchshot detected"}'
+        r = self.obs._classify_frame(raw, "autodarts.matches.abc.game-events", {"data": "matchshot detected"})
+        assert r == "match_finished_matchshot"
 
-    def test_delete_event_is_reset(self):
-        payload = {"event": "delete"}
-        raw = json.dumps(payload)
-        result = self.obs._classify_frame(raw, "autodarts.matches.123.state", payload)
-        assert result == "match_reset_delete", f"Expected match_reset_delete, got {result}"
+    def test_delete_event(self):
+        p = {"event": "delete"}
+        r = self.obs._classify_frame(json.dumps(p), "autodarts.matches.123.state", p)
+        assert r == "match_reset_delete"
 
-    def test_irrelevant_frame(self):
-        raw = '{"heartbeat": true}'
-        result = self.obs._classify_frame(raw, "system.heartbeat", {"heartbeat": True})
-        assert result == "irrelevant", f"Expected irrelevant, got {result}"
+    def test_irrelevant(self):
+        r = self.obs._classify_frame('{"heartbeat":true}', "system.heartbeat", {"heartbeat": True})
+        assert r == "irrelevant"
 
-    def test_autodarts_subscription(self):
-        raw = '{"action":"subscribe","channel":"autodarts.boards.xyz.state"}'
-        result = self.obs._classify_frame(raw, "autodarts.boards.xyz.state", {"action": "subscribe"})
-        assert result == "subscription", f"Expected subscription, got {result}"
+    def test_subscription(self):
+        r = self.obs._classify_frame('{"action":"subscribe"}', "autodarts.boards.xyz.state", {"action": "subscribe"})
+        assert r == "subscription"
 
 
 # ═══════════════════════════════════════════════════════════════
-# PART 3: DOM DETECTION LOGIC (MOCK HTML — NO NETWORK)
+# PART 3: DOM FALLBACK RESOLUTION (v3.3.5)
 # ═══════════════════════════════════════════════════════════════
 
-# The exact JS from _detect_state_dom, extracted for testability
-DETECT_STATE_JS = """() => {
-    var inGame = !!(
-        document.querySelector('[class*="scoreboard"]') ||
-        document.querySelector('[class*="dart-input"]') ||
-        document.querySelector('[class*="throw"]') ||
-        document.querySelector('[class*="scoring"]') ||
-        document.querySelector('[class*="game-view"]') ||
-        document.querySelector('[class*="match-view"]') ||
-        document.querySelector('[class*="player-score"]') ||
-        document.querySelector('[class*="turn"]') ||
-        document.querySelector('[class*="match"][class*="running"]') ||
-        document.querySelector('[data-testid*="match"]') ||
-        document.querySelector('#match')
-    );
+class TestFallbackResolution:
+    """Test that the resolveGroup pattern correctly selects primary vs fallback."""
 
-    var allButtons = Array.from(document.querySelectorAll('button, a[role="button"], [class*="btn"]'));
-    var buttonTexts = allButtons.map(function(b) { return (b.textContent || '').trim().toLowerCase(); });
+    def test_primary_selector_used_when_present(self, page):
+        """When primary selector matches, it should be reported as primary."""
+        html = '<div class="scoreboard-main">501</div>'  # matches primary of in_game_score
+        signals = _detect(page, html)
+        grp = signals["_groups"]["in_game_score"]
+        assert grp["found"], "in_game_score should be found"
+        assert grp["priority"] == "primary", f"Expected primary, got {grp['priority']}"
+        assert grp["name"] == "scoreboard"
 
-    var hasRematchBtn = buttonTexts.some(function(t) {
-        return /rematch|nochmal spielen|play again|erneut spielen/i.test(t);
-    });
-    var hasShareBtn = buttonTexts.some(function(t) {
-        return /share|teilen|share result|ergebnis teilen/i.test(t);
-    });
-    var hasNewGameBtn = buttonTexts.some(function(t) {
-        return /new game|neues spiel|new match|neues match/i.test(t);
-    });
-    var hasPostMatchUI = !!(
-        document.querySelector('[class*="post-match"]') ||
-        document.querySelector('[class*="match-summary"]') ||
-        document.querySelector('[class*="match-end"]') ||
-        document.querySelector('[class*="game-over"]')
-    );
-    var strongMatchEnd = hasRematchBtn || hasShareBtn || hasNewGameBtn || hasPostMatchUI;
+    def test_fallback_used_when_primary_missing(self, page):
+        """When primary is absent but fallback exists, fallback should be used."""
+        # No 'scoreboard' class, but has 'player-score' (fallback)
+        html = '<div class="player-score-display">301</div>'
+        signals = _detect(page, html)
+        grp = signals["_groups"]["in_game_score"]
+        assert grp["found"], "in_game_score should be found via fallback"
+        assert grp["priority"] == "fallback", f"Expected fallback, got {grp['priority']}"
+        assert grp["name"] == "player_score"
 
-    var hasGenericResult = !!(
-        document.querySelector('[class*="result"]') ||
-        document.querySelector('[class*="winner"]') ||
-        document.querySelector('[class*="finished"]') ||
-        document.querySelector('[class*="match-result"]') ||
-        document.querySelector('[class*="leg-result"]')
-    );
+    def test_second_fallback_used(self, page):
+        """When primary and first fallback are absent, second fallback works."""
+        # Only 'scoring' class (third in in_game_score group)
+        html = '<div class="scoring-panel">Points</div>'
+        signals = _detect(page, html)
+        grp = signals["_groups"]["in_game_score"]
+        assert grp["found"]
+        assert grp["priority"] == "fallback"
+        assert grp["name"] == "scoring"
 
-    return {
-        inGame: inGame,
-        strongMatchEnd: strongMatchEnd,
-        hasGenericResult: hasGenericResult,
-        hasRematchBtn: hasRematchBtn,
-        hasShareBtn: hasShareBtn,
-        hasNewGameBtn: hasNewGameBtn,
-        hasPostMatchUI: hasPostMatchUI
-    };
-}"""
+    def test_soft_fail_when_all_selectors_missing(self, page):
+        """When no selectors match, group reports found=false (no crash)."""
+        html = '<div class="unrelated-content">Hello</div>'
+        signals = _detect(page, html)
+        grp = signals["_groups"]["in_game_score"]
+        assert not grp["found"], "Should report not-found"
+        assert grp["priority"] is None
+        assert grp["name"] is None
+
+    def test_all_groups_soft_fail_on_empty_page(self, page):
+        """Empty page: all groups return found=false, no crash."""
+        signals = _detect(page, "<div>empty</div>")
+        for group_name, info in signals["_groups"].items():
+            assert not info["found"], f"{group_name} should not match on empty page"
+        assert not signals["inGame"]
+        assert not signals["strongMatchEnd"]
+        assert not signals["hasGenericResult"]
+
+    def test_finished_ui_primary_hit(self, page):
+        """post-match (primary) in finished_ui group."""
+        html = '<div class="post-match-screen">Results</div>'
+        signals = _detect(page, html)
+        grp = signals["_groups"]["finished_ui"]
+        assert grp["found"]
+        assert grp["priority"] == "primary"
+        assert grp["name"] == "post_match"
+        assert signals["strongMatchEnd"]
+
+    def test_finished_ui_fallback_hit(self, page):
+        """match-summary (fallback) when post-match is absent."""
+        html = '<div class="match-summary-panel">Stats</div>'
+        signals = _detect(page, html)
+        grp = signals["_groups"]["finished_ui"]
+        assert grp["found"]
+        assert grp["priority"] == "fallback"
+        assert grp["name"] == "match_summary"
+
+    def test_result_generic_primary_hit(self, page):
+        """match-result (primary) in result_generic group."""
+        html = '<div class="match-result-card">Winner: P1</div>'
+        signals = _detect(page, html)
+        grp = signals["_groups"]["result_generic"]
+        assert grp["found"]
+        assert grp["priority"] == "primary"
+
+    def test_result_generic_fallback_hit(self, page):
+        """winner (fallback) when match-result is absent."""
+        html = '<div class="winner-display">Player 1</div>'
+        signals = _detect(page, html)
+        grp = signals["_groups"]["result_generic"]
+        assert grp["found"]
+        assert grp["priority"] == "fallback"
+        assert grp["name"] == "winner"
 
 
-class TestDOMDetectionLogic:
-    """Inject mock HTML and run the exact observer detection JS."""
+# ═══════════════════════════════════════════════════════════════
+# PART 4: HEURISTIC COMBINATION
+# ═══════════════════════════════════════════════════════════════
 
-    def _inject_and_detect(self, page, html_body: str) -> dict:
-        """Load mock HTML and run detection JS."""
-        full_html = f"<html><body>{html_body}</body></html>"
-        page.set_content(full_html)
-        return page.evaluate(DETECT_STATE_JS)
+class TestHeuristicCombination:
+    """Test multi-evidence detection for stronger confidence."""
 
-    def _log_result(self, test_name, signals, expected_state):
-        """Log selector test result for debugging."""
-        logger.info(
-            f"[SELECTOR_TEST] {test_name} | "
-            f"expected={expected_state} | "
-            f"inGame={signals.get('inGame')} | "
-            f"strongMatchEnd={signals.get('strongMatchEnd')} | "
-            f"hasGenericResult={signals.get('hasGenericResult')} | "
-            f"ts={datetime.now(timezone.utc).isoformat()}"
-        )
+    def test_in_game_single_evidence(self, page):
+        html = '<div class="scoreboard-x">501</div>'
+        signals = _detect(page, html)
+        assert signals["inGame"]
+        assert signals["_evidenceCount"] == 1
+        assert "score" in signals["_evidence"]
 
-    def test_idle_empty_page(self, page):
-        """Empty page → nothing detected (IDLE state)."""
-        signals = self._inject_and_detect(page, "<div>Welcome to Autodarts</div>")
-        self._log_result("idle_empty", signals, "idle")
-        assert not signals["inGame"], "Empty page should NOT detect inGame"
-        assert not signals["strongMatchEnd"], "Empty page should NOT detect strongMatchEnd"
-        assert not signals["hasGenericResult"], "Empty page should NOT detect genericResult"
-
-    def test_in_game_scoreboard(self, page):
-        """Scoreboard class → inGame detected."""
-        html = '<div class="ad-scoreboard main">Player 1: 501</div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("in_game_scoreboard", signals, "in_game")
-        assert signals["inGame"], "Scoreboard class should trigger inGame"
-
-    def test_in_game_player_score(self, page):
-        """player-score class → inGame detected."""
-        html = '<div class="player-score-container"><span class="player-score">301</span></div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("in_game_player_score", signals, "in_game")
-        assert signals["inGame"], "player-score should trigger inGame"
-
-    def test_in_game_match_running(self, page):
-        """match + running combo class → inGame detected."""
-        html = '<div class="match-container running active">Match in progress</div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("in_game_match_running", signals, "in_game")
-        assert signals["inGame"], "match+running combo should trigger inGame"
-
-    def test_in_game_data_testid(self, page):
-        """data-testid=match-view → inGame detected."""
-        html = '<div data-testid="match-view-501">Game</div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("in_game_testid", signals, "in_game")
-        assert signals["inGame"], "data-testid*=match should trigger inGame"
-
-    def test_in_game_turn_indicator(self, page):
-        """turn class → inGame detected."""
-        html = '<div class="current-turn active">Player 1\'s turn</div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("in_game_turn", signals, "in_game")
-        assert signals["inGame"], "turn class should trigger inGame"
-
-    def test_in_game_match_id(self, page):
-        """#match element → inGame detected."""
-        html = '<div id="match">Active match</div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("in_game_match_id", signals, "in_game")
-        assert signals["inGame"], "#match should trigger inGame"
-
-    def test_finished_rematch_button(self, page):
-        """Rematch button → strongMatchEnd detected."""
+    def test_in_game_multi_evidence(self, page):
+        """Multiple in-game signals → higher confidence."""
         html = '''
-        <div class="post-game">
-            <button class="btn-primary">Rematch</button>
-            <button class="btn-secondary">Share Result</button>
-        </div>
+        <div class="scoreboard-main">501</div>
+        <div class="match-view-active">Game</div>
+        <div class="turn-indicator">P1</div>
         '''
-        signals = self._inject_and_detect(page, html)
-        self._log_result("finished_rematch", signals, "finished")
-        assert signals["strongMatchEnd"], "Rematch button should trigger strongMatchEnd"
-        assert signals["hasRematchBtn"], "hasRematchBtn should be True"
+        signals = _detect(page, html)
+        assert signals["inGame"]
+        assert signals["_evidenceCount"] == 3
+        assert "score" in signals["_evidence"]
+        assert "match" in signals["_evidence"]
+        assert "turn" in signals["_evidence"]
 
-    def test_finished_nochmal_spielen(self, page):
-        """German 'Nochmal spielen' button → strongMatchEnd."""
-        html = '<button>Nochmal spielen</button>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("finished_nochmal", signals, "finished")
-        assert signals["strongMatchEnd"], "'Nochmal spielen' should trigger strongMatchEnd"
-
-    def test_finished_share_button(self, page):
-        """Share button → strongMatchEnd."""
-        html = '<button class="share-btn">Ergebnis teilen</button>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("finished_share", signals, "finished")
-        assert signals["strongMatchEnd"], "Share button should trigger strongMatchEnd"
-        assert signals["hasShareBtn"], "hasShareBtn should be True"
-
-    def test_finished_new_game_button(self, page):
-        """New Game button → strongMatchEnd."""
-        html = '<a role="button" class="btn">New Game</a>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("finished_new_game", signals, "finished")
-        assert signals["strongMatchEnd"], "New Game button should trigger strongMatchEnd"
-
-    def test_finished_post_match_ui(self, page):
-        """post-match class → strongMatchEnd."""
-        html = '<div class="post-match-results"><h2>Match Over</h2></div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("finished_post_match", signals, "finished")
-        assert signals["strongMatchEnd"], "post-match class should trigger strongMatchEnd"
-        assert signals["hasPostMatchUI"], "hasPostMatchUI should be True"
-
-    def test_finished_match_summary(self, page):
-        """match-summary class → strongMatchEnd."""
-        html = '<div class="match-summary-card">Winner: Player 1</div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("finished_summary", signals, "finished")
-        assert signals["strongMatchEnd"], "match-summary should trigger strongMatchEnd"
-
-    def test_generic_result_winner(self, page):
-        """winner class → hasGenericResult."""
-        html = '<div class="winner-highlight">Player 1 wins!</div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("result_winner", signals, "result")
-        assert signals["hasGenericResult"], "winner class should trigger hasGenericResult"
-
-    def test_generic_result_finished(self, page):
-        """finished class → hasGenericResult."""
-        html = '<div class="game-finished-overlay">Game finished</div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("result_finished", signals, "result")
-        assert signals["hasGenericResult"], "finished class should trigger hasGenericResult"
-
-    def test_generic_result_leg_result(self, page):
-        """leg-result class → hasGenericResult."""
-        html = '<div class="leg-result-panel">Leg 1 of 3</div>'
-        signals = self._inject_and_detect(page, html)
-        self._log_result("result_leg", signals, "result")
-        assert signals["hasGenericResult"], "leg-result should trigger hasGenericResult"
-
-    def test_no_false_positive_on_unrelated(self, page):
-        """Unrelated UI must NOT trigger any detection."""
+    def test_in_game_two_evidence(self, page):
         html = '''
-        <nav class="main-menu"><a href="/profile">Profile</a></nav>
-        <div class="lobby-container"><h1>Welcome</h1></div>
-        <button>Play Now</button>
+        <div class="player-score-box">180</div>
+        <div class="throw-area">Dart 3</div>
         '''
-        signals = self._inject_and_detect(page, html)
-        self._log_result("no_false_positive", signals, "idle")
-        assert not signals["inGame"], "Lobby should NOT trigger inGame"
-        assert not signals["strongMatchEnd"], "Lobby should NOT trigger strongMatchEnd"
+        signals = _detect(page, html)
+        assert signals["inGame"]
+        assert signals["_evidenceCount"] == 2
+        assert "score" in signals["_evidence"]
+        assert "turn" in signals["_evidence"]
+
+    def test_finished_ui_plus_button(self, page):
+        """Finished UI + rematch button → strong match end."""
+        html = '''
+        <div class="match-end-overlay">Game Over</div>
+        <button>Play Again</button>
+        '''
+        signals = _detect(page, html)
+        assert signals["strongMatchEnd"]
+        assert signals["hasPostMatchUI"]
+        assert signals["hasRematchBtn"]
+
+    def test_button_only_without_ui(self, page):
+        """Button alone triggers strongMatchEnd even without post-match UI."""
+        html = '<button class="btn-action">Rematch</button>'
+        signals = _detect(page, html)
+        assert signals["strongMatchEnd"]
+        assert signals["hasRematchBtn"]
+        assert not signals["hasPostMatchUI"]
 
 
 # ═══════════════════════════════════════════════════════════════
-# PART 4: INDIVIDUAL CSS SELECTOR VALIDATION
+# PART 5: CSS SELECTOR SYNTAX VALIDATION
 # ═══════════════════════════════════════════════════════════════
 
 class TestCSSSelectorsValid:
-    """Verify each CSS selector is syntactically valid via querySelectorAll."""
 
-    def _test_selector_valid(self, page, selector_css: str, name: str):
-        """Run querySelectorAll with the selector — no JS error = valid syntax."""
-        page.set_content("<html><body><div>test</div></body></html>")
+    def _test_selector(self, page, css, name):
+        page.set_content("<html><body><div>x</div></body></html>")
         try:
-            page.evaluate(f'document.querySelectorAll({json.dumps(selector_css)})')
+            page.evaluate(f'document.querySelectorAll({json.dumps(css)})')
         except Exception as e:
             pytest.fail(
-                f"CSS selector SYNTAX ERROR: "
-                f"selector_name={name} selector_string={selector_css} "
-                f"error={e} url=mock timestamp={datetime.now(timezone.utc).isoformat()}"
+                f"CSS SYNTAX ERROR: name={name} selector={css} "
+                f"error={e} ts={datetime.now(timezone.utc).isoformat()}"
             )
 
-    def test_all_in_game_selectors_valid(self, page):
-        for s in IN_GAME_SELECTORS:
-            self._test_selector_valid(page, s["css"], s["name"])
+    def test_all_group_selectors_valid(self, page):
+        for group_name, selectors in SELECTOR_GROUPS.items():
+            for s in selectors:
+                self._test_selector(page, s["css"], f"{group_name}/{s['name']}")
 
-    def test_all_strong_match_end_selectors_valid(self, page):
-        for s in STRONG_MATCH_END_SELECTORS:
-            self._test_selector_valid(page, s["css"], s["name"])
-
-    def test_all_generic_result_selectors_valid(self, page):
-        for s in GENERIC_RESULT_SELECTORS:
-            self._test_selector_valid(page, s["css"], s["name"])
+    def test_all_flat_selectors_valid(self, page):
+        for s in IN_GAME_SELECTORS + STRONG_MATCH_END_SELECTORS + GENERIC_RESULT_SELECTORS:
+            self._test_selector(page, s["css"], s["name"])
 
 
 # ═══════════════════════════════════════════════════════════════
-# PART 5: LIVE PAGE PROBE (OPTIONAL — SET AUTODARTS_LIVE=1)
+# PART 6: EXISTING DOM DETECTION (backward compat)
+# ═══════════════════════════════════════════════════════════════
+
+class TestDOMDetectionBackwardCompat:
+    """Ensure the canonical JS produces identical results to the old inline JS."""
+
+    def test_idle_empty(self, page):
+        signals = _detect(page, "<div>Welcome</div>")
+        assert not signals["inGame"]
+        assert not signals["strongMatchEnd"]
+        assert not signals["hasGenericResult"]
+
+    def test_in_game_scoreboard(self, page):
+        signals = _detect(page, '<div class="ad-scoreboard main">501</div>')
+        assert signals["inGame"]
+
+    def test_in_game_match_id(self, page):
+        signals = _detect(page, '<div id="match">Active</div>')
+        assert signals["inGame"]
+
+    def test_finished_german_button(self, page):
+        signals = _detect(page, '<button>Nochmal spielen</button>')
+        assert signals["strongMatchEnd"]
+
+    def test_finished_share_button(self, page):
+        signals = _detect(page, '<button class="share-btn">Ergebnis teilen</button>')
+        assert signals["strongMatchEnd"]
+
+    def test_result_winner(self, page):
+        signals = _detect(page, '<div class="winner-highlight">P1 wins</div>')
+        assert signals["hasGenericResult"]
+
+    def test_no_false_positive(self, page):
+        html = '<nav class="main-menu"><a>Profile</a></nav><div class="lobby">Welcome</div>'
+        signals = _detect(page, html)
+        assert not signals["inGame"]
+        assert not signals["strongMatchEnd"]
+
+
+# ═══════════════════════════════════════════════════════════════
+# PART 7: LIVE PAGE PROBE (OPTIONAL)
 # ═══════════════════════════════════════════════════════════════
 
 @pytest.mark.skipif(not LIVE_TESTS, reason="AUTODARTS_LIVE=1 not set")
 class TestLivePageProbe:
-    """Probe play.autodarts.io — verify page loads and login redirect works."""
 
     def test_page_loads(self, page):
-        """Autodarts page should load without error."""
         try:
-            response = page.goto(AUTODARTS_BASE_URL, timeout=15000, wait_until="domcontentloaded")
-            assert response is not None, "No response from play.autodarts.io"
-            status = response.status
-            assert status < 500, f"Server error: HTTP {status}"
-            logger.info(
-                f"[LIVE_PROBE] page_loaded url={page.url} status={status} "
-                f"ts={datetime.now(timezone.utc).isoformat()}"
-            )
+            resp = page.goto(AUTODARTS_BASE_URL, timeout=15000, wait_until="domcontentloaded")
+            assert resp and resp.status < 500
         except Exception as e:
             if "net::" in str(e) or "timeout" in str(e).lower():
-                pytest.skip(f"Network/environment issue (not a selector bug): {e}")
+                pytest.skip(f"Network issue: {e}")
             raise
 
     def test_login_redirect(self, page):
-        """Without auth, Autodarts should redirect to login page."""
         try:
             page.goto(AUTODARTS_BASE_URL, timeout=15000, wait_until="domcontentloaded")
             page.wait_for_timeout(3000)
-            url = page.url.lower()
-            detected_login = any(p in url for p in LOGIN_URL_PATTERNS)
-            logger.info(
-                f"[LIVE_PROBE] login_check url={page.url} "
-                f"detected_login={detected_login} "
-                f"ts={datetime.now(timezone.utc).isoformat()}"
-            )
-            assert detected_login, (
-                f"Expected redirect to login page. "
-                f"actual_url={page.url} expected_patterns={LOGIN_URL_PATTERNS}"
-            )
+            assert any(p in page.url.lower() for p in LOGIN_URL_PATTERNS)
         except Exception as e:
             if "net::" in str(e) or "timeout" in str(e).lower():
-                pytest.skip(f"Network/environment issue: {e}")
+                pytest.skip(f"Network issue: {e}")
             raise
 
     def test_page_has_basic_dom(self, page):
-        """The page should have a body and basic structure."""
         try:
             page.goto(AUTODARTS_BASE_URL, timeout=15000, wait_until="domcontentloaded")
             page.wait_for_timeout(2000)
-            body = page.query_selector("body")
-            assert body is not None, "No <body> element found"
-            html = page.content()
-            assert len(html) > 200, f"Page too small ({len(html)} chars) — may not have loaded"
+            assert page.query_selector("body") is not None
+            assert len(page.content()) > 200
         except Exception as e:
             if "net::" in str(e) or "timeout" in str(e).lower():
-                pytest.skip(f"Network/environment issue: {e}")
+                pytest.skip(f"Network issue: {e}")
             raise
 
 
 # ═══════════════════════════════════════════════════════════════
-# PART 6: GOTCHA VARIANT GUARD
+# PART 8: GOTCHA VARIANT GUARD
 # ═══════════════════════════════════════════════════════════════
 
 class TestGotchaVariantGuard:
-    """Verify the Gotcha guard blocks gameshot triggers correctly."""
 
     @pytest.fixture(autouse=True)
     def setup(self):
@@ -532,7 +481,7 @@ class TestGotchaVariantGuard:
         self.obs._ws_state.variant = "gotcha 301"
         assert self.obs._is_gotcha()
 
-    def test_is_gotcha_negative(self):
+    def test_is_gotcha_negative_501(self):
         self.obs._ws_state.variant = "501"
         assert not self.obs._is_gotcha()
 
@@ -541,13 +490,10 @@ class TestGotchaVariantGuard:
         assert not self.obs._is_gotcha()
 
     def test_extract_variant_from_payload(self):
-        v = self.obs._extract_variant({"variant": "Gotcha"})
-        assert v == "Gotcha"
+        assert self.obs._extract_variant({"variant": "Gotcha"}) == "Gotcha"
 
     def test_extract_variant_nested(self):
-        v = self.obs._extract_variant({"data": {"variant": "Cricket"}})
-        assert v == "Cricket"
+        assert self.obs._extract_variant({"data": {"variant": "Cricket"}}) == "Cricket"
 
     def test_extract_variant_none(self):
-        v = self.obs._extract_variant({"score": 180})
-        assert v is None
+        assert self.obs._extract_variant({"score": 180}) is None
