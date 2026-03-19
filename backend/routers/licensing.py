@@ -50,7 +50,9 @@ def _serialize_device(d):
     return {
         "id": d.id, "location_id": d.location_id, "board_id": d.board_id,
         "install_id": d.install_id, "device_name": d.device_name,
-        "status": d.status, "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
+        "status": d.status, "binding_status": d.binding_status,
+        "first_seen_at": d.first_seen_at.isoformat() if d.first_seen_at else None,
+        "last_seen_at": d.last_seen_at.isoformat() if d.last_seen_at else None,
         "created_at": d.created_at.isoformat() if d.created_at else None,
     }
 
@@ -343,3 +345,52 @@ async def licensing_dashboard(admin: User = Depends(require_admin), db: AsyncSes
         "licenses_active": active_licenses,
         "licenses_blocked": blocked_licenses,
     }
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# DEVICE IDENTITY (v3.4.3)
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/device-identity")
+async def get_device_identity(admin: User = Depends(require_admin)):
+    """Return the current device's install_id and fingerprints."""
+    from backend.services.device_identity_service import device_identity_service
+    identity = device_identity_service.get_identity()
+    return identity
+
+
+# ═══════════════════════════════════════════════════════════════
+# DEVICE REBIND (v3.4.3 — Superadmin only)
+# ═══════════════════════════════════════════════════════════════
+
+@router.post("/devices/{device_id}/rebind")
+async def rebind_device(
+    device_id: str,
+    data: dict,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rebind a device to a new install_id. Superadmin only.
+    Body: { "new_install_id": "uuid-string" }
+    """
+    new_install_id = data.get("new_install_id")
+    if not new_install_id:
+        raise HTTPException(400, "new_install_id is required")
+
+    result = await license_service.rebind_device(db, device_id, new_install_id)
+    if "error" in result:
+        raise HTTPException(404, result["error"])
+
+    from backend.dependencies import log_audit
+    await log_audit(
+        db, admin, "device_rebind",
+        entity_type="device", entity_id=device_id,
+        details={"old_install_id": result.get("old_install_id"), "new_install_id": new_install_id},
+    )
+
+    logger.info(
+        f"[LICENSE] Device REBIND by {admin.username}: device={device_id} "
+        f"old={result.get('old_install_id')} new={new_install_id}"
+    )
+    return result

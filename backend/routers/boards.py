@@ -150,15 +150,20 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
     # v3.4.1: License enforcement — check before creating session
     try:
         from backend.services.license_service import license_service
-        lic_status = await license_service.get_effective_status(db)
+        from backend.services.device_identity_service import device_identity_service
+        _install_id = device_identity_service.get_install_id()
+        lic_status = await license_service.get_effective_status(
+            db, install_id=_install_id, board_id=board_id
+        )
         if not license_service.is_session_allowed(lic_status):
+            _block_reason = lic_status.get('binding_status') or lic_status.get('status')
             logger.warning(
                 f"[LICENSE] Session blocked: board={board_id} status={lic_status.get('status')} "
-                f"customer={lic_status.get('customer_name')}"
+                f"binding={lic_status.get('binding_status')} customer={lic_status.get('customer_name')}"
             )
             raise HTTPException(
                 status_code=403,
-                detail=f"license_{lic_status.get('status', 'invalid')}",
+                detail=f"license_{_block_reason or 'invalid'}",
             )
         if lic_status.get("status") == "grace":
             logger.info(

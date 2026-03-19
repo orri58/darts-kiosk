@@ -718,17 +718,23 @@ async def stop_observer_for_board(board_id: str, reason: str = "unknown"):
 async def kiosk_start_game(board_id: str, data: StartGameRequest, db: AsyncSession = Depends(get_db)):
     logger.info(f"[StartGame] board={board_id}, game_type={data.game_type}, players={data.players}")
 
-    # v3.4.1: License enforcement — secondary check before game start
+    # v3.4.3: License enforcement — secondary check before game start
     try:
         from backend.services.license_service import license_service
-        lic_status = await license_service.get_effective_status(db)
+        from backend.services.device_identity_service import device_identity_service
+        _install_id = device_identity_service.get_install_id()
+        lic_status = await license_service.get_effective_status(
+            db, install_id=_install_id, board_id=board_id
+        )
         if not license_service.is_session_allowed(lic_status):
+            _block_reason = lic_status.get('binding_status') or lic_status.get('status')
             logger.warning(
-                f"[LICENSE] Game start blocked: board={board_id} status={lic_status.get('status')}"
+                f"[LICENSE] Game start blocked: board={board_id} status={lic_status.get('status')} "
+                f"binding={lic_status.get('binding_status')}"
             )
             raise HTTPException(
                 status_code=403,
-                detail=f"license_{lic_status.get('status', 'invalid')}",
+                detail=f"license_{_block_reason or 'invalid'}",
             )
     except HTTPException:
         raise
@@ -930,10 +936,14 @@ async def trigger_sound(board_id: str, data: SoundTrigger):
 async def kiosk_license_status(db: AsyncSession = Depends(get_db)):
     """Public endpoint for the kiosk UI to check license status.
     Returns the effective license status without requiring auth.
-    The kiosk needs this to show overlay/warnings."""
+    The kiosk needs this to show overlay/warnings.
+    v3.4.3: includes install_id for device binding check."""
     try:
         from backend.services.license_service import license_service
-        status = await license_service.get_effective_status(db)
+        from backend.services.device_identity_service import device_identity_service
+        _install_id = device_identity_service.get_install_id()
+        status = await license_service.get_effective_status(db, install_id=_install_id)
+        status["install_id"] = _install_id
         license_service.save_to_cache(status)
         return status
     except Exception as e:

@@ -35,12 +35,43 @@ export default function LicenseOverlay({ kioskState }) {
   if (!licStatus) return null;
 
   const status = licStatus.status;
+  const binding = licStatus.binding_status;
 
-  // No overlay needed for active/test/no_license
-  if (status === 'active' || status === 'test' || status === 'no_license') return null;
+  // No overlay needed for active/test/no_license (with good binding)
+  if ((status === 'active' || status === 'test' || status === 'no_license') && binding !== 'mismatch') return null;
 
   // Don't show blocking overlay during active games
   const isInGame = kioskState === 'in_game' || kioskState === 'observer_active' || kioskState === 'finished';
+
+  // Device binding mismatch: warning overlay (non-blocking for now, shows hint)
+  if (binding === 'mismatch') {
+    if (isInGame) return null;
+    return (
+      <div
+        className="fixed inset-0 z-[1000] bg-black/95 flex items-center justify-center"
+        data-testid="license-binding-mismatch-overlay"
+      >
+        <div className="text-center max-w-md px-8">
+          <div className="w-20 h-20 rounded-full bg-amber-500/20 flex items-center justify-center mx-auto mb-6">
+            <AlertTriangle className="w-10 h-10 text-amber-500" />
+          </div>
+          <h2 className="text-2xl font-bold text-white mb-3">
+            Geraet nicht autorisiert
+          </h2>
+          <p className="text-zinc-400 mb-6">
+            Die Install-ID dieses Geraets stimmt nicht mit der registrierten ID ueberein.
+            Bitte kontaktieren Sie den Administrator fuer eine Neubindung.
+          </p>
+          {licStatus.install_id && (
+            <p className="text-xs text-zinc-600 font-mono">Install-ID: {licStatus.install_id}</p>
+          )}
+          <p className="text-xs text-zinc-600 mt-1">
+            Status: {status} | Binding: {binding}
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // Grace period: subtle yellow bar (non-blocking)
   if (status === 'grace') {

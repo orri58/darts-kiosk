@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   KeyRound, Building2, MapPin, Monitor, FileKey,
   Plus, RefreshCw, Ban, CheckCircle, Clock, ArrowUpRight,
-  Users, AlertTriangle, Shield
+  Users, AlertTriangle, Shield, Link2, Unlink, Fingerprint
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -92,6 +92,23 @@ function SimpleForm({ fields, onSubmit, submitLabel }) {
   );
 }
 
+const BINDING_COLORS = {
+  bound: 'text-emerald-400 bg-emerald-500/10',
+  unbound: 'text-zinc-400 bg-zinc-500/10',
+  mismatch: 'text-red-400 bg-red-500/10',
+  first_bind: 'text-blue-400 bg-blue-500/10',
+};
+
+function BindingBadge({ status, t }) {
+  const key = `lic_binding_${status || 'unbound'}`;
+  const colorClass = BINDING_COLORS[status] || BINDING_COLORS.unbound;
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded font-medium ${colorClass}`} data-testid={`lic-binding-${status}`}>
+      {t(key) || status || 'unbound'}
+    </span>
+  );
+}
+
 export default function Licensing() {
   const { token } = useAuth();
   const { t } = useI18n();
@@ -103,21 +120,24 @@ export default function Licensing() {
   const [devices, setDevices] = useState([]);
   const [licenses, setLicenses] = useState([]);
   const [showForm, setShowForm] = useState(null);
+  const [deviceIdentity, setDeviceIdentity] = useState(null);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [dash, cust, loc, dev, lic] = await Promise.all([
+      const [dash, cust, loc, dev, lic, identity] = await Promise.all([
         axios.get(`${API}/licensing/dashboard`, { headers }),
         axios.get(`${API}/licensing/customers`, { headers }),
         axios.get(`${API}/licensing/locations`, { headers }),
         axios.get(`${API}/licensing/devices`, { headers }),
         axios.get(`${API}/licensing/licenses`, { headers }),
+        axios.get(`${API}/licensing/device-identity`, { headers }).catch(() => ({ data: null })),
       ]);
       setDashboard(dash.data);
       setCustomers(cust.data);
       setLocations(loc.data);
       setDevices(dev.data);
       setLicenses(lic.data);
+      setDeviceIdentity(identity.data);
     } catch (err) {
       toast.error('Lizenzdaten konnten nicht geladen werden');
     }
@@ -140,6 +160,22 @@ export default function Licensing() {
     try {
       await axios.post(`${API}/licensing/licenses/${id}/${action}`, body, { headers });
       toast.success(`Lizenz: ${action}`);
+      fetchAll();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Fehler');
+    }
+  };
+
+  const rebindDevice = async (deviceId) => {
+    if (!deviceIdentity?.install_id) {
+      toast.error(t('lic_no_device_identity'));
+      return;
+    }
+    if (!confirm(t('lic_rebind_confirm'))) return;
+    try {
+      await axios.post(`${API}/licensing/devices/${deviceId}/rebind`,
+        { new_install_id: deviceIdentity.install_id }, { headers });
+      toast.success(t('lic_rebind_success'));
       fetchAll();
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Fehler');
@@ -263,6 +299,27 @@ export default function Licensing() {
 
         {/* Devices */}
         <TabsContent value="devices">
+          {/* Device Identity Card */}
+          {deviceIdentity && (
+            <Card className="bg-zinc-900 border-zinc-800 mb-4">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded bg-cyan-500/20">
+                    <Fingerprint className="w-5 h-5 text-cyan-400" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-xs text-zinc-400">{t('lic_this_device')}</p>
+                    <p className="text-sm text-white font-mono" data-testid="lic-device-install-id">{deviceIdentity.install_id}</p>
+                    {deviceIdentity.fingerprints && (
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        {deviceIdentity.fingerprints.hostname} / {deviceIdentity.fingerprints.platform}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           <Card className="bg-zinc-900 border-zinc-800">
             <CardHeader className="pb-3 flex flex-row items-center justify-between">
               <CardTitle className="text-white text-base">{t('lic_devices')}</CardTitle>
@@ -287,13 +344,45 @@ export default function Licensing() {
               {devices.length === 0 && <p className="text-sm text-zinc-500">{t('lic_no_data')}</p>}
               {devices.map(d => {
                 const loc = locations.find(l => l.id === d.location_id);
+                const isThisDevice = deviceIdentity && d.install_id === deviceIdentity.install_id;
+                const isMismatch = d.binding_status === 'mismatch';
                 return (
-                  <div key={d.id} className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid={`lic-device-${d.id}`}>
-                    <div>
-                      <p className="text-sm text-white font-medium">{d.device_name || d.board_id || d.id}</p>
-                      <p className="text-xs text-zinc-500">{loc?.name} {d.board_id && `| Board: ${d.board_id}`}</p>
+                  <div key={d.id} className={`p-3 rounded-sm space-y-2 ${isMismatch ? 'bg-red-500/5 border border-red-500/20' : 'bg-zinc-800/50'}`} data-testid={`lic-device-${d.id}`}>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Monitor className="w-4 h-4 text-cyan-400" />
+                        <span className="text-sm text-white font-medium">{d.device_name || d.board_id || d.id.slice(0, 8)}</span>
+                        {isThisDevice && (
+                          <span className="text-xs px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-400" data-testid="lic-this-device-badge">
+                            {t('lic_this_device')}
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <BindingBadge status={d.binding_status} t={t} />
+                        <StatusBadge status={d.status} t={t} />
+                      </div>
                     </div>
-                    <StatusBadge status={d.status} t={t} />
+                    <div className="flex flex-wrap gap-3 text-xs text-zinc-400">
+                      <span>{loc?.name}</span>
+                      {d.board_id && <span>Board: {d.board_id}</span>}
+                      {d.install_id && (
+                        <span className="font-mono text-zinc-500" data-testid={`lic-device-iid-${d.id}`}>
+                          ID: {d.install_id.slice(0, 12)}...
+                        </span>
+                      )}
+                      {d.last_seen_at && <span>{t('lic_last_seen')}: {new Date(d.last_seen_at).toLocaleString('de-DE')}</span>}
+                    </div>
+                    {isMismatch && (
+                      <div className="flex items-center gap-2 mt-1">
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-400" />
+                        <span className="text-xs text-red-400">{t('lic_binding_mismatch_hint')}</span>
+                        <Button size="sm" variant="outline" className="border-amber-500/30 text-amber-400 text-xs ml-auto"
+                          onClick={() => rebindDevice(d.id)} data-testid={`lic-rebind-${d.id}`}>
+                          <Link2 className="w-3 h-3 mr-1" /> {t('lic_rebind')}
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
