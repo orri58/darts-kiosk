@@ -103,6 +103,8 @@ class LicDevice(Base):
     hardware_fingerprint = Column(String(128), nullable=True)
     device_name = Column(String(100), nullable=True)
     status = Column(String(20), default=DeviceStatus.ACTIVE.value)
+    binding_status = Column(String(20), default="unbound")  # unbound, bound, mismatch
+    first_seen_at = Column(DateTime, nullable=True)
     last_seen_at = Column(DateTime, nullable=True)
     last_license_check_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
