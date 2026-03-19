@@ -1055,6 +1055,39 @@ autostart.bat:
   - NICHT GEAENDERT: Observer, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
   - Release: darts-kiosk-v3.4.2 Windows (2.2 MB), Linux (1.8 MB), Source (21 MB)
 
+- v3.4.3: Device Binding (2026-03-19)
+  - NEUES FEATURE: Geraete-Bindung ueber persistente install_id
+  - DeviceIdentityService: Generiert UUID install_id, speichert in data/device_identity.json
+    - Optionale Machine-Fingerprints (hostname, platform, Windows Machine GUID) fuer Diagnostik
+    - Singleton-Pattern, thread-safe laden/speichern
+  - LicenseValidationService erweitert:
+    - Neuer Parameter: install_id und board_id in get_effective_status()
+    - Auto-Bind: Device mit board_id aber ohne install_id wird beim ersten Check gebunden
+    - Mismatch-Erkennung: Andere install_id auf gebundenem Device → binding_status=mismatch
+    - _check_device_binding(): Prueft existierende Bindungen an Location
+    - rebind_device(): Superadmin kann Device auf neue install_id umschreiben
+  - is_session_allowed() blockiert bei binding_mismatch
+  - Neue API-Endpunkte:
+    - GET /api/licensing/device-identity — Install-ID + Fingerprints des Geraets
+    - POST /api/licensing/devices/{id}/rebind — Neubindung mit Audit-Log
+  - Enforcement erweitert:
+    - boards.py unlock_board: Uebergibt install_id + board_id
+    - kiosk.py start_game: Uebergibt install_id + board_id
+    - kiosk.py kiosk_license_status: Inkludiert install_id in Response
+  - Admin UI (Licensing.js):
+    - Device Identity Card: Zeigt install_id und Fingerprints
+    - BindingBadge Komponente: Gebunden/Ungebunden/Mismatch/Erstbindung
+    - "Dieses Geraet" Badge bei passendem Device
+    - Rebind-Button bei Mismatch (mit Confirm-Dialog)
+    - Install-ID und last_seen_at in Device-Liste
+  - Kiosk UI (LicenseOverlay.js):
+    - Neues Mismatch-Overlay: "Geraet nicht autorisiert" mit Install-ID
+    - Zeigt Install-ID fuer Diagnose
+  - i18n: 11 neue DE/EN Keys (lic_binding_*, lic_rebind_*, lic_this_device, lic_last_seen)
+  - DB-Migration: ALTER TABLE lic_devices ADD binding_status, first_seen_at (automatisch beim Start)
+  - 67/67 Tests bestanden (21 Unit + 18 E2E + 28 Regression)
+  - NICHT GEAENDERT: Observer, Finalize, Credits, Watchdog, Auth, Gotcha-Fix
+
 ## Remaining Backlog
 ### P1
 - [x] ~~Admin System Controls~~ → v3.3.1
@@ -1072,7 +1105,7 @@ autostart.bat:
 ### P1 — Lizenzsystem Ausbau
 - [x] ~~Lizenzpruefung vor Session-Start (Kiosk-Integration)~~ → v3.4.2
 - [x] ~~Lizenz-Ablauf-Overlay im Kiosk-UI~~ → v3.4.2
-- [ ] Geraete-Bindung: install_id automatisch generieren beim ersten Start
+- [x] ~~Geraete-Bindung: install_id automatisch generieren beim ersten Start~~ → v3.4.3
 - [ ] Zyklische Lizenzpruefung im Agent/Backend (z.B. alle 6h)
 - [ ] Rollen-basierte Sichtbarkeit (Operator sieht nur eigene Kunden)
 - [ ] Superadmin-Setup Wizard
