@@ -248,15 +248,30 @@ async def lifespan(app: FastAPI):
 
     # v3.8.0: Start config sync client
     from backend.services.config_sync_client import config_sync_client
+    from backend.services.config_apply import on_config_synced
     try:
         from backend.services.license_sync_client import license_sync_client as _lsc
         _central_url = _lsc._central_server_url
         _api_key = _lsc._api_key
         _device_id = _lsc._device_id if hasattr(_lsc, '_device_id') else None
         config_sync_client.configure(central_url=_central_url, api_key=_api_key, device_id=_device_id)
+        config_sync_client.on_config_change(on_config_synced)
         asyncio.create_task(config_sync_client.start())
     except Exception as exc:
         logger.warning(f"Config sync start failed (non-critical): {exc}")
+
+    # v3.9.1: Start remote action polling
+    from backend.services.action_poller import action_poller
+    try:
+        from backend.services.license_sync_client import license_sync_client as _lsc2
+        _central_url2 = _lsc2._central_server_url
+        _api_key2 = _lsc2._api_key
+        _device_id2 = _lsc2._device_id if hasattr(_lsc2, '_device_id') else None
+        if _central_url2 and _device_id2:
+            action_poller.configure(central_url=_central_url2, api_key=_api_key2, device_id=_device_id2)
+            asyncio.create_task(action_poller.start())
+    except Exception as exc:
+        logger.warning(f"Action poller start failed (non-critical): {exc}")
 
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
