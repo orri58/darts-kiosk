@@ -4,20 +4,11 @@ import { Toaster } from "sonner";
 // Kiosk Pages
 import KioskLayout from "./pages/kiosk/KioskLayout";
 
-// Admin Pages
+// Admin Pages (stripped down: diagnostics + board control only)
 import AdminLayout from "./pages/admin/AdminLayout";
 import AdminLogin from "./pages/admin/Login";
 import AdminDashboard from "./pages/admin/Dashboard";
-import AdminBoards from "./pages/admin/Boards";
-import AdminSettings from "./pages/admin/Settings";
-import AdminUsers from "./pages/admin/Users";
-import AdminLogs from "./pages/admin/Logs";
-import AdminRevenue from "./pages/admin/Revenue";
 import AdminHealth from "./pages/admin/Health";
-import AdminSystem from "./pages/admin/System";
-import AdminDiscovery from "./pages/admin/Discovery";
-import AdminLeaderboard from "./pages/admin/Leaderboard";
-import AdminReports from "./pages/admin/Reports";
 import AdminLicensing from "./pages/admin/Licensing";
 import MatchPublicPage from "./pages/MatchPublicPage";
 import PublicLeaderboard from "./pages/PublicLeaderboard";
@@ -65,21 +56,22 @@ function App() {
             {/* Credits Overlay (opened in separate small window on board PC) */}
             <Route path="/overlay/:boardId" element={<CreditsOverlay />} />
             
-            {/* Admin Routes */}
+            {/* Admin Routes (local device panel — diagnostics only) */}
             <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/admin" element={<AdminLayout />}>
               <Route index element={<AdminDashboard />} />
-              <Route path="boards" element={<AdminBoards />} />
-              <Route path="settings" element={<AdminSettings />} />
-              <Route path="users" element={<AdminUsers />} />
-              <Route path="logs" element={<AdminLogs />} />
-              <Route path="revenue" element={<AdminRevenue />} />
               <Route path="health" element={<AdminHealth />} />
-              <Route path="system" element={<AdminSystem />} />
-              <Route path="discovery" element={<AdminDiscovery />} />
-              <Route path="leaderboard" element={<AdminLeaderboard />} />
-              <Route path="reports" element={<AdminReports />} />
               <Route path="licensing" element={<AdminLicensing />} />
+              {/* All removed routes → redirect to portal */}
+              <Route path="boards" element={<Navigate to="/portal/devices" replace />} />
+              <Route path="settings" element={<Navigate to="/portal" replace />} />
+              <Route path="users" element={<Navigate to="/portal/users" replace />} />
+              <Route path="logs" element={<Navigate to="/portal/audit" replace />} />
+              <Route path="revenue" element={<Navigate to="/portal" replace />} />
+              <Route path="system" element={<Navigate to="/portal" replace />} />
+              <Route path="discovery" element={<Navigate to="/portal/devices" replace />} />
+              <Route path="leaderboard" element={<Navigate to="/portal" replace />} />
+              <Route path="reports" element={<Navigate to="/portal" replace />} />
             </Route>
 
             {/* Central Portal Routes (/portal) */}

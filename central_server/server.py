@@ -27,7 +27,7 @@ from central_server.database import get_db, init_db, AsyncSessionLocal
 from central_server.models import (
     CentralCustomer, CentralLocation, CentralDevice, CentralLicense,
     CentralAuditLog, RegistrationToken, CentralUser, LicenseStatus, CustomerStatus,
-    TelemetryEvent, DeviceDailyStats,
+    TelemetryEvent, DeviceDailyStats, ConfigProfile,
 )
 from central_server.auth import (
     get_current_user, AuthUser, require_superadmin, require_min_role,
@@ -134,7 +134,51 @@ async def lifespan(app: FastAPI):
             except Exception:
                 pass
 
-    logger.info("Central License Server v3.7.0 started")
+    # v3.8.0: Create config_profiles table if not exists
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(_text("SELECT id FROM config_profiles LIMIT 1"))
+    except Exception:
+        async with AsyncSessionLocal() as db:
+            try:
+                await db.execute(_text("""
+                    CREATE TABLE IF NOT EXISTS config_profiles (
+                        id VARCHAR(36) PRIMARY KEY,
+                        scope_type VARCHAR(20) NOT NULL,
+                        scope_id VARCHAR(36),
+                        config_data JSON NOT NULL DEFAULT '{}',
+                        version INTEGER DEFAULT 1,
+                        updated_by VARCHAR(100),
+                        created_at DATETIME,
+                        updated_at DATETIME
+                    )
+                """))
+                await db.commit()
+                logger.info("[MIGRATE] Created config_profiles table")
+            except Exception as e:
+                logger.warning(f"[MIGRATE] config_profiles: {e}")
+
+    # Ensure default global config profile exists
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(ConfigProfile).where(ConfigProfile.scope_type == "global")
+        )
+        if not result.scalar_one_or_none():
+            global_config = ConfigProfile(
+                scope_type="global",
+                scope_id=None,
+                config_data={
+                    "pricing": {"mode": "per_game", "per_game": {"price_per_credit": 2.0, "default_credits": 3}},
+                    "branding": {"cafe_name": "DartControl", "primary_color": "#f59e0b"},
+                    "kiosk": {"auto_lock_timeout_min": 5, "idle_timeout_min": 15},
+                },
+                updated_by="system",
+            )
+            db.add(global_config)
+            await db.commit()
+            logger.info("[INIT] Default global config profile created")
+
+    logger.info("Central License Server v3.8.0 started")
     yield
     logger.info("Central License Server shutting down")
 
@@ -1441,3 +1485,251 @@ async def _log_audit(db, action, device_id=None, install_id=None, license_id=Non
         await db.flush()
     except Exception as e:
         logger.error(f"[AUDIT] Failed: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# v3.8.0: CENTRALIZED CONFIGURATION
+# ═══════════════════════════════════════════════════════════════
+
+def _ser_config_profile(cp):
+    return {
+        "id": cp.id, "scope_type": cp.scope_type, "scope_id": cp.scope_id,
+        "config_data": cp.config_data or {}, "version": cp.version,
+        "updated_by": cp.updated_by,
+        "updated_at": cp.updated_at.isoformat() if cp.updated_at else None,
+    }
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    """Deep merge two dicts. override wins on conflict."""
+    result = base.copy()
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
+@app.get("/api/config/profiles")
+async def list_config_profiles(
+    scope_type: str = None,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """List all config profiles, optionally filtered by scope_type."""
+    require_min_role(user, "owner")
+    stmt = select(ConfigProfile)
+    if scope_type:
+        stmt = stmt.where(ConfigProfile.scope_type == scope_type)
+    stmt = stmt.order_by(ConfigProfile.scope_type, ConfigProfile.updated_at.desc())
+    result = await db.execute(stmt)
+    profiles = result.scalars().all()
+    return [_ser_config_profile(p) for p in profiles]
+
+
+@app.get("/api/config/profile/{scope_type}/{scope_id}")
+async def get_config_profile(
+    scope_type: str,
+    scope_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Get a single config profile by scope."""
+    require_min_role(user, "owner")
+    result = await db.execute(
+        select(ConfigProfile).where(
+            ConfigProfile.scope_type == scope_type,
+            ConfigProfile.scope_id == scope_id,
+        )
+    )
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(404, f"No config for {scope_type}/{scope_id}")
+    return _ser_config_profile(profile)
+
+
+@app.get("/api/config/profile/global")
+async def get_global_config(
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Get the global config profile."""
+    require_min_role(user, "owner")
+    result = await db.execute(
+        select(ConfigProfile).where(ConfigProfile.scope_type == "global")
+    )
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(404, "No global config found")
+    return _ser_config_profile(profile)
+
+
+@app.put("/api/config/profile/{scope_type}/{scope_id}")
+async def upsert_config_profile(
+    scope_type: str,
+    scope_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Create or update a config profile for the given scope."""
+    require_min_role(user, "owner")
+    if scope_type not in ("global", "customer", "location", "device"):
+        raise HTTPException(400, "scope_type must be global|customer|location|device")
+
+    body = await request.json()
+    config_data = body.get("config_data", {})
+    if not isinstance(config_data, dict):
+        raise HTTPException(400, "config_data must be a JSON object")
+
+    # Scope access check
+    if scope_type == "global" and user.role != "superadmin":
+        raise HTTPException(403, "Only superadmin can modify global config")
+    elif scope_type == "customer":
+        if not await can_access_customer(scope_id, user, db):
+            raise HTTPException(403, "No access to this customer")
+    elif scope_type == "location":
+        loc = await db.get(CentralLocation, scope_id)
+        if not loc or not await can_access_customer(loc.customer_id, user, db):
+            raise HTTPException(403, "No access to this location")
+    elif scope_type == "device":
+        dev = await db.get(CentralDevice, scope_id)
+        if dev:
+            loc = await db.get(CentralLocation, dev.location_id)
+            if not loc or not await can_access_customer(loc.customer_id, user, db):
+                raise HTTPException(403, "No access to this device")
+
+    # Upsert
+    sid = None if scope_type == "global" else scope_id
+    result = await db.execute(
+        select(ConfigProfile).where(
+            ConfigProfile.scope_type == scope_type,
+            ConfigProfile.scope_id == sid,
+        )
+    )
+    profile = result.scalar_one_or_none()
+    if profile:
+        profile.config_data = config_data
+        profile.version = (profile.version or 0) + 1
+        profile.updated_by = user.username
+        profile.updated_at = _utcnow()
+    else:
+        profile = ConfigProfile(
+            scope_type=scope_type, scope_id=sid,
+            config_data=config_data, updated_by=user.username,
+        )
+        db.add(profile)
+
+    await db.commit()
+    await db.refresh(profile)
+    await _log_audit(db, "config_updated", actor=user.username,
+                     message=f"Config {scope_type}/{sid} updated (v{profile.version})")
+    await db.commit()
+    return _ser_config_profile(profile)
+
+
+@app.get("/api/config/effective")
+async def get_effective_config(
+    device_id: str = None,
+    location_id: str = None,
+    customer_id: str = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Compute the effective (merged) config for a given device.
+    Merge order: global → customer → location → device.
+    Can be called by devices (unauthenticated, identified by device_id)
+    or by portal users.
+    """
+    layers = {}
+
+    # 1. Global
+    result = await db.execute(
+        select(ConfigProfile).where(ConfigProfile.scope_type == "global")
+    )
+    global_p = result.scalar_one_or_none()
+    if global_p:
+        layers["global"] = global_p.config_data or {}
+
+    # Resolve hierarchy: device → location → customer
+    resolved_customer_id = customer_id
+    resolved_location_id = location_id
+    resolved_device_id = device_id
+
+    if device_id:
+        dev = await db.get(CentralDevice, device_id)
+        if dev:
+            resolved_location_id = resolved_location_id or dev.location_id
+
+    if resolved_location_id:
+        loc = await db.get(CentralLocation, resolved_location_id)
+        if loc:
+            resolved_customer_id = resolved_customer_id or loc.customer_id
+
+    # 2. Customer layer
+    if resolved_customer_id:
+        result = await db.execute(
+            select(ConfigProfile).where(
+                ConfigProfile.scope_type == "customer",
+                ConfigProfile.scope_id == resolved_customer_id,
+            )
+        )
+        cp = result.scalar_one_or_none()
+        if cp:
+            layers["customer"] = cp.config_data or {}
+
+    # 3. Location layer
+    if resolved_location_id:
+        result = await db.execute(
+            select(ConfigProfile).where(
+                ConfigProfile.scope_type == "location",
+                ConfigProfile.scope_id == resolved_location_id,
+            )
+        )
+        lp = result.scalar_one_or_none()
+        if lp:
+            layers["location"] = lp.config_data or {}
+
+    # 4. Device layer
+    if resolved_device_id:
+        result = await db.execute(
+            select(ConfigProfile).where(
+                ConfigProfile.scope_type == "device",
+                ConfigProfile.scope_id == resolved_device_id,
+            )
+        )
+        dp = result.scalar_one_or_none()
+        if dp:
+            layers["device"] = dp.config_data or {}
+
+    # Merge: global → customer → location → device
+    merged = {}
+    for scope in ("global", "customer", "location", "device"):
+        if scope in layers:
+            merged = _deep_merge(merged, layers[scope])
+
+    # Compute a composite version (max of all layer versions)
+    all_versions = []
+    for scope in ("global", "customer", "location", "device"):
+        if scope in layers:
+            # Re-query for version
+            if scope == "global":
+                r = await db.execute(select(ConfigProfile.version).where(ConfigProfile.scope_type == "global"))
+            else:
+                scope_id_val = {"customer": resolved_customer_id, "location": resolved_location_id, "device": resolved_device_id}.get(scope)
+                r = await db.execute(select(ConfigProfile.version).where(ConfigProfile.scope_type == scope, ConfigProfile.scope_id == scope_id_val))
+            v = r.scalar_one_or_none()
+            if v:
+                all_versions.append(v)
+
+    return {
+        "config": merged,
+        "version": max(all_versions) if all_versions else 0,
+        "layers_applied": list(layers.keys()),
+        "scope": {
+            "customer_id": resolved_customer_id,
+            "location_id": resolved_location_id,
+            "device_id": resolved_device_id,
+        },
+    }

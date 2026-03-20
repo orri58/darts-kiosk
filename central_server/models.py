@@ -209,3 +209,26 @@ class DeviceDailyStats(Base):
         # Unique constraint: one row per device per day
         {"sqlite_autoincrement": False},
     )
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# v3.8.0: Hierarchical Configuration Profiles
+# ═══════════════════════════════════════════════════════════════
+
+class ConfigProfile(Base):
+    """
+    Hierarchical config: global → customer → location → device.
+    The effective config for a device is computed by merging all
+    applicable profiles in order (narrower scope wins).
+    """
+    __tablename__ = "config_profiles"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    scope_type = Column(String(20), nullable=False, index=True)  # global | customer | location | device
+    scope_id = Column(String(36), nullable=True, index=True)     # null for global, FK for others
+    config_data = Column(JSON, nullable=False, default=dict)     # The actual config key-values
+    version = Column(Integer, default=1)                         # Optimistic locking / sync versioning
+    updated_by = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)

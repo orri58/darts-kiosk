@@ -776,3 +776,41 @@ async def register_device_via_token(data: dict):
         if status_code >= 500:
             status_code = 502
         raise HTTPException(status_code=status_code, detail=result.get("error", "Registrierung fehlgeschlagen"))
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# v3.8.0: Config Sync Status & Trigger
+# ═══════════════════════════════════════════════════════════════
+
+@router.get("/config-sync-status")
+async def config_sync_status():
+    """Get current config sync status (read-only)."""
+    from backend.services.config_sync_client import config_sync_client
+    return config_sync_client.status
+
+
+@router.post("/force-config-sync")
+async def force_config_sync(admin: User = Depends(require_admin)):
+    """Trigger an immediate config sync from central server."""
+    from backend.services.config_sync_client import config_sync_client
+    if not config_sync_client.is_configured:
+        raise HTTPException(503, "Config sync not configured (no central server)")
+    changed = await config_sync_client.sync_now()
+    return {
+        "success": True,
+        "config_changed": changed,
+        "config_version": config_sync_client.version,
+        "config": config_sync_client.config,
+    }
+
+
+@router.get("/effective-config")
+async def get_local_effective_config():
+    """Get the current effective config (cached from central)."""
+    from backend.services.config_sync_client import config_sync_client
+    return {
+        "config": config_sync_client.config,
+        "version": config_sync_client.version,
+        "status": config_sync_client.status,
+    }

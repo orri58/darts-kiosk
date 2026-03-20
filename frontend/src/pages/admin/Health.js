@@ -15,36 +15,40 @@ import {
   Camera,
   Download,
   Trash2,
-  RotateCcw,
-  HardDrive
+  HardDrive,
+  Cloud,
+  CloudOff,
+  ArrowDownToLine
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
-import { useI18n } from '../../context/I18nContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function AdminHealth() {
   const { token } = useAuth();
-  const { t } = useI18n();
   const [health, setHealth] = useState(null);
   const [backups, setBackups] = useState(null);
   const [screenshots, setScreenshots] = useState([]);
+  const [configSync, setConfigSync] = useState(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const fetchHealth = useCallback(async () => {
     try {
-      const [healthRes, backupsRes, screenshotsRes] = await Promise.all([
+      const [healthRes, backupsRes, screenshotsRes, configRes] = await Promise.all([
         axios.get(`${API}/health/detailed`, { headers: { Authorization: `Bearer ${token}` } }),
         axios.get(`${API}/backups`, { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get(`${API}/health/screenshots`, { headers: { Authorization: `Bearer ${token}` } })
+        axios.get(`${API}/health/screenshots`, { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get(`${API}/licensing/config-sync-status`).catch(() => ({ data: null })),
       ]);
       setHealth(healthRes.data);
       setBackups(backupsRes.data);
       setScreenshots(screenshotsRes.data);
+      setConfigSync(configRes.data);
     } catch (error) {
       console.error('Failed to fetch health:', error);
     } finally {
@@ -93,16 +97,31 @@ export default function AdminHealth() {
   };
 
   const deleteBackup = async (filename) => {
-    if (!window.confirm(`Backup "${filename}" wirklich löschen?`)) return;
+    if (!window.confirm(`Backup "${filename}" wirklich loeschen?`)) return;
     
     try {
       await axios.delete(`${API}/backups/${filename}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      toast.success('Backup gelöscht');
+      toast.success('Backup geloescht');
       fetchHealth();
     } catch (error) {
-      toast.error('Löschen fehlgeschlagen');
+      toast.error('Loeschen fehlgeschlagen');
+    }
+  };
+
+  const forceConfigSync = async () => {
+    setSyncing(true);
+    try {
+      const res = await axios.post(`${API}/licensing/force-config-sync`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      toast.success(res.data.config_changed ? 'Config aktualisiert' : 'Config ist aktuell');
+      fetchHealth();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Config-Sync fehlgeschlagen');
+    } finally {
+      setSyncing(false);
     }
   };
 
@@ -146,74 +165,70 @@ export default function AdminHealth() {
     <div data-testid="admin-health">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('system_health')}</h1>
-          <p className="text-zinc-500">Überwachung und Backups</p>
+          <h1 className="text-xl font-mono tracking-wider text-cyan-400 uppercase">System & Health</h1>
+          <p className="text-xs text-cyan-700 font-mono">Lokale Diagnostik & Services</p>
         </div>
         <Button
           onClick={fetchHealth}
           variant="outline"
-          className="border-zinc-700 text-zinc-400 hover:text-white"
+          className="border-cyan-900/30 text-cyan-600 hover:text-cyan-400 hover:border-cyan-700 font-mono text-xs"
         >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Aktualisieren
+          <RefreshCw className="w-3.5 h-3.5 mr-2" />
+          Refresh
         </Button>
       </div>
 
       {/* Status Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        {/* Overall Status */}
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-6">
+        <Card className="bg-[#0d1117] border-cyan-900/20">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
               {getStatusIcon(health?.status)}
               <div>
-                <p className="text-sm text-zinc-500 uppercase">System Status</p>
-                <p className={`text-2xl font-bold uppercase ${getStatusColor(health?.status)}`}>
+                <p className="text-[10px] text-cyan-700 uppercase font-mono">System</p>
+                <p className={`text-lg font-mono font-bold uppercase ${getStatusColor(health?.status)}`}>
                   {health?.status || 'Unknown'}
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
-
-        {/* Uptime */}
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <Clock className="w-6 h-6 text-blue-500" />
+        <Card className="bg-[#0d1117] border-cyan-900/20">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <Clock className="w-5 h-5 text-cyan-600" />
               <div>
-                <p className="text-sm text-zinc-500 uppercase">Uptime</p>
-                <p className="text-2xl font-mono font-bold text-white">
+                <p className="text-[10px] text-cyan-700 uppercase font-mono">Uptime</p>
+                <p className="text-lg font-mono font-bold text-cyan-300">
                   {formatUptime(health?.uptime_seconds || 0)}
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
-
-        {/* Automation Success Rate */}
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <Activity className="w-6 h-6 text-amber-500" />
+        <Card className="bg-[#0d1117] border-cyan-900/20">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              {configSync?.configured
+                ? <Cloud className="w-5 h-5 text-emerald-500" />
+                : <CloudOff className="w-5 h-5 text-zinc-600" />
+              }
               <div>
-                <p className="text-sm text-zinc-500 uppercase">Automation</p>
-                <p className="text-2xl font-mono font-bold text-white">
-                  {health?.automation_metrics?.success_rate?.toFixed(0) || 0}%
+                <p className="text-[10px] text-cyan-700 uppercase font-mono">Config Sync</p>
+                <p className={`text-lg font-mono font-bold ${configSync?.configured ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                  {configSync?.configured ? `v${configSync.config_version}` : 'Offline'}
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
-
-        {/* Backups */}
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <HardDrive className="w-6 h-6 text-purple-500" />
+        <Card className="bg-[#0d1117] border-cyan-900/20">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <HardDrive className="w-5 h-5 text-cyan-600" />
               <div>
-                <p className="text-sm text-zinc-500 uppercase">Backups</p>
-                <p className="text-2xl font-mono font-bold text-white">
+                <p className="text-[10px] text-cyan-700 uppercase font-mono">Backups</p>
+                <p className="text-lg font-mono font-bold text-cyan-300">
                   {backups?.stats?.total_backups || 0}
                 </p>
               </div>
@@ -222,31 +237,35 @@ export default function AdminHealth() {
         </Card>
       </div>
 
-      <Tabs defaultValue="services" className="space-y-6">
-        <TabsList className="bg-zinc-900 border border-zinc-800 p-1">
-          <TabsTrigger value="services" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
-            <Server className="w-4 h-4 mr-2" />
+      <Tabs defaultValue="services" className="space-y-4">
+        <TabsList className="bg-[#0d1117] border border-cyan-900/20 p-1">
+          <TabsTrigger value="services" className="data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400 text-cyan-700 font-mono text-xs">
+            <Server className="w-3.5 h-3.5 mr-1.5" />
             Services
           </TabsTrigger>
-          <TabsTrigger value="agents" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
-            <Wifi className="w-4 h-4 mr-2" />
+          <TabsTrigger value="config" className="data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400 text-cyan-700 font-mono text-xs">
+            <Cloud className="w-3.5 h-3.5 mr-1.5" />
+            Config Sync
+          </TabsTrigger>
+          <TabsTrigger value="agents" className="data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400 text-cyan-700 font-mono text-xs">
+            <Wifi className="w-3.5 h-3.5 mr-1.5" />
             Agents
           </TabsTrigger>
-          <TabsTrigger value="backups" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
-            <Database className="w-4 h-4 mr-2" />
+          <TabsTrigger value="backups" className="data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400 text-cyan-700 font-mono text-xs">
+            <Database className="w-3.5 h-3.5 mr-1.5" />
             Backups
           </TabsTrigger>
-          <TabsTrigger value="errors" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
-            <Camera className="w-4 h-4 mr-2" />
-            Fehler-Screenshots
+          <TabsTrigger value="errors" className="data-[state=active]:bg-cyan-500/10 data-[state=active]:text-cyan-400 text-cyan-700 font-mono text-xs">
+            <Camera className="w-3.5 h-3.5 mr-1.5" />
+            Fehler
           </TabsTrigger>
         </TabsList>
 
         {/* Services Tab */}
         <TabsContent value="services">
-          <Card className="bg-zinc-900 border-zinc-800">
+          <Card className="bg-[#0d1117] border-cyan-900/20">
             <CardHeader>
-              <CardTitle className="text-white">Hintergrund-Services</CardTitle>
+              <CardTitle className="text-cyan-300 font-mono text-sm">Hintergrund-Services</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               {/* Scheduler */}
@@ -309,6 +328,60 @@ export default function AdminHealth() {
                   </div>
                 )}
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Config Sync Tab */}
+        <TabsContent value="config">
+          <Card className="bg-[#0d1117] border-cyan-900/20">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-cyan-300 font-mono text-sm">Zentrale Konfiguration</CardTitle>
+                <Button
+                  onClick={forceConfigSync}
+                  disabled={syncing || !configSync?.configured}
+                  className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-900/30 font-mono text-xs"
+                  data-testid="force-config-sync-btn"
+                >
+                  {syncing ? <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ArrowDownToLine className="w-3.5 h-3.5 mr-1.5" />}
+                  Sync jetzt
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
+                  <p className="text-[10px] text-cyan-700 uppercase font-mono">Status</p>
+                  <p className={`text-sm font-mono font-bold ${configSync?.configured ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                    {configSync?.configured ? 'Verbunden' : 'Nicht konfiguriert'}
+                  </p>
+                </div>
+                <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
+                  <p className="text-[10px] text-cyan-700 uppercase font-mono">Config Version</p>
+                  <p className="text-sm font-mono font-bold text-cyan-300">v{configSync?.config_version || 0}</p>
+                </div>
+                <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
+                  <p className="text-[10px] text-cyan-700 uppercase font-mono">Letzter Sync</p>
+                  <p className="text-sm font-mono text-cyan-300">
+                    {configSync?.last_sync_at ? new Date(configSync.last_sync_at).toLocaleString('de-DE') : '—'}
+                  </p>
+                </div>
+                <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
+                  <p className="text-[10px] text-cyan-700 uppercase font-mono">Sync Loop</p>
+                  <p className={`text-sm font-mono font-bold ${configSync?.running ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                    {configSync?.running ? 'Aktiv' : 'Inaktiv'}
+                  </p>
+                </div>
+              </div>
+              {configSync?.last_error && (
+                <div className="p-2.5 bg-red-500/5 border border-red-500/20 rounded">
+                  <p className="text-xs font-mono text-red-400">{configSync.last_error}</p>
+                </div>
+              )}
+              <p className="text-[10px] text-cyan-800 font-mono">
+                Konfiguration wird zentral ueber /portal verwaltet. Lokale Aenderungen sind temporaer.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>
