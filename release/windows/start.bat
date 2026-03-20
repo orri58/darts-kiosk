@@ -1,11 +1,18 @@
 @echo off
 setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
-title Darts Kiosk v3.5.3 - Gestartet
 cd /d "%~dp0"
+
+REM === Read version from VERSION file ===
+set "APP_VERSION=unknown"
+if exist "VERSION" (
+    set /p APP_VERSION=<VERSION
+)
+
+title Darts Kiosk v!APP_VERSION! - Gestartet
 echo.
 echo ================================================================
-echo   DARTS KIOSK v3.5.3 - Production Start
+echo   DARTS KIOSK v!APP_VERSION! - Production Start
 echo ================================================================
 echo.
 
@@ -165,7 +172,7 @@ if defined CHROME_PATH (
 echo.
 echo ================================================================
 echo.
-echo   Darts Kiosk v3.5.3 laeuft!
+echo   Darts Kiosk v!APP_VERSION! laeuft!
 echo   Board: !BOARD_ID!
 echo.
 echo   === Lokaler Zugriff ===

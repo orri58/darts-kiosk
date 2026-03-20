@@ -1,10 +1,18 @@
 @echo off
+setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 title Darts Kiosk - Windows Setup
 cd /d "%~dp0"
+
+REM === Read version from VERSION file ===
+set "APP_VERSION=unknown"
+if exist "VERSION" (
+    set /p APP_VERSION=<VERSION
+)
+
 echo.
 echo ================================================================
-echo   DARTS KIOSK - Einmalige Einrichtung
+echo   DARTS KIOSK v!APP_VERSION! - Einmalige Einrichtung
 echo ================================================================
 echo.
 
@@ -221,7 +229,7 @@ cd /d "%~dp0"
 REM === Done ===
 echo.
 echo ================================================================
-echo   SETUP v3.5.3 ABGESCHLOSSEN!
+echo   SETUP v!APP_VERSION! ABGESCHLOSSEN!
 echo.
 echo   Naechster Schritt:
 echo   1. backend\.env pruefen (CENTRAL_SERVER_URL, JWT_SECRET)

@@ -1,7 +1,8 @@
 #!/bin/bash
 #===============================================================================
-# Darts Kiosk - Release Builder v3.5.3
+# Darts Kiosk - Deterministic Release Builder
 # Creates Windows Production Bundle + Linux + Source packages
+# Uses npm ci + craco build — NO yarn
 #===============================================================================
 set -euo pipefail
 
@@ -19,28 +20,69 @@ VERSION_FILE="${APP_DIR}/VERSION"
 if [[ -f "$VERSION_FILE" ]]; then
     VERSION=$(cat "$VERSION_FILE" | tr -d '[:space:]')
 else
-    echo "ERROR: VERSION file not found at ${VERSION_FILE}"
+    echo -e "${RED}ERROR: VERSION file not found at ${VERSION_FILE}${NC}"
     exit 1
 fi
 
-echo -e "${CYAN}Building release v${VERSION}${NC}"
+echo -e "${CYAN}${BOLD}Building release v${VERSION}${NC}"
+echo ""
 
 log() { echo -e "${GREEN}[OK]${NC}   $1"; }
 step() { echo -e "\n${CYAN}==> ${BOLD}$1${NC}"; }
+fail() { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
 
+#===============================================================================
+# 0. CLEAN ALL OLD ARTIFACTS (deterministic build guarantee)
+#===============================================================================
+step "Alte Artefakte loeschen..."
+
+# Remove old release build directory completely
 rm -rf "$BUILD_DIR"
+log "release/build/ geloescht"
+
+# Remove old frontend build completely
+rm -rf "${APP_DIR}/frontend/build"
+log "frontend/build/ geloescht"
+
 mkdir -p "$BUILD_DIR"
 
 #===============================================================================
-# 1. Build Frontend
+# 1. Build Frontend (npm ci + craco build)
 #===============================================================================
-step "Frontend bauen..."
+step "Frontend bauen (npm ci + craco build)..."
 cd "${APP_DIR}/frontend"
 
+# Verify package-lock.json exists (required for npm ci)
+if [[ ! -f "package-lock.json" ]]; then
+    fail "package-lock.json nicht gefunden! Bitte zuerst 'npm install' im frontend/ ausfuehren."
+fi
+
+# Clean install with npm ci (deterministic, uses package-lock.json)
+echo "  npm ci..."
+npm ci --loglevel=error 2>&1 | tail -3
+log "npm ci abgeschlossen"
+
+# Build with empty REACT_APP_BACKEND_URL (relative URLs in production)
 export REACT_APP_BACKEND_URL=
-yarn build 2>&1 | tail -5
+echo "  npm run build (craco)..."
+npm run build 2>&1 | tail -5
+
 FRONTEND_BUILD="${APP_DIR}/frontend/build"
-log "Frontend gebaut: $(du -sh "$FRONTEND_BUILD" | cut -f1)"
+
+# Verify frontend build was actually created
+if [[ ! -d "$FRONTEND_BUILD" ]] || [[ ! -f "$FRONTEND_BUILD/index.html" ]]; then
+    fail "Frontend Build fehlgeschlagen — kein index.html in frontend/build/"
+fi
+
+# Verify JS bundles exist
+JS_COUNT=$(find "$FRONTEND_BUILD/static/js" -name "*.js" 2>/dev/null | wc -l)
+if [[ "$JS_COUNT" -eq 0 ]]; then
+    fail "Frontend Build fehlgeschlagen — keine JS-Dateien in frontend/build/static/js/"
+fi
+
+BUILD_TIME=$(date -r "$FRONTEND_BUILD/index.html" '+%Y-%m-%d %H:%M:%S')
+log "Frontend gebaut: $(du -sh "$FRONTEND_BUILD" | cut -f1) — Build-Zeit: ${BUILD_TIME}"
+log "JS-Bundles: ${JS_COUNT} Dateien"
 
 #===============================================================================
 # 2. Core requirements
@@ -100,16 +142,17 @@ rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='tests/' \
     --exclude='.env' --exclude='*.sqlite*' \
     "${APP_DIR}/backend/" "${WIN_DIR}/backend/"
 
-# Pre-built frontend
+# Pre-built frontend (ONLY the fresh build)
 cp -r "$FRONTEND_BUILD" "${WIN_DIR}/frontend/build"
-# Frontend source for dev mode
+
+# Frontend source for dev mode (without node_modules and build)
 rsync -a --exclude='node_modules' --exclude='build' --exclude='.env' \
     "${APP_DIR}/frontend/" "${WIN_DIR}/frontend/"
 
 # Requirements
 cp "${BUILD_DIR}/requirements-core.txt" "${WIN_DIR}/backend/requirements.txt"
 
-# Windows scripts
+# Windows scripts (from templates)
 cp "${SCRIPT_DIR}/windows/"*.bat "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/run_backend.py" "${WIN_DIR}/"
 cp "${SCRIPT_DIR}/windows/credits_overlay.py" "${WIN_DIR}/"
@@ -131,7 +174,7 @@ log "Windows Agent kopiert"
 mkdir -p "${WIN_DIR}/central_server/data"
 rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='*.sqlite*' --exclude='data/' \
     "${APP_DIR}/central_server/" "${WIN_DIR}/central_server/"
-# Central server requirements (same as backend + aiosqlite)
+# Central server requirements
 cat > "${WIN_DIR}/central_server/requirements.txt" << 'EOF'
 fastapi==0.110.1
 uvicorn==0.25.0
@@ -163,7 +206,7 @@ fi
 cp "${APP_DIR}/VERSION" "${WIN_DIR}/"
 cp "${APP_DIR}/updater.py" "${WIN_DIR}/"
 
-# Backend .env.example (Production defaults for api.dartcontrol.io)
+# Backend .env.example
 cat > "${WIN_DIR}/backend/.env.example" << 'EOF'
 DATABASE_URL=sqlite+aiosqlite:///./data/db/darts.sqlite
 SYNC_DATABASE_URL=sqlite:///./data/db/darts.sqlite
@@ -190,7 +233,7 @@ cat > "${WIN_DIR}/frontend/.env.example" << 'EOF'
 REACT_APP_BACKEND_URL=http://localhost:8001
 EOF
 
-# Central server .env.example (for self-hosting)
+# Central server .env.example
 cat > "${WIN_DIR}/central_server/.env.example" << 'EOF'
 CENTRAL_DATA_DIR=./data
 CENTRAL_JWT_SECRET=central-jwt-secret-change-in-production
@@ -269,6 +312,48 @@ zip -r "darts-kiosk-v${VERSION}-source.zip" "$(basename "$SRC_DIR")" -q
 log "darts-kiosk-v${VERSION}-source.zip ($(du -sh "darts-kiosk-v${VERSION}-source.zip" | cut -f1))"
 
 #===============================================================================
+# 6. VERIFICATION
+#===============================================================================
+step "Build-Verifikation..."
+
+echo ""
+echo "  --- Versions-Check ---"
+
+# Check start.bat reads VERSION dynamically (no hardcoded version)
+if grep -q "v3\.5\.[0-9].*Production Start" "${WIN_DIR}/start.bat" 2>/dev/null; then
+    echo -e "  ${RED}[FAIL] start.bat enthaelt noch hardcoded Version!${NC}"
+    exit 1
+else
+    echo -e "  ${GREEN}[OK]${NC}   start.bat liest Version dynamisch aus VERSION-Datei"
+fi
+
+# Check VERSION file is in the Windows bundle
+if [[ -f "${WIN_DIR}/VERSION" ]]; then
+    WIN_VER=$(cat "${WIN_DIR}/VERSION" | tr -d '[:space:]')
+    echo -e "  ${GREEN}[OK]${NC}   VERSION in Windows-Bundle: ${WIN_VER}"
+else
+    echo -e "  ${RED}[FAIL] VERSION-Datei fehlt im Windows-Bundle!${NC}"
+    exit 1
+fi
+
+echo ""
+echo "  --- Frontend-Build-Check ---"
+
+# Verify frontend/build exists in bundle
+if [[ -f "${WIN_DIR}/frontend/build/index.html" ]]; then
+    WIN_BUILD_TIME=$(date -r "${WIN_DIR}/frontend/build/index.html" '+%Y-%m-%d %H:%M:%S')
+    echo -e "  ${GREEN}[OK]${NC}   frontend/build/index.html vorhanden (${WIN_BUILD_TIME})"
+else
+    echo -e "  ${RED}[FAIL] frontend/build/index.html fehlt im Windows-Bundle!${NC}"
+    exit 1
+fi
+
+WIN_JS_COUNT=$(find "${WIN_DIR}/frontend/build/static/js" -name "*.js" 2>/dev/null | wc -l)
+echo -e "  ${GREEN}[OK]${NC}   JS-Bundles im Bundle: ${WIN_JS_COUNT}"
+
+echo ""
+
+#===============================================================================
 # Summary
 #===============================================================================
 echo ""
@@ -283,4 +368,6 @@ echo ""
 echo -e "  ${CYAN}Windows:${NC}  darts-kiosk-v${VERSION}-windows.zip"
 echo -e "  ${CYAN}Linux:${NC}    darts-kiosk-v${VERSION}-linux.tar.gz"
 echo -e "  ${CYAN}Source:${NC}   darts-kiosk-v${VERSION}-source.zip"
+echo ""
+echo -e "  ${CYAN}Build-Zeit:${NC} $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
