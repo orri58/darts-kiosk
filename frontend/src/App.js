@@ -24,16 +24,16 @@ import PublicLeaderboard from "./pages/PublicLeaderboard";
 import SetupWizard from "./pages/admin/SetupWizard";
 import CreditsOverlay from "./pages/CreditsOverlay";
 
-// Operator Portal Pages
-import OperatorLayout from "./pages/operator/OperatorLayout";
-import OperatorLogin from "./pages/operator/OperatorLogin";
-import OperatorDashboard from "./pages/operator/OperatorDashboard";
-import OperatorDevices from "./pages/operator/OperatorDevices";
-import OperatorLicenses from "./pages/operator/OperatorLicenses";
-import OperatorCustomers from "./pages/operator/OperatorCustomers";
-import OperatorLocations from "./pages/operator/OperatorLocations";
-import OperatorAudit from "./pages/operator/OperatorAudit";
-import OperatorUsers from "./pages/operator/OperatorUsers";
+// Central Portal Pages (previously /operator, now /portal)
+import PortalLayout from "./pages/portal/PortalLayout";
+import PortalLogin from "./pages/portal/PortalLogin";
+import PortalDashboard from "./pages/portal/PortalDashboard";
+import PortalDevices from "./pages/portal/PortalDevices";
+import PortalLicenses from "./pages/portal/PortalLicenses";
+import PortalCustomers from "./pages/portal/PortalCustomers";
+import PortalLocations from "./pages/portal/PortalLocations";
+import PortalAudit from "./pages/portal/PortalAudit";
+import PortalUsers from "./pages/portal/PortalUsers";
 
 // Context
 import { AuthProvider } from "./context/AuthContext";
@@ -82,17 +82,27 @@ function App() {
               <Route path="licensing" element={<AdminLicensing />} />
             </Route>
 
-            {/* Operator Portal Routes */}
-            <Route path="/operator/login" element={<OperatorLogin />} />
-            <Route path="/operator" element={<OperatorLayout />}>
-              <Route index element={<OperatorDashboard />} />
-              <Route path="devices" element={<OperatorDevices />} />
-              <Route path="licenses" element={<OperatorLicenses />} />
-              <Route path="customers" element={<OperatorCustomers />} />
-              <Route path="locations" element={<OperatorLocations />} />
-              <Route path="users" element={<OperatorUsers />} />
-              <Route path="audit" element={<OperatorAudit />} />
+            {/* Central Portal Routes (/portal) */}
+            <Route path="/portal/login" element={<PortalLogin />} />
+            <Route path="/portal" element={<PortalLayout />}>
+              <Route index element={<PortalDashboard />} />
+              <Route path="devices" element={<PortalDevices />} />
+              <Route path="licenses" element={<PortalLicenses />} />
+              <Route path="customers" element={<PortalCustomers />} />
+              <Route path="locations" element={<PortalLocations />} />
+              <Route path="users" element={<PortalUsers />} />
+              <Route path="audit" element={<PortalAudit />} />
             </Route>
+
+            {/* Legacy /operator redirects → /portal */}
+            <Route path="/operator/login" element={<Navigate to="/portal/login" replace />} />
+            <Route path="/operator/devices" element={<Navigate to="/portal/devices" replace />} />
+            <Route path="/operator/licenses" element={<Navigate to="/portal/licenses" replace />} />
+            <Route path="/operator/customers" element={<Navigate to="/portal/customers" replace />} />
+            <Route path="/operator/locations" element={<Navigate to="/portal/locations" replace />} />
+            <Route path="/operator/users" element={<Navigate to="/portal/users" replace />} />
+            <Route path="/operator/audit" element={<Navigate to="/portal/audit" replace />} />
+            <Route path="/operator" element={<Navigate to="/portal" replace />} />
             
             {/* Default redirect */}
             <Route path="/" element={<Navigate to="/kiosk" replace />} />

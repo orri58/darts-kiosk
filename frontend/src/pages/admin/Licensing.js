@@ -175,7 +175,7 @@ export default function AdminLicensing() {
         <div>
           <p className="text-sm font-medium text-indigo-300">Lizenzverwaltung im zentralen Portal</p>
           <p className="text-xs text-indigo-400/70 mt-1">
-            Lizenzen erstellen, verlängern, sperren und Token generieren — alles zentral unter <strong>/operator</strong>
+            Lizenzen erstellen, verlaengern, sperren und Token generieren — alles zentral unter <strong>/portal</strong>
           </p>
         </div>
       </div>
