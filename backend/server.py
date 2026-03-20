@@ -234,11 +234,26 @@ async def lifespan(app: FastAPI):
     from backend.services.cyclic_license_checker import cyclic_license_checker
     await cyclic_license_checker.start()
 
+    # v3.7.0: Start telemetry sync client
+    from backend.services.telemetry_sync_client import telemetry_sync
+    try:
+        from backend.services.license_sync_client import license_sync_client
+        central_url = license_sync_client._central_server_url
+        api_key = license_sync_client._api_key
+        version = open(Path(__file__).resolve().parent.parent / "VERSION").read().strip() if (Path(__file__).resolve().parent.parent / "VERSION").exists() else "unknown"
+        telemetry_sync.configure(central_url=central_url, api_key=api_key, version=version)
+        await telemetry_sync.start()
+    except Exception as exc:
+        logger.warning(f"Telemetry sync start failed (non-critical): {exc}")
+
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
     logger.info(f"Autodarts mode: {os.environ.get('AUTODARTS_MODE', 'observer')}")
     yield
     # Shutdown: stop watchdog, close all observers
+    from backend.services.telemetry_sync_client import telemetry_sync
+    await telemetry_sync.force_flush()
+    await telemetry_sync.stop()
     await cyclic_license_checker.stop()
     await stop_watchdog()
     from backend.services.autodarts_observer import observer_manager

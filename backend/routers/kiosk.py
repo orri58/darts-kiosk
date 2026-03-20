@@ -639,6 +639,12 @@ async def _on_game_started(board_id: str):
                     f"variant={_game_variant}")
         await board_ws.broadcast("board_status", {"board_id": board_id, "status": "in_game"})
         await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "start"})
+        # v3.7.0: Telemetry hook
+        try:
+            from backend.services.telemetry_sync_client import telemetry_sync
+            telemetry_sync.queue_event("game_played", {"board_id": board_id, "variant": _game_variant})
+        except Exception:
+            pass
     except Exception as e:
         logger.error(f"[Observer->Kiosk] Error on game start: {e}", exc_info=True)
 

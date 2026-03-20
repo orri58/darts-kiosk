@@ -206,6 +206,23 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
 
     await board_ws.broadcast("board_status", {"board_id": board_id, "status": "unlocked"})
 
+    # v3.7.0: Telemetry hook — session started
+    try:
+        from backend.services.telemetry_sync_client import telemetry_sync
+        telemetry_sync.queue_event("session_started", {
+            "board_id": board_id,
+            "pricing_mode": data.pricing_mode,
+            "credits": data.credits or 0,
+            "price_total": data.price_total,
+        })
+        if data.price_total and data.price_total > 0:
+            telemetry_sync.queue_event("credits_added", {
+                "amount": data.credits or 0,
+                "revenue_cents": int(data.price_total * 100),
+            })
+    except Exception:
+        pass  # fail-open
+
     # Start Autodarts observer if board has a configured URL
     if board.autodarts_target_url:
         observer_manager.set_desired_state(board_id, "running")

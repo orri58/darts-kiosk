@@ -83,6 +83,11 @@ class CentralDevice(Base):
     last_sync_ip = Column(String(50), nullable=True)
     sync_count = Column(Integer, default=0)
     registered_via_token_id = Column(String(36), nullable=True)
+    # v3.7.0: Heartbeat / Telemetry fields
+    last_heartbeat_at = Column(DateTime, nullable=True)
+    reported_version = Column(String(20), nullable=True)
+    last_error = Column(Text, nullable=True)
+    last_activity_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
@@ -164,3 +169,43 @@ class CentralUser(Base):
     status = Column(String(20), default="active")  # active | disabled
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+# ═══════════════════════════════════════════════════════════════
+# v3.7.0: Telemetry & Revenue Models
+# ═══════════════════════════════════════════════════════════════
+
+class TelemetryEvent(Base):
+    """Individual telemetry events from devices. Idempotent via event_id."""
+    __tablename__ = "telemetry_events"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    event_id = Column(String(64), unique=True, nullable=False, index=True)  # Client-generated UUID for idempotency
+    device_id = Column(String(36), nullable=False, index=True)
+    event_type = Column(String(30), nullable=False, index=True)  # heartbeat, game_played, credits_added, session_started, error, restart, etc.
+    timestamp = Column(DateTime, nullable=False, index=True)
+    data = Column(JSON, nullable=True)  # Flexible payload
+    created_at = Column(DateTime, default=_utcnow)
+
+
+class DeviceDailyStats(Base):
+    """Aggregated daily statistics per device. Updated on ingest."""
+    __tablename__ = "device_daily_stats"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    device_id = Column(String(36), nullable=False, index=True)
+    date = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD
+    revenue_cents = Column(Integer, default=0)
+    sessions = Column(Integer, default=0)
+    games = Column(Integer, default=0)
+    credits_added = Column(Integer, default=0)
+    errors = Column(Integer, default=0)
+    heartbeats = Column(Integer, default=0)
+    first_heartbeat_at = Column(DateTime, nullable=True)
+    last_heartbeat_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        # Unique constraint: one row per device per day
+        {"sqlite_autoincrement": False},
+    )

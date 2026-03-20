@@ -27,6 +27,7 @@ from central_server.database import get_db, init_db, AsyncSessionLocal
 from central_server.models import (
     CentralCustomer, CentralLocation, CentralDevice, CentralLicense,
     CentralAuditLog, RegistrationToken, CentralUser, LicenseStatus, CustomerStatus,
+    TelemetryEvent, DeviceDailyStats,
 )
 from central_server.auth import (
     get_current_user, AuthUser, require_superadmin, require_min_role,
@@ -111,7 +112,29 @@ async def lifespan(app: FastAPI):
             db.add(sa)
             await db.commit()
             logger.info("[INIT] Default superadmin user created")
-    logger.info("Central License Server v3.6.0 started")
+
+    # v3.7.0: Migrate device heartbeat columns
+    _migrate_cols = [
+        ("devices", "last_heartbeat_at", "DATETIME"),
+        ("devices", "reported_version", "VARCHAR(20)"),
+        ("devices", "last_error", "TEXT"),
+        ("devices", "last_activity_at", "DATETIME"),
+    ]
+    from sqlalchemy import text as _text
+    for _tbl, _col, _typ in _migrate_cols:
+        try:
+            async with AsyncSessionLocal() as db:
+                await db.execute(_text(f"SELECT {_col} FROM {_tbl} LIMIT 1"))
+        except Exception:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await db.execute(_text(f"ALTER TABLE {_tbl} ADD COLUMN {_col} {_typ}"))
+                    await db.commit()
+                    logger.info(f"[MIGRATE] Added {_col} to {_tbl}")
+            except Exception:
+                pass
+
+    logger.info("Central License Server v3.7.0 started")
     yield
     logger.info("Central License Server shutting down")
 
@@ -1057,6 +1080,350 @@ async def register_device(body: dict, request: Request, db: AsyncSession = Depen
         "location_id": location_id, "license_id": license_id, "license_status": license_status,
         "plan_type": plan_type, "expiry": expiry, "binding_status": "bound",
         "server_timestamp": now.isoformat(),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# TELEMETRY — v3.7.0
+# ═══════════════════════════════════════════════════════════════
+
+ONLINE_THRESHOLD_SECONDS = 300  # 5 minutes
+
+
+async def _authenticate_device(request: Request, db: AsyncSession) -> CentralDevice:
+    """Authenticate a device via X-License-Key header."""
+    api_key = request.headers.get("X-License-Key")
+    if not api_key:
+        raise HTTPException(401, "Missing X-License-Key header")
+    result = await db.execute(select(CentralDevice).where(CentralDevice.api_key == api_key))
+    device = result.scalar_one_or_none()
+    if not device:
+        raise HTTPException(403, "Invalid API key")
+    if device.status == "blocked":
+        raise HTTPException(403, "Device is blocked")
+    return device
+
+
+async def _resolve_device_customer_id(device: CentralDevice, db: AsyncSession) -> str:
+    """Resolve customer_id from device → location → customer chain."""
+    if not device.location_id:
+        return None
+    result = await db.execute(select(CentralLocation.customer_id).where(CentralLocation.id == device.location_id))
+    row = result.first()
+    return row[0] if row else None
+
+
+@app.post("/api/telemetry/heartbeat")
+async def telemetry_heartbeat(body: dict, request: Request, db: AsyncSession = Depends(get_db)):
+    """Lightweight heartbeat from device. Updates online status + version."""
+    device = await _authenticate_device(request, db)
+    now = _utcnow()
+
+    was_offline = not device.last_heartbeat_at or (now - _aware(device.last_heartbeat_at)).total_seconds() > ONLINE_THRESHOLD_SECONDS
+
+    device.last_heartbeat_at = now
+    if body.get("version"):
+        device.reported_version = body["version"]
+    if body.get("error"):
+        device.last_error = body["error"]
+    elif device.last_error and body.get("clear_error"):
+        device.last_error = None
+
+    # Update daily stats heartbeat count
+    date_str = now.strftime("%Y-%m-%d")
+    stats = await _get_or_create_daily_stats(db, device.id, date_str)
+    stats.heartbeats = (stats.heartbeats or 0) + 1
+    if not stats.first_heartbeat_at:
+        stats.first_heartbeat_at = now
+    stats.last_heartbeat_at = now
+
+    await db.flush()
+
+    # Log state transition (online/offline) — not every heartbeat
+    if was_offline:
+        await _log_audit(db, "DEVICE_ONLINE", device_id=device.id,
+                         message=f"Device '{device.device_name}' came online (v{body.get('version', '?')})")
+
+    return {"status": "ok", "server_time": now.isoformat()}
+
+
+@app.post("/api/telemetry/ingest")
+async def telemetry_ingest(body: dict, request: Request, db: AsyncSession = Depends(get_db)):
+    """Bulk ingest telemetry events from a device. Idempotent via event_id."""
+    device = await _authenticate_device(request, db)
+    now = _utcnow()
+
+    events = body.get("events", [])
+    if not events:
+        return {"accepted": 0, "duplicates": 0}
+
+    accepted = 0
+    duplicates = 0
+
+    for ev in events:
+        event_id = ev.get("event_id")
+        if not event_id:
+            continue
+
+        # Idempotency: skip if event_id already exists
+        existing = await db.execute(select(TelemetryEvent.id).where(TelemetryEvent.event_id == event_id))
+        if existing.scalar_one_or_none():
+            duplicates += 1
+            continue
+
+        event_type = ev.get("event_type", "unknown")
+        timestamp_str = ev.get("timestamp")
+        try:
+            ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00")) if timestamp_str else now
+        except (ValueError, AttributeError):
+            ts = now
+
+        te = TelemetryEvent(
+            event_id=event_id,
+            device_id=device.id,
+            event_type=event_type,
+            timestamp=ts,
+            data=ev.get("data"),
+        )
+        db.add(te)
+
+        # Update daily aggregation
+        date_str = ts.strftime("%Y-%m-%d")
+        stats = await _get_or_create_daily_stats(db, device.id, date_str)
+        data = ev.get("data") or {}
+
+        if event_type == "credits_added":
+            stats.credits_added = (stats.credits_added or 0) + int(data.get("amount", 0))
+            stats.revenue_cents = (stats.revenue_cents or 0) + int(data.get("revenue_cents", 0))
+        elif event_type == "session_started":
+            stats.sessions = (stats.sessions or 0) + 1
+        elif event_type == "game_played":
+            stats.games = (stats.games or 0) + 1
+        elif event_type == "error":
+            stats.errors = (stats.errors or 0) + 1
+            device.last_error = data.get("message", "Unknown error")
+
+        # Update last activity
+        if event_type in ("session_started", "game_played", "credits_added"):
+            device.last_activity_at = ts
+
+        accepted += 1
+
+    await db.flush()
+    return {"accepted": accepted, "duplicates": duplicates, "server_time": now.isoformat()}
+
+
+@app.get("/api/telemetry/dashboard")
+async def telemetry_dashboard(
+    customer_id: str = None, location_id: str = None, device_id: str = None,
+    user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    """Scoped telemetry dashboard stats."""
+    now = _utcnow()
+    today = now.strftime("%Y-%m-%d")
+    week_ago = (now - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    # Resolve device IDs within scope
+    device_ids = await _resolve_scoped_device_ids(user, db, customer_id, location_id, device_id)
+
+    if not device_ids:
+        return {
+            "devices_online": 0, "devices_offline": 0, "devices_total": 0,
+            "revenue_today_cents": 0, "revenue_7d_cents": 0,
+            "sessions_today": 0, "sessions_7d": 0, "games_today": 0, "games_7d": 0,
+            "devices": [], "warnings": [],
+        }
+
+    # Device statuses
+    dev_result = await db.execute(
+        select(CentralDevice).where(CentralDevice.id.in_(device_ids))
+        .order_by(CentralDevice.last_heartbeat_at.desc().nullslast())
+    )
+    devices = dev_result.scalars().all()
+
+    online_count = 0
+    offline_count = 0
+    device_list = []
+    warnings = []
+
+    for d in devices:
+        is_online = d.last_heartbeat_at and (now - _aware(d.last_heartbeat_at)).total_seconds() < ONLINE_THRESHOLD_SECONDS
+        if is_online:
+            online_count += 1
+        else:
+            offline_count += 1
+
+        dev_info = {
+            "id": d.id, "device_name": d.device_name or d.id[:8],
+            "online": is_online,
+            "last_heartbeat_at": d.last_heartbeat_at.isoformat() if d.last_heartbeat_at else None,
+            "last_activity_at": d.last_activity_at.isoformat() if d.last_activity_at else None,
+            "last_sync_at": d.last_sync_at.isoformat() if d.last_sync_at else None,
+            "reported_version": d.reported_version,
+            "last_error": d.last_error,
+            "status": d.status, "binding_status": d.binding_status,
+        }
+        device_list.append(dev_info)
+
+        # Warnings
+        if d.last_error:
+            warnings.append({"type": "error", "device": d.device_name or d.id[:8], "message": d.last_error})
+        if not is_online and d.last_heartbeat_at:
+            mins_ago = int((now - _aware(d.last_heartbeat_at)).total_seconds() / 60)
+            warnings.append({"type": "offline", "device": d.device_name or d.id[:8], "message": f"Offline seit {mins_ago} Min."})
+        elif not d.last_heartbeat_at:
+            warnings.append({"type": "no_heartbeat", "device": d.device_name or d.id[:8], "message": "Noch kein Heartbeat empfangen"})
+
+    # Daily stats aggregation
+    today_stats = await _aggregate_daily_stats(db, device_ids, today, today)
+    week_stats = await _aggregate_daily_stats(db, device_ids, week_ago, today)
+
+    return {
+        "devices_online": online_count,
+        "devices_offline": offline_count,
+        "devices_total": len(devices),
+        "revenue_today_cents": today_stats["revenue_cents"],
+        "revenue_7d_cents": week_stats["revenue_cents"],
+        "sessions_today": today_stats["sessions"],
+        "sessions_7d": week_stats["sessions"],
+        "games_today": today_stats["games"],
+        "games_7d": week_stats["games"],
+        "credits_today": today_stats["credits_added"],
+        "errors_today": today_stats["errors"],
+        "devices": device_list,
+        "warnings": warnings,
+    }
+
+
+@app.get("/api/telemetry/device-stats")
+async def telemetry_device_stats(
+    device_id: str, days: int = 7,
+    user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+):
+    """Detailed stats for a single device over N days."""
+    # Scope check
+    result = await db.execute(select(CentralDevice).where(CentralDevice.id == device_id))
+    device = result.scalar_one_or_none()
+    if not device:
+        raise HTTPException(404, "Device not found")
+    if not await can_access_location(user, device.location_id, db):
+        raise HTTPException(403, "Access denied")
+
+    now = _utcnow()
+    start_date = (now - timedelta(days=days)).strftime("%Y-%m-%d")
+    end_date = now.strftime("%Y-%m-%d")
+
+    stmt = select(DeviceDailyStats).where(
+        DeviceDailyStats.device_id == device_id,
+        DeviceDailyStats.date >= start_date,
+        DeviceDailyStats.date <= end_date,
+    ).order_by(DeviceDailyStats.date)
+    result = await db.execute(stmt)
+    rows = result.scalars().all()
+
+    return {
+        "device_id": device_id,
+        "device_name": device.device_name,
+        "days": [
+            {
+                "date": r.date,
+                "revenue_cents": r.revenue_cents or 0,
+                "sessions": r.sessions or 0,
+                "games": r.games or 0,
+                "credits_added": r.credits_added or 0,
+                "errors": r.errors or 0,
+                "heartbeats": r.heartbeats or 0,
+            }
+            for r in rows
+        ],
+    }
+
+
+async def _resolve_scoped_device_ids(user: AuthUser, db: AsyncSession, customer_id=None, location_id=None, device_id=None):
+    """Resolve device IDs respecting user scope."""
+    if device_id:
+        # Check scope
+        result = await db.execute(select(CentralDevice).where(CentralDevice.id == device_id))
+        d = result.scalar_one_or_none()
+        if not d:
+            return []
+        if not await can_access_location(user, d.location_id, db):
+            return []
+        return [device_id]
+
+    if location_id:
+        if not await can_access_location(user, location_id, db):
+            return []
+        result = await db.execute(select(CentralDevice.id).where(CentralDevice.location_id == location_id))
+        return [r[0] for r in result.fetchall()]
+
+    if customer_id:
+        if not can_access_customer(user, customer_id):
+            return []
+        loc_r = await db.execute(select(CentralLocation.id).where(CentralLocation.customer_id == customer_id))
+        loc_ids = [r[0] for r in loc_r.fetchall()]
+        if not loc_ids:
+            return []
+        result = await db.execute(select(CentralDevice.id).where(CentralDevice.location_id.in_(loc_ids)))
+        return [r[0] for r in result.fetchall()]
+
+    # No specific filter — use user scope
+    if user.is_superadmin:
+        result = await db.execute(select(CentralDevice.id))
+        return [r[0] for r in result.fetchall()]
+    else:
+        allowed = user.allowed_customer_ids or []
+        if not allowed:
+            return []
+        loc_r = await db.execute(select(CentralLocation.id).where(CentralLocation.customer_id.in_(allowed)))
+        loc_ids = [r[0] for r in loc_r.fetchall()]
+        if not loc_ids:
+            return []
+        result = await db.execute(select(CentralDevice.id).where(CentralDevice.location_id.in_(loc_ids)))
+        return [r[0] for r in result.fetchall()]
+
+
+async def _get_or_create_daily_stats(db: AsyncSession, device_id: str, date_str: str) -> DeviceDailyStats:
+    """Get or create a daily stats row for device+date."""
+    result = await db.execute(
+        select(DeviceDailyStats).where(
+            DeviceDailyStats.device_id == device_id,
+            DeviceDailyStats.date == date_str,
+        )
+    )
+    stats = result.scalar_one_or_none()
+    if not stats:
+        stats = DeviceDailyStats(device_id=device_id, date=date_str)
+        db.add(stats)
+        await db.flush()
+    return stats
+
+
+async def _aggregate_daily_stats(db: AsyncSession, device_ids: list, start_date: str, end_date: str) -> dict:
+    """Aggregate daily stats across devices and date range."""
+    if not device_ids:
+        return {"revenue_cents": 0, "sessions": 0, "games": 0, "credits_added": 0, "errors": 0}
+
+    result = await db.execute(
+        select(
+            func.coalesce(func.sum(DeviceDailyStats.revenue_cents), 0),
+            func.coalesce(func.sum(DeviceDailyStats.sessions), 0),
+            func.coalesce(func.sum(DeviceDailyStats.games), 0),
+            func.coalesce(func.sum(DeviceDailyStats.credits_added), 0),
+            func.coalesce(func.sum(DeviceDailyStats.errors), 0),
+        ).where(
+            DeviceDailyStats.device_id.in_(device_ids),
+            DeviceDailyStats.date >= start_date,
+            DeviceDailyStats.date <= end_date,
+        )
+    )
+    row = result.first()
+    return {
+        "revenue_cents": row[0] or 0,
+        "sessions": row[1] or 0,
+        "games": row[2] or 0,
+        "credits_added": row[3] or 0,
+        "errors": row[4] or 0,
     }
 
 
