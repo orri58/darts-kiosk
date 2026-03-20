@@ -1,3 +1,4 @@
+import { useCentralAuth } from '../../context/CentralAuthContext';
 import { useCentralData } from '../../hooks/useCentralData';
 import {
   Building2, MapPin, Monitor, KeyRound,
@@ -6,10 +7,10 @@ import {
 
 function StatCard({ icon: Icon, label, value, color, subtext, tid }) {
   return (
-    <div className={`rounded-xl border p-5 ${color}`} data-testid={tid}>
-      <div className="flex items-center justify-between mb-3">
-        <Icon className="w-6 h-6 opacity-80" />
-        <span className="text-3xl font-bold">{value}</span>
+    <div className={`rounded-xl border p-4 ${color}`} data-testid={tid}>
+      <div className="flex items-center justify-between mb-2">
+        <Icon className="w-5 h-5 opacity-80" />
+        <span className="text-2xl font-bold">{value}</span>
       </div>
       <p className="text-sm font-medium opacity-90">{label}</p>
       {subtext && <p className="text-xs opacity-60 mt-1">{subtext}</p>}
@@ -17,34 +18,12 @@ function StatCard({ icon: Icon, label, value, color, subtext, tid }) {
   );
 }
 
-function ProblemCard({ icon: Icon, title, items, color }) {
-  if (!items || items.length === 0) return null;
-  return (
-    <div className={`rounded-xl border p-4 ${color}`} data-testid={`problem-${title.toLowerCase().replace(/\s/g, '-')}`}>
-      <div className="flex items-center gap-2 mb-3">
-        <Icon className="w-5 h-5" />
-        <h3 className="font-semibold text-sm">{title}</h3>
-        <span className="ml-auto text-xs font-bold bg-white/10 px-2 py-0.5 rounded-full">{items.length}</span>
-      </div>
-      <div className="space-y-2">
-        {items.slice(0, 5).map((item, i) => (
-          <div key={i} className="text-sm opacity-90 bg-white/5 rounded-lg px-3 py-2">
-            {item}
-          </div>
-        ))}
-        {items.length > 5 && <p className="text-xs opacity-60">+ {items.length - 5} weitere</p>}
-      </div>
-    </div>
-  );
-}
-
 export default function OperatorDashboard() {
-  const { data: customers, loading: l1 } = useCentralData('licensing/customers');
-  const { data: locations, loading: l2 } = useCentralData('licensing/locations');
-  const { data: devices, loading: l3 } = useCentralData('licensing/devices');
-  const { data: licenses, loading: l4 } = useCentralData('licensing/licenses');
-
-  const loading = l1 || l2 || l3 || l4;
+  const { scope } = useCentralAuth();
+  const { data: dash, loading, error } = useCentralData(
+    `dashboard${scope.customerId ? `?customer_id=${scope.customerId}` : ''}${scope.locationId ? `${scope.customerId ? '&' : '?'}location_id=${scope.locationId}` : ''}`,
+    { skipScope: true }
+  );
 
   if (loading) {
     return (
@@ -54,121 +33,135 @@ export default function OperatorDashboard() {
     );
   }
 
-  // Compute stats
-  const deviceCount = devices?.length || 0;
-  const locationCount = locations?.length || 0;
-  const customerCount = customers?.length || 0;
-  const licenseCount = licenses?.length || 0;
+  if (error) {
+    return (
+      <div className="text-center py-12 text-red-400" data-testid="dashboard-error">
+        <AlertTriangle className="w-8 h-8 mx-auto mb-2" />
+        <p>{error}</p>
+      </div>
+    );
+  }
 
-  const activeLicenses = licenses?.filter(l => l.status === 'active') || [];
-  const graceLicenses = licenses?.filter(l => l.status === 'grace') || [];
-  const expiredLicenses = licenses?.filter(l => l.status === 'expired') || [];
+  if (!dash) return null;
 
-  const onlineDevices = devices?.filter(d => {
-    if (!d.last_sync_at) return false;
-    const diff = Date.now() - new Date(d.last_sync_at).getTime();
-    return diff < 24 * 60 * 60 * 1000; // last 24h
-  }) || [];
-
-  const offlineDevices = devices?.filter(d => {
-    if (!d.last_sync_at) return true;
-    const diff = Date.now() - new Date(d.last_sync_at).getTime();
-    return diff >= 24 * 60 * 60 * 1000;
-  }) || [];
-
-  const mismatchDevices = devices?.filter(d => d.binding_status === 'mismatch') || [];
-
-  // Problem lists
-  const expiredProblems = expiredLicenses.map(l => {
-    const c = customers?.find(c => c.id === l.customer_id);
-    return `${c?.name || 'Unbekannt'} — Plan: ${l.plan_type}`;
-  });
-
-  const graceProblems = graceLicenses.map(l => {
-    const c = customers?.find(c => c.id === l.customer_id);
-    return `${c?.name || 'Unbekannt'} — Ablauf: ${l.ends_at ? new Date(l.ends_at).toLocaleDateString('de-DE') : '—'}`;
-  });
-
-  const offlineProblems = offlineDevices.map(d => {
-    const lastSync = d.last_sync_at ? new Date(d.last_sync_at).toLocaleDateString('de-DE') : 'Nie';
-    return `${d.device_name || d.id.slice(0, 8)} — Letzter Sync: ${lastSync}`;
-  });
-
-  const mismatchProblems = mismatchDevices.map(d =>
-    `${d.device_name || d.id.slice(0, 8)} — Geräte-Mismatch erkannt`
-  );
-
-  const hasProblems = expiredProblems.length > 0 || graceProblems.length > 0 || offlineProblems.length > 0 || mismatchProblems.length > 0;
+  const onlineCount = dash.recent_devices?.filter(d => d.online).length || 0;
+  const offlineCount = (dash.recent_devices?.length || 0) - onlineCount;
+  const mismatchDevices = dash.recent_devices?.filter(d => d.binding_status === 'mismatch') || [];
+  const offlineDevices = dash.recent_devices?.filter(d => !d.online) || [];
 
   return (
-    <div className="space-y-8" data-testid="operator-dashboard">
+    <div className="space-y-6" data-testid="operator-dashboard">
       <div>
-        <h1 className="text-2xl font-bold text-white">Übersicht</h1>
-        <p className="text-sm text-zinc-500 mt-1">Status aller Geräte, Lizenzen und Standorte</p>
+        <h1 className="text-xl font-bold text-white">Übersicht</h1>
+        <p className="text-sm text-zinc-500 mt-0.5">
+          {scope.customerId ? 'Gefilterter Scope' : 'Alle Geschäfte & Standorte'}
+        </p>
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Building2} label="Kunden" value={customerCount} tid="stat-customers"
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <StatCard icon={Building2} label="Kunden" value={dash.customers} tid="stat-customers"
           color="bg-zinc-900 border-zinc-800 text-white" />
-        <StatCard icon={MapPin} label="Standorte" value={locationCount} tid="stat-locations"
+        <StatCard icon={MapPin} label="Standorte" value={dash.locations} tid="stat-locations"
           color="bg-zinc-900 border-zinc-800 text-white" />
-        <StatCard icon={Monitor} label="Geräte" value={deviceCount} tid="stat-devices"
+        <StatCard icon={Monitor} label="Geräte" value={dash.devices} tid="stat-devices"
           color="bg-zinc-900 border-zinc-800 text-white"
-          subtext={`${onlineDevices.length} online / ${offlineDevices.length} offline`} />
-        <StatCard icon={KeyRound} label="Lizenzen" value={licenseCount} tid="stat-licenses"
+          subtext={`${onlineCount} online / ${offlineCount} offline`} />
+        <StatCard icon={KeyRound} label="Lizenzen" value={dash.licenses_total} tid="stat-licenses"
           color="bg-zinc-900 border-zinc-800 text-white"
-          subtext={`${activeLicenses.length} aktiv`} />
+          subtext={`${dash.licenses_active} aktiv`} />
       </div>
 
-      {/* License Status Row */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-4 text-emerald-400" data-testid="lic-active-count">
-          <div className="flex items-center gap-2 mb-1">
-            <CheckCircle className="w-5 h-5" />
-            <span className="text-2xl font-bold">{activeLicenses.length}</span>
-          </div>
-          <p className="text-sm">Aktive Lizenzen</p>
-        </div>
-        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 text-amber-400" data-testid="lic-grace-count">
-          <div className="flex items-center gap-2 mb-1">
-            <Clock className="w-5 h-5" />
-            <span className="text-2xl font-bold">{graceLicenses.length}</span>
-          </div>
-          <p className="text-sm">Im Toleranzzeitraum</p>
-        </div>
-        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 text-red-400" data-testid="lic-expired-count">
-          <div className="flex items-center gap-2 mb-1">
-            <XCircle className="w-5 h-5" />
-            <span className="text-2xl font-bold">{expiredLicenses.length}</span>
-          </div>
-          <p className="text-sm">Abgelaufen</p>
-        </div>
-      </div>
-
-      {/* Problems Section */}
-      {hasProblems ? (
+      {/* Device Health Table */}
+      {dash.recent_devices?.length > 0 && (
         <div>
-          <div className="flex items-center gap-2 mb-4">
-            <AlertTriangle className="w-5 h-5 text-amber-400" />
-            <h2 className="text-lg font-semibold text-white">Handlungsbedarf</h2>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <ProblemCard icon={XCircle} title="Abgelaufene Lizenzen" items={expiredProblems}
-              color="border-red-500/20 bg-red-500/5 text-red-400" />
-            <ProblemCard icon={Clock} title="Toleranzzeitraum" items={graceProblems}
-              color="border-amber-500/20 bg-amber-500/5 text-amber-400" />
-            <ProblemCard icon={WifiOff} title="Geräte offline" items={offlineProblems}
-              color="border-zinc-600/20 bg-zinc-800/50 text-zinc-400" />
-            <ProblemCard icon={AlertTriangle} title="Geräte-Mismatch" items={mismatchProblems}
-              color="border-orange-500/20 bg-orange-500/5 text-orange-400" />
+          <h2 className="text-base font-semibold text-white mb-3">Geräte-Status</h2>
+          <div className="rounded-xl border border-zinc-800 overflow-hidden">
+            <table className="w-full text-sm" data-testid="devices-health-table">
+              <thead>
+                <tr className="bg-zinc-900/50 text-zinc-400 text-left">
+                  <th className="px-4 py-2.5 font-medium">Status</th>
+                  <th className="px-4 py-2.5 font-medium">Gerät</th>
+                  <th className="px-4 py-2.5 font-medium">Binding</th>
+                  <th className="px-4 py-2.5 font-medium">Letzter Sync</th>
+                  <th className="px-4 py-2.5 font-medium">Syncs</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/50">
+                {dash.recent_devices.map(d => (
+                  <tr key={d.id} className="text-zinc-300 hover:bg-zinc-900/30">
+                    <td className="px-4 py-2.5">
+                      {d.online
+                        ? <span className="inline-flex items-center gap-1.5 text-emerald-400 text-xs"><Wifi className="w-3.5 h-3.5" /> Online</span>
+                        : <span className="inline-flex items-center gap-1.5 text-zinc-500 text-xs"><WifiOff className="w-3.5 h-3.5" /> Offline</span>
+                      }
+                    </td>
+                    <td className="px-4 py-2.5 font-medium">{d.device_name || d.id.slice(0, 8)}</td>
+                    <td className="px-4 py-2.5">
+                      <span className={`text-xs px-2 py-0.5 rounded-full ${
+                        d.binding_status === 'bound' ? 'bg-emerald-500/10 text-emerald-400' :
+                        d.binding_status === 'mismatch' ? 'bg-orange-500/10 text-orange-400' :
+                        'bg-zinc-700 text-zinc-400'
+                      }`}>{d.binding_status || '—'}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-zinc-400 text-xs">
+                      {d.last_sync_at ? new Date(d.last_sync_at).toLocaleString('de-DE') : 'Nie'}
+                    </td>
+                    <td className="px-4 py-2.5 text-zinc-400">{d.sync_count || 0}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
-      ) : (
-        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-6 text-center" data-testid="no-problems">
-          <CheckCircle className="w-10 h-10 text-emerald-400 mx-auto mb-2" />
-          <p className="text-emerald-400 font-medium">Alles in Ordnung</p>
-          <p className="text-sm text-emerald-400/60 mt-1">Keine Probleme erkannt</p>
+      )}
+
+      {/* Problems */}
+      {(offlineDevices.length > 0 || mismatchDevices.length > 0) && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <AlertTriangle className="w-4 h-4 text-amber-400" />
+            <h2 className="text-base font-semibold text-white">Handlungsbedarf</h2>
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            {offlineDevices.length > 0 && (
+              <div className="rounded-xl border border-zinc-600/20 bg-zinc-800/50 p-4 text-zinc-400" data-testid="problem-offline">
+                <div className="flex items-center gap-2 mb-2">
+                  <WifiOff className="w-4 h-4" />
+                  <h3 className="font-semibold text-sm">{offlineDevices.length} Geräte offline</h3>
+                </div>
+                <div className="space-y-1.5">
+                  {offlineDevices.slice(0, 5).map(d => (
+                    <div key={d.id} className="text-xs bg-white/5 rounded px-2.5 py-1.5">
+                      {d.device_name || d.id.slice(0, 8)} — Sync: {d.last_sync_at ? new Date(d.last_sync_at).toLocaleDateString('de-DE') : 'Nie'}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {mismatchDevices.length > 0 && (
+              <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4 text-orange-400" data-testid="problem-mismatch">
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle className="w-4 h-4" />
+                  <h3 className="font-semibold text-sm">{mismatchDevices.length} Geräte-Mismatch</h3>
+                </div>
+                <div className="space-y-1.5">
+                  {mismatchDevices.slice(0, 5).map(d => (
+                    <div key={d.id} className="text-xs bg-white/5 rounded px-2.5 py-1.5">
+                      {d.device_name || d.id.slice(0, 8)}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!offlineDevices.length && !mismatchDevices.length && (
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-5 text-center" data-testid="no-problems">
+          <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto mb-1.5" />
+          <p className="text-emerald-400 font-medium text-sm">Alles in Ordnung</p>
         </div>
       )}
     </div>

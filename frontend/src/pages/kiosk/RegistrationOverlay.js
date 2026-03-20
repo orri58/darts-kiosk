@@ -32,7 +32,7 @@ function friendlyError(err) {
   return 'Registrierung fehlgeschlagen. Bitte versuchen Sie es erneut.';
 }
 
-export default function RegistrationOverlay({ onRegistered }) {
+export default function RegistrationOverlay() {
   const [regStatus, setRegStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [registering, setRegistering] = useState(false);
@@ -72,9 +72,9 @@ export default function RegistrationOverlay({ onRegistered }) {
   // If already registered, auto-dismiss
   useEffect(() => {
     if (regStatus?.status === 'registered') {
-      onRegistered?.();
+      // Already registered — overlay will return null
     }
-  }, [regStatus, onRegistered]);
+  }, [regStatus]);
 
   const handleRegister = async (e) => {
     e.preventDefault();
@@ -90,7 +90,10 @@ export default function RegistrationOverlay({ onRegistered }) {
       const res = await axios.post(`${API}/licensing/register-device`, body);
       setSuccess(true);
       toast.success('Gerät erfolgreich registriert');
-      setTimeout(() => onRegistered?.(), 2000);
+      // Auto-redirect: wait 3s then reload to enter normal kiosk flow
+      setTimeout(() => {
+        window.location.reload();
+      }, 3000);
     } catch (err) {
       setError(friendlyError(err));
     } finally {

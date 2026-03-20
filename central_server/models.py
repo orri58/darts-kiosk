@@ -143,20 +143,24 @@ class CentralAuditLog(Base):
     device_id = Column(String(36), nullable=True)
     install_id = Column(String(64), nullable=True)
     license_id = Column(String(36), nullable=True)
+    actor = Column(String(100), nullable=True)  # username who triggered the action
     details = Column(JSON, nullable=True)
     message = Column(Text, nullable=True)
 
 
 class CentralUser(Base):
-    """Admin/Operator user for the central license server (v3.5.2)."""
+    """Admin/Operator user for the central license server (v3.6.0).
+    Roles: superadmin | installer | owner | staff
+    """
     __tablename__ = "central_users"
 
     id = Column(String(36), primary_key=True, default=_uuid)
     username = Column(String(100), unique=True, nullable=False, index=True)
     password_hash = Column(String(256), nullable=False)
     display_name = Column(String(200), nullable=True)
-    role = Column(String(20), nullable=False, default="operator")  # superadmin | operator
-    allowed_customer_ids = Column(JSON, nullable=True)  # List of customer IDs for operators
-    status = Column(String(20), default="active")
+    role = Column(String(20), nullable=False, default="staff")  # superadmin | installer | owner | staff
+    allowed_customer_ids = Column(JSON, nullable=True)  # List of customer IDs for scoped roles
+    created_by_user_id = Column(String(36), nullable=True)  # Who created this user (for hierarchy)
+    status = Column(String(20), default="active")  # active | disabled
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)

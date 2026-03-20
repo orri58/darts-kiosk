@@ -33,6 +33,7 @@ import OperatorLicenses from "./pages/operator/OperatorLicenses";
 import OperatorCustomers from "./pages/operator/OperatorCustomers";
 import OperatorLocations from "./pages/operator/OperatorLocations";
 import OperatorAudit from "./pages/operator/OperatorAudit";
+import OperatorUsers from "./pages/operator/OperatorUsers";
 
 // Context
 import { AuthProvider } from "./context/AuthContext";
@@ -89,6 +90,7 @@ function App() {
               <Route path="licenses" element={<OperatorLicenses />} />
               <Route path="customers" element={<OperatorCustomers />} />
               <Route path="locations" element={<OperatorLocations />} />
+              <Route path="users" element={<OperatorUsers />} />
               <Route path="audit" element={<OperatorAudit />} />
             </Route>
             

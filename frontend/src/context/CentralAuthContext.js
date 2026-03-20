@@ -3,13 +3,25 @@ import axios from 'axios';
 
 const CENTRAL_API = `${process.env.REACT_APP_BACKEND_URL}/api/central`;
 const STORAGE_KEY = 'central_token';
+const SCOPE_KEY = 'central_scope';
 
 const CentralAuthContext = createContext(null);
+
+const ROLE_LABELS = {
+  superadmin: 'Super-Administrator',
+  installer: 'Aufsteller / Installer',
+  owner: 'Geschäftsinhaber',
+  staff: 'Mitarbeiter',
+};
 
 export function CentralAuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem(STORAGE_KEY));
   const [loading, setLoading] = useState(true);
+  // Scope state: { customerId, locationId, deviceId }
+  const [scope, setScope] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(SCOPE_KEY)) || {}; } catch { return {}; }
+  });
 
   useEffect(() => {
     if (!token) { setLoading(false); return; }
@@ -41,20 +53,35 @@ export function CentralAuthProvider({ children }) {
 
   const logout = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(SCOPE_KEY);
     setToken(null);
     setUser(null);
+    setScope({});
+  }, []);
+
+  const updateScope = useCallback((newScope) => {
+    setScope(newScope);
+    localStorage.setItem(SCOPE_KEY, JSON.stringify(newScope));
   }, []);
 
   const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-  const isOperator = user?.role === 'operator';
+
   const isSuperadmin = user?.role === 'superadmin';
+  const isInstaller = user?.role === 'installer';
+  const isOwner = user?.role === 'owner';
+  const isStaff = user?.role === 'staff';
+  const canManage = isSuperadmin || isInstaller;
+  const canManageStaff = isSuperadmin || isInstaller || isOwner;
+  const roleLabel = ROLE_LABELS[user?.role] || user?.role;
 
   return (
     <CentralAuthContext.Provider value={{
       user, token, loading, login, logout,
-      authHeaders, isOperator, isSuperadmin,
+      authHeaders, isSuperadmin, isInstaller, isOwner, isStaff,
+      canManage, canManageStaff, roleLabel,
       isAuthenticated: !!user,
       apiBase: CENTRAL_API,
+      scope, updateScope,
     }}>
       {children}
     </CentralAuthContext.Provider>

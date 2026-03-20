@@ -7,11 +7,19 @@ const ACTION_COLORS = {
   SYNC_BLOCKED: 'text-red-400 bg-red-500/10',
   DEVICE_REGISTERED: 'text-blue-400 bg-blue-500/10',
   DEVICE_REGISTRATION_FAILED: 'text-red-400 bg-red-500/10',
+  DEVICE_CREATED: 'text-blue-400 bg-blue-500/10',
+  DEVICE_STATUS_CHANGED: 'text-amber-400 bg-amber-500/10',
   REG_TOKEN_CREATED: 'text-cyan-400 bg-cyan-500/10',
   REG_TOKEN_USED: 'text-indigo-400 bg-indigo-500/10',
   REG_TOKEN_REVOKED: 'text-orange-400 bg-orange-500/10',
   USER_CREATED: 'text-blue-400 bg-blue-500/10',
   USER_UPDATED: 'text-zinc-400 bg-zinc-500/10',
+  CUSTOMER_CREATED: 'text-purple-400 bg-purple-500/10',
+  CUSTOMER_STATUS_CHANGED: 'text-amber-400 bg-amber-500/10',
+  LOCATION_CREATED: 'text-teal-400 bg-teal-500/10',
+  LOCATION_UPDATED: 'text-zinc-400 bg-zinc-500/10',
+  LICENSE_CREATED: 'text-emerald-400 bg-emerald-500/10',
+  LICENSE_UPDATED: 'text-zinc-400 bg-zinc-500/10',
 };
 
 const ACTION_LABELS = {
@@ -21,11 +29,19 @@ const ACTION_LABELS = {
   DEVICE_REGISTERED: 'Gerät registriert',
   DEVICE_REGISTRATION_FAILED: 'Registrierung fehlgeschlagen',
   DEVICE_REGISTERED_BIND_CONFLICT: 'Binding-Konflikt',
+  DEVICE_CREATED: 'Gerät erstellt',
+  DEVICE_STATUS_CHANGED: 'Gerätestatus geändert',
   REG_TOKEN_CREATED: 'Token erstellt',
   REG_TOKEN_USED: 'Token verwendet',
   REG_TOKEN_REVOKED: 'Token widerrufen',
   USER_CREATED: 'Benutzer erstellt',
   USER_UPDATED: 'Benutzer aktualisiert',
+  CUSTOMER_CREATED: 'Kunde erstellt',
+  CUSTOMER_STATUS_CHANGED: 'Kundenstatus geändert',
+  LOCATION_CREATED: 'Standort erstellt',
+  LOCATION_UPDATED: 'Standort aktualisiert',
+  LICENSE_CREATED: 'Lizenz erstellt',
+  LICENSE_UPDATED: 'Lizenz aktualisiert',
 };
 
 function formatTime(ts) {
@@ -85,7 +101,10 @@ export default function OperatorAudit() {
               </span>
               <div className="flex-1 min-w-0">
                 <p className="text-sm text-zinc-300 break-words">{e.message || '—'}</p>
-                <p className="text-xs text-zinc-600 mt-1">{formatTime(e.timestamp)}</p>
+                <div className="flex items-center gap-3 mt-1">
+                  {e.actor && <span className="text-xs text-indigo-400/70">von {e.actor}</span>}
+                  <span className="text-xs text-zinc-600">{formatTime(e.timestamp)}</span>
+                </div>
               </div>
             </div>
           );

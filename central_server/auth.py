@@ -1,14 +1,17 @@
 """
-Central Server — Auth & Access Policy (v3.5.2)
+Central Server — Auth & Access Policy (v3.6.0)
 
-Role-based access control for the central license server.
-- superadmin: full access to all data
-- operator: scoped to allowed_customer_ids only
+4-tier role-based access control:
+- superadmin: full access to all data, can manage installers
+- installer:  scoped to assigned customers, can manage owners
+- owner:      scoped to own business, can manage staff
+- staff:      read-only operational view within scope
 
 Provides:
 - JWT token generation and verification
 - User authentication (login)
 - Access policy helpers for scope enforcement
+- Role hierarchy checks
 """
 import hashlib
 import logging
@@ -30,6 +33,24 @@ JWT_SECRET = os.environ.get("CENTRAL_JWT_SECRET", "central-jwt-secret-change-me"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
 ADMIN_TOKEN = os.environ.get("CENTRAL_ADMIN_TOKEN", "admin-secret-token")
+
+# Role hierarchy — higher number = more privileges
+ROLE_HIERARCHY = {
+    "staff": 1,
+    "owner": 2,
+    "installer": 3,
+    "superadmin": 4,
+}
+
+VALID_ROLES = set(ROLE_HIERARCHY.keys())
+
+# Which roles can each role create?
+ROLE_CAN_CREATE = {
+    "superadmin": {"superadmin", "installer", "owner", "staff"},
+    "installer": {"owner", "staff"},
+    "owner": {"staff"},
+    "staff": set(),
+}
 
 
 def hash_password(password: str) -> str:
@@ -61,23 +82,23 @@ def decode_jwt(token: str) -> dict:
 
 class AuthUser:
     """Represents the authenticated user context for a request."""
-    __slots__ = ("id", "username", "role", "allowed_customer_ids", "is_superadmin")
+    __slots__ = ("id", "username", "role", "allowed_customer_ids", "is_superadmin", "created_by_user_id")
 
-    def __init__(self, user_id: str, username: str, role: str, allowed_customer_ids: list = None):
+    def __init__(self, user_id: str, username: str, role: str, allowed_customer_ids: list = None, created_by_user_id: str = None):
         self.id = user_id
         self.username = username
         self.role = role
         self.allowed_customer_ids = allowed_customer_ids or []
         self.is_superadmin = role == "superadmin"
+        self.created_by_user_id = created_by_user_id
+
+    @property
+    def role_level(self) -> int:
+        return ROLE_HIERARCHY.get(self.role, 0)
 
 
 async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)) -> AuthUser:
-    """Extract and validate the authenticated user from the request.
-
-    Supports:
-    1. JWT Bearer token (normal users)
-    2. Legacy ADMIN_TOKEN (superadmin bypass for bootstrap)
-    """
+    """Extract and validate the authenticated user from the request."""
     auth_header = request.headers.get("Authorization", "")
     token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
 
@@ -106,14 +127,44 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
         username=user.username,
         role=user.role,
         allowed_customer_ids=user.allowed_customer_ids or [],
+        created_by_user_id=user.created_by_user_id,
     )
 
+
+# ═══════════════════════════════════════════════════════════════
+# ROLE CHECKS
+# ═══════════════════════════════════════════════════════════════
 
 def require_superadmin(user: AuthUser):
     """Raise 403 if the user is not a superadmin."""
     if not user.is_superadmin:
         raise HTTPException(403, "Superadmin required")
 
+
+def require_min_role(user: AuthUser, min_role: str):
+    """Raise 403 if user's role is below the minimum required level."""
+    min_level = ROLE_HIERARCHY.get(min_role, 99)
+    if user.role_level < min_level:
+        raise HTTPException(403, f"Insufficient permissions. Required: {min_role}")
+
+
+def require_installer_or_above(user: AuthUser):
+    require_min_role(user, "installer")
+
+
+def require_owner_or_above(user: AuthUser):
+    require_min_role(user, "owner")
+
+
+def can_create_role(creator: AuthUser, target_role: str) -> bool:
+    """Check if creator can create users with the target role."""
+    allowed = ROLE_CAN_CREATE.get(creator.role, set())
+    return target_role in allowed
+
+
+# ═══════════════════════════════════════════════════════════════
+# SCOPE / ACCESS CHECKS
+# ═══════════════════════════════════════════════════════════════
 
 def get_allowed_customer_ids(user: AuthUser) -> Optional[list]:
     """Return the list of customer IDs the user can access, or None if superadmin (= all)."""

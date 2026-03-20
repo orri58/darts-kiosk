@@ -1,7 +1,8 @@
 """
-Central License Server — v3.5.2
+Central License Server — v3.6.0
 
-v3.5.2: Role-based access control (superadmin/operator multi-tenant).
+4-tier RBAC: superadmin > installer > owner > staff
+All endpoints enforce backend scope. No UI-only permissions.
 """
 import sys
 from pathlib import Path
@@ -19,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI, Depends, HTTPException, Request
 from starlette.middleware.cors import CORSMiddleware
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from central_server.database import get_db, init_db, AsyncSessionLocal
@@ -28,9 +29,11 @@ from central_server.models import (
     CentralAuditLog, RegistrationToken, CentralUser, LicenseStatus, CustomerStatus,
 )
 from central_server.auth import (
-    get_current_user, AuthUser, require_superadmin,
+    get_current_user, AuthUser, require_superadmin, require_min_role,
+    require_installer_or_above, require_owner_or_above,
     get_allowed_customer_ids, can_access_customer, can_access_location,
     apply_customer_scope, hash_password, verify_password, create_jwt,
+    can_create_role, VALID_ROLES, ROLE_HIERARCHY,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [CENTRAL] %(levelname)s %(message)s")
@@ -54,6 +57,46 @@ def _aware(dt):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Migrate: add created_by_user_id column if missing
+    try:
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT created_by_user_id FROM central_users LIMIT 1"))
+    except Exception:
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as db:
+            try:
+                await db.execute(text("ALTER TABLE central_users ADD COLUMN created_by_user_id VARCHAR(36)"))
+                await db.commit()
+                logger.info("[MIGRATE] Added created_by_user_id to central_users")
+            except Exception:
+                pass
+
+    # Migrate: add actor column to audit_log if missing
+    try:
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT actor FROM audit_log LIMIT 1"))
+    except Exception:
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as db:
+            try:
+                await db.execute(text("ALTER TABLE audit_log ADD COLUMN actor VARCHAR(100)"))
+                await db.commit()
+                logger.info("[MIGRATE] Added actor to audit_log")
+            except Exception:
+                pass
+
+    # Migrate: update old 'operator' role to 'installer'
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(CentralUser).where(CentralUser.role == "operator"))
+        operators = result.scalars().all()
+        if operators:
+            for u in operators:
+                u.role = "installer"
+            await db.commit()
+            logger.info(f"[MIGRATE] Migrated {len(operators)} 'operator' users to 'installer' role")
+
     # Ensure default superadmin exists
     async with AsyncSessionLocal() as db:
         result = await db.execute(select(CentralUser).where(CentralUser.role == "superadmin"))
@@ -67,8 +110,8 @@ async def lifespan(app: FastAPI):
             )
             db.add(sa)
             await db.commit()
-            logger.info("[INIT] Default superadmin user created (password from CENTRAL_ADMIN_PASSWORD or 'admin')")
-    logger.info("Central License Server v3.5.2 started")
+            logger.info("[INIT] Default superadmin user created")
+    logger.info("Central License Server v3.6.0 started")
     yield
     logger.info("Central License Server shutting down")
 
@@ -85,323 +128,7 @@ app.add_middleware(
 
 
 # ═══════════════════════════════════════════════════════════════
-# AUTH ENDPOINTS (v3.5.2)
-# ═══════════════════════════════════════════════════════════════
-
-@app.post("/api/auth/login")
-async def login(body: dict, db: AsyncSession = Depends(get_db)):
-    """Authenticate and return JWT token."""
-    username = body.get("username", "")
-    password = body.get("password", "")
-    if not username or not password:
-        raise HTTPException(400, "Username and password required")
-
-    result = await db.execute(select(CentralUser).where(CentralUser.username == username))
-    user = result.scalar_one_or_none()
-    if not user or not verify_password(password, user.password_hash):
-        raise HTTPException(401, "Invalid credentials")
-    if user.status != "active":
-        raise HTTPException(403, "Account disabled")
-
-    token = create_jwt(user.id, user.username, user.role)
-    return {
-        "access_token": token,
-        "user": {
-            "id": user.id,
-            "username": user.username,
-            "display_name": user.display_name,
-            "role": user.role,
-            "allowed_customer_ids": user.allowed_customer_ids or [],
-        },
-    }
-
-
-@app.get("/api/auth/me")
-async def get_me(user: AuthUser = Depends(get_current_user)):
-    """Return current user info."""
-    return {
-        "id": user.id,
-        "username": user.username,
-        "role": user.role,
-        "is_superadmin": user.is_superadmin,
-        "allowed_customer_ids": user.allowed_customer_ids,
-    }
-
-
-@app.get("/api/users")
-async def list_users(user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """List all users (superadmin only)."""
-    require_superadmin(user)
-    result = await db.execute(select(CentralUser).order_by(CentralUser.username))
-    return [
-        {
-            "id": u.id, "username": u.username, "display_name": u.display_name,
-            "role": u.role, "status": u.status,
-            "allowed_customer_ids": u.allowed_customer_ids or [],
-            "created_at": u.created_at.isoformat() if u.created_at else None,
-        }
-        for u in result.scalars().all()
-    ]
-
-
-@app.post("/api/users")
-async def create_user(data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Create a new user (superadmin only).
-    Body: { username, password, display_name, role, allowed_customer_ids }
-    """
-    require_superadmin(user)
-    username = data.get("username", "").strip()
-    password = data.get("password", "").strip()
-    if not username or not password:
-        raise HTTPException(400, "Username and password required")
-    if len(password) < 4:
-        raise HTTPException(400, "Password too short (min 4)")
-
-    existing = await db.execute(select(CentralUser).where(CentralUser.username == username))
-    if existing.scalar_one_or_none():
-        raise HTTPException(409, "Username already exists")
-
-    role = data.get("role", "operator")
-    if role not in ("superadmin", "operator"):
-        raise HTTPException(400, "Invalid role")
-
-    new_user = CentralUser(
-        username=username,
-        password_hash=hash_password(password),
-        display_name=data.get("display_name", username),
-        role=role,
-        allowed_customer_ids=data.get("allowed_customer_ids", []),
-    )
-    db.add(new_user)
-    await db.flush()
-
-    await _log_audit(db, "USER_CREATED", message=f"User {username} ({role}) created by {user.username}")
-
-    return {
-        "id": new_user.id, "username": new_user.username,
-        "display_name": new_user.display_name, "role": new_user.role,
-        "allowed_customer_ids": new_user.allowed_customer_ids or [],
-    }
-
-
-@app.put("/api/users/{user_id}")
-async def update_user(user_id: str, data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Update a user (superadmin only)."""
-    require_superadmin(user)
-    result = await db.execute(select(CentralUser).where(CentralUser.id == user_id))
-    target = result.scalar_one_or_none()
-    if not target:
-        raise HTTPException(404, "User not found")
-
-    if "display_name" in data:
-        target.display_name = data["display_name"]
-    if "role" in data and data["role"] in ("superadmin", "operator"):
-        target.role = data["role"]
-    if "allowed_customer_ids" in data:
-        target.allowed_customer_ids = data["allowed_customer_ids"]
-    if "status" in data and data["status"] in ("active", "disabled"):
-        target.status = data["status"]
-    if "password" in data and data["password"]:
-        target.password_hash = hash_password(data["password"])
-
-    await db.flush()
-    await _log_audit(db, "USER_UPDATED", message=f"User {target.username} updated by {user.username}")
-
-    return {"id": target.id, "username": target.username, "role": target.role, "status": target.status}
-
-
-# ═══════════════════════════════════════════════════════════════
-# SYNC ENDPOINT (Kiosk → Central)
-# ═══════════════════════════════════════════════════════════════
-
-@app.post("/api/licensing/sync")
-async def sync_license(
-    body: dict,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Main sync endpoint. Called by kiosk devices periodically.
-    Authenticated by X-License-Key header.
-
-    Request body:
-      { "install_id": "uuid", "device_name": "optional" }
-
-    Response:
-      { "license_status": "active|grace|expired|blocked|no_license",
-        "binding_status": "bound|unbound",
-        "expiry": "ISO datetime or null",
-        "server_timestamp": "ISO datetime",
-        "plan_type": "standard|premium|test",
-        "customer_name": "..." }
-    """
-    api_key = request.headers.get("X-License-Key")
-    if not api_key:
-        raise HTTPException(401, "Missing X-License-Key header")
-
-    result = await db.execute(
-        select(CentralDevice).where(CentralDevice.api_key == api_key)
-    )
-    device = result.scalar_one_or_none()
-    if not device:
-        raise HTTPException(403, "Invalid API key")
-    if device.status == "blocked":
-        raise HTTPException(403, "Device is blocked")
-
-    now = _utcnow()
-    install_id = body.get("install_id")
-    device_name = body.get("device_name")
-
-    # Update device tracking
-    if install_id and not device.install_id:
-        device.install_id = install_id
-        device.binding_status = "bound"
-        logger.info(f"[SYNC] Device {device.id} bound to install_id={install_id}")
-    elif install_id and device.install_id == install_id:
-        device.binding_status = "bound"
-    elif install_id and device.install_id != install_id:
-        device.binding_status = "mismatch"
-        logger.warning(f"[SYNC] Device {device.id}: install_id mismatch expected={device.install_id} got={install_id}")
-
-    if device_name:
-        device.device_name = device_name
-    device.last_sync_at = now
-    device.last_sync_ip = request.client.host if request.client else None
-    device.sync_count = (device.sync_count or 0) + 1
-    await db.flush()
-
-    # Resolve license chain: device → location → customer → license
-    location = None
-    customer = None
-    if device.location_id:
-        res = await db.execute(select(CentralLocation).where(CentralLocation.id == device.location_id))
-        location = res.scalar_one_or_none()
-
-    if location and location.customer_id:
-        res = await db.execute(select(CentralCustomer).where(CentralCustomer.id == location.customer_id))
-        customer = res.scalar_one_or_none()
-
-    if not customer:
-        await _log_audit(db, "SYNC_NO_LICENSE", device_id=device.id, install_id=device.install_id,
-                         message="No customer found in chain")
-        return {
-            "license_status": "no_license",
-            "binding_status": device.binding_status,
-            "expiry": None,
-            "server_timestamp": now.isoformat(),
-            "plan_type": None,
-            "customer_name": None,
-        }
-
-    if customer.status == CustomerStatus.BLOCKED.value:
-        await _log_audit(db, "SYNC_BLOCKED", device_id=device.id, install_id=device.install_id,
-                         message=f"Customer {customer.name} is blocked")
-        return {
-            "license_status": "blocked",
-            "binding_status": device.binding_status,
-            "expiry": None,
-            "server_timestamp": now.isoformat(),
-            "plan_type": None,
-            "customer_name": customer.name,
-        }
-
-    # Find best license for this customer/location
-    conditions = [CentralLicense.customer_id == customer.id]
-    if location:
-        conditions.append(
-            (CentralLicense.location_id == location.id) | (CentralLicense.location_id.is_(None))
-        )
-    res = await db.execute(select(CentralLicense).where(and_(*conditions)))
-    licenses = res.scalars().all()
-
-    if not licenses:
-        await _log_audit(db, "SYNC_NO_LICENSE", device_id=device.id, install_id=device.install_id,
-                         message=f"No licenses for customer {customer.name}")
-        return {
-            "license_status": "no_license",
-            "binding_status": device.binding_status,
-            "expiry": None,
-            "server_timestamp": now.isoformat(),
-            "plan_type": None,
-            "customer_name": customer.name,
-        }
-
-    # Find best active license
-    best_lic = None
-    best_status = None
-    best_priority = -1
-    priority_map = {
-        LicenseStatus.ACTIVE.value: 5,
-        LicenseStatus.TEST.value: 4,
-        LicenseStatus.GRACE.value: 3,
-        LicenseStatus.EXPIRED.value: 1,
-        LicenseStatus.BLOCKED.value: 0,
-    }
-
-    for lic in licenses:
-        effective = _compute_status(lic, now)
-        p = priority_map.get(effective, 0)
-        if p > best_priority:
-            best_priority = p
-            best_lic = lic
-            best_status = effective
-
-    if not best_lic:
-        await _log_audit(db, "SYNC_NO_LICENSE", device_id=device.id, install_id=device.install_id,
-                         message="No valid license found")
-        return {
-            "license_status": "no_license",
-            "binding_status": device.binding_status,
-            "expiry": None,
-            "server_timestamp": now.isoformat(),
-            "plan_type": None,
-            "customer_name": customer.name,
-        }
-
-    expiry = best_lic.ends_at.isoformat() if best_lic.ends_at else None
-    grace_until = best_lic.grace_until.isoformat() if best_lic.grace_until else None
-
-    await _log_audit(
-        db, "SYNC_OK",
-        device_id=device.id, install_id=device.install_id,
-        message=f"status={best_status} plan={best_lic.plan_type} customer={customer.name}",
-    )
-
-    return {
-        "license_status": best_status,
-        "binding_status": device.binding_status,
-        "expiry": expiry,
-        "grace_until": grace_until,
-        "server_timestamp": now.isoformat(),
-        "plan_type": best_lic.plan_type,
-        "customer_name": customer.name,
-        "license_id": best_lic.id,
-        "max_devices": best_lic.max_devices,
-    }
-
-
-def _compute_status(lic, now):
-    if lic.status == LicenseStatus.BLOCKED.value:
-        return LicenseStatus.BLOCKED.value
-    if lic.status == LicenseStatus.TEST.value:
-        if lic.ends_at and _aware(lic.ends_at) < now:
-            return LicenseStatus.EXPIRED.value
-        return LicenseStatus.TEST.value
-    if lic.starts_at and _aware(lic.starts_at) > now:
-        return LicenseStatus.EXPIRED.value
-    if not lic.ends_at:
-        return LicenseStatus.ACTIVE.value
-    ends = _aware(lic.ends_at)
-    if ends > now:
-        return LicenseStatus.ACTIVE.value
-    grace_end = _aware(lic.grace_until) if lic.grace_until else (ends + timedelta(days=lic.grace_days or 0))
-    if now <= grace_end:
-        return LicenseStatus.GRACE.value
-    return LicenseStatus.EXPIRED.value
-
-
-# ═══════════════════════════════════════════════════════════════
-# ADMIN MANAGEMENT ENDPOINTS
+# SERIALIZERS
 # ═══════════════════════════════════════════════════════════════
 
 def _ser_customer(c):
@@ -436,6 +163,441 @@ def _ser_license(lic):
         "grace_until": lic.grace_until.isoformat() if lic.grace_until else None,
     }
 
+def _ser_user(u):
+    return {
+        "id": u.id, "username": u.username, "display_name": u.display_name,
+        "role": u.role, "status": u.status,
+        "allowed_customer_ids": u.allowed_customer_ids or [],
+        "created_by_user_id": u.created_by_user_id,
+        "created_at": u.created_at.isoformat() if u.created_at else None,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUTH ENDPOINTS
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/auth/login")
+async def login(body: dict, db: AsyncSession = Depends(get_db)):
+    username = body.get("username", "")
+    password = body.get("password", "")
+    if not username or not password:
+        raise HTTPException(400, "Username and password required")
+
+    result = await db.execute(select(CentralUser).where(CentralUser.username == username))
+    user = result.scalar_one_or_none()
+    if not user or not verify_password(password, user.password_hash):
+        raise HTTPException(401, "Invalid credentials")
+    if user.status != "active":
+        raise HTTPException(403, "Account disabled")
+
+    token = create_jwt(user.id, user.username, user.role)
+    return {
+        "access_token": token,
+        "user": _ser_user(user),
+    }
+
+
+@app.get("/api/auth/me")
+async def get_me(user: AuthUser = Depends(get_current_user)):
+    return {
+        "id": user.id,
+        "username": user.username,
+        "role": user.role,
+        "is_superadmin": user.is_superadmin,
+        "allowed_customer_ids": user.allowed_customer_ids,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# USERS — RBAC enforced
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/users")
+async def list_users(user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """List users. Superadmin sees all. Installer/Owner see users they created."""
+    require_min_role(user, "owner")
+    stmt = select(CentralUser).order_by(CentralUser.username)
+    if not user.is_superadmin:
+        # Non-superadmins see only users they created + themselves
+        stmt = stmt.where(
+            (CentralUser.created_by_user_id == user.id) | (CentralUser.id == user.id)
+        )
+    result = await db.execute(stmt)
+    return [_ser_user(u) for u in result.scalars().all()]
+
+
+@app.post("/api/users")
+async def create_user(data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Create a user. RBAC: creator can only create roles below their own level."""
+    require_min_role(user, "owner")  # owner+ can create users (limited by can_create_role)
+
+    username = data.get("username", "").strip()
+    password = data.get("password", "").strip()
+    if not username or not password:
+        raise HTTPException(400, "Username and password required")
+    if len(password) < 4:
+        raise HTTPException(400, "Password too short (min 4)")
+
+    existing = await db.execute(select(CentralUser).where(CentralUser.username == username))
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "Username already exists")
+
+    role = data.get("role", "staff")
+    if role not in VALID_ROLES:
+        raise HTTPException(400, f"Invalid role. Valid: {', '.join(sorted(VALID_ROLES))}")
+    if not can_create_role(user, role):
+        raise HTTPException(403, f"You cannot create users with role '{role}'")
+
+    # Scope: new user can only access customers within creator's scope
+    allowed_ids = data.get("allowed_customer_ids", [])
+    if not user.is_superadmin:
+        creator_scope = set(user.allowed_customer_ids or [])
+        requested_scope = set(allowed_ids)
+        if not requested_scope.issubset(creator_scope):
+            raise HTTPException(403, "Cannot assign customers outside your own scope")
+
+    new_user = CentralUser(
+        username=username,
+        password_hash=hash_password(password),
+        display_name=data.get("display_name", username),
+        role=role,
+        allowed_customer_ids=allowed_ids,
+        created_by_user_id=user.id,
+    )
+    db.add(new_user)
+    await db.flush()
+
+    await _log_audit(db, "USER_CREATED", actor=user.username,
+                     message=f"User {username} ({role}) created by {user.username}")
+
+    return _ser_user(new_user)
+
+
+@app.put("/api/users/{user_id}")
+async def update_user(user_id: str, data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Update a user. Superadmin can edit anyone. Others can only edit users they created."""
+    require_min_role(user, "owner")
+
+    result = await db.execute(select(CentralUser).where(CentralUser.id == user_id))
+    target = result.scalar_one_or_none()
+    if not target:
+        raise HTTPException(404, "User not found")
+
+    # Non-superadmin: can only edit users they created
+    if not user.is_superadmin and target.created_by_user_id != user.id:
+        raise HTTPException(403, "You can only edit users you created")
+
+    changes = []
+    if "display_name" in data:
+        target.display_name = data["display_name"]
+        changes.append("display_name")
+    if "role" in data:
+        new_role = data["role"]
+        if new_role not in VALID_ROLES:
+            raise HTTPException(400, f"Invalid role")
+        if not user.is_superadmin and not can_create_role(user, new_role):
+            raise HTTPException(403, f"Cannot assign role '{new_role}'")
+        old_role = target.role
+        target.role = new_role
+        changes.append(f"role: {old_role} -> {new_role}")
+    if "allowed_customer_ids" in data:
+        new_scope = data["allowed_customer_ids"]
+        if not user.is_superadmin:
+            creator_scope = set(user.allowed_customer_ids or [])
+            if not set(new_scope).issubset(creator_scope):
+                raise HTTPException(403, "Cannot assign customers outside your scope")
+        target.allowed_customer_ids = new_scope
+        changes.append("allowed_customer_ids")
+    if "status" in data and data["status"] in ("active", "disabled"):
+        target.status = data["status"]
+        changes.append(f"status: {data['status']}")
+    if "password" in data and data["password"]:
+        target.password_hash = hash_password(data["password"])
+        changes.append("password")
+
+    await db.flush()
+    await _log_audit(db, "USER_UPDATED", actor=user.username,
+                     message=f"User {target.username} updated: {', '.join(changes)}")
+
+    return _ser_user(target)
+
+
+# ═══════════════════════════════════════════════════════════════
+# SCOPE ENDPOINTS — for context switcher
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/scope/customers")
+async def scope_customers(user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Return customers within user's scope (for context switcher)."""
+    stmt = select(CentralCustomer).where(CentralCustomer.status != "blocked").order_by(CentralCustomer.name)
+    stmt = apply_customer_scope(stmt, user, CentralCustomer.id)
+    result = await db.execute(stmt)
+    return [{"id": c.id, "name": c.name, "status": c.status} for c in result.scalars().all()]
+
+
+@app.get("/api/scope/locations")
+async def scope_locations(customer_id: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Return locations within user's scope."""
+    stmt = select(CentralLocation).order_by(CentralLocation.name)
+    if customer_id:
+        if not can_access_customer(user, customer_id):
+            raise HTTPException(403, "Access denied")
+        stmt = stmt.where(CentralLocation.customer_id == customer_id)
+    else:
+        stmt = apply_customer_scope(stmt, user, CentralLocation.customer_id)
+    result = await db.execute(stmt)
+    return [{"id": l.id, "name": l.name, "customer_id": l.customer_id, "status": l.status} for l in result.scalars().all()]
+
+
+@app.get("/api/scope/devices")
+async def scope_devices(location_id: str = None, customer_id: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Return devices within user's scope."""
+    if location_id:
+        if not await can_access_location(user, location_id, db):
+            raise HTTPException(403, "Access denied")
+        stmt = select(CentralDevice).where(CentralDevice.location_id == location_id)
+    elif customer_id:
+        if not can_access_customer(user, customer_id):
+            raise HTTPException(403, "Access denied")
+        loc_ids = await db.execute(select(CentralLocation.id).where(CentralLocation.customer_id == customer_id))
+        ids = [r[0] for r in loc_ids.fetchall()]
+        stmt = select(CentralDevice).where(CentralDevice.location_id.in_(ids)) if ids else select(CentralDevice).where(False)
+    else:
+        if user.is_superadmin:
+            stmt = select(CentralDevice)
+        else:
+            stmt = select(CentralDevice).join(CentralLocation, CentralDevice.location_id == CentralLocation.id)
+            stmt = apply_customer_scope(stmt, user, CentralLocation.customer_id)
+    stmt = stmt.order_by(CentralDevice.device_name)
+    result = await db.execute(stmt)
+    return [{"id": d.id, "device_name": d.device_name, "location_id": d.location_id, "status": d.status} for d in result.scalars().all()]
+
+
+# ═══════════════════════════════════════════════════════════════
+# DASHBOARD — scoped overview
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/dashboard")
+async def dashboard(customer_id: str = None, location_id: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Scoped dashboard stats."""
+    # Build filters
+    cust_filter = []
+    loc_filter = []
+    dev_filter = []
+    lic_filter = []
+
+    if location_id:
+        if not await can_access_location(user, location_id, db):
+            raise HTTPException(403, "Access denied")
+        loc_filter.append(CentralLocation.id == location_id)
+        dev_filter.append(CentralDevice.location_id == location_id)
+    elif customer_id:
+        if not can_access_customer(user, customer_id):
+            raise HTTPException(403, "Access denied")
+        cust_filter.append(CentralCustomer.id == customer_id)
+        loc_filter.append(CentralLocation.customer_id == customer_id)
+        lic_filter.append(CentralLicense.customer_id == customer_id)
+    elif not user.is_superadmin:
+        allowed = user.allowed_customer_ids or []
+        cust_filter.append(CentralCustomer.id.in_(allowed))
+        loc_filter.append(CentralLocation.customer_id.in_(allowed))
+        lic_filter.append(CentralLicense.customer_id.in_(allowed))
+
+    # Counts
+    cust_q = select(func.count(CentralCustomer.id))
+    for f in cust_filter: cust_q = cust_q.where(f)
+    customers = (await db.execute(cust_q)).scalar() or 0
+
+    loc_q = select(func.count(CentralLocation.id))
+    for f in loc_filter: loc_q = loc_q.where(f)
+    locations = (await db.execute(loc_q)).scalar() or 0
+
+    # Devices: need to filter via location join if not filtering by location_id
+    if dev_filter:
+        dev_q = select(func.count(CentralDevice.id))
+        for f in dev_filter: dev_q = dev_q.where(f)
+    elif loc_filter:
+        sub = select(CentralLocation.id)
+        for f in loc_filter: sub = sub.where(f)
+        loc_ids_result = await db.execute(sub)
+        loc_ids = [r[0] for r in loc_ids_result.fetchall()]
+        dev_q = select(func.count(CentralDevice.id)).where(CentralDevice.location_id.in_(loc_ids)) if loc_ids else select(func.count(CentralDevice.id)).where(False)
+    else:
+        dev_q = select(func.count(CentralDevice.id))
+    devices = (await db.execute(dev_q)).scalar() or 0
+
+    lic_q = select(func.count(CentralLicense.id))
+    for f in lic_filter: lic_q = lic_q.where(f)
+    total_lic = (await db.execute(lic_q)).scalar() or 0
+
+    lic_active_q = select(func.count(CentralLicense.id)).where(CentralLicense.status == LicenseStatus.ACTIVE.value)
+    for f in lic_filter: lic_active_q = lic_active_q.where(f)
+    active_lic = (await db.execute(lic_active_q)).scalar() or 0
+
+    # Recent devices for health view
+    if dev_filter:
+        dev_stmt = select(CentralDevice)
+        for f in dev_filter: dev_stmt = dev_stmt.where(f)
+    elif loc_filter:
+        dev_stmt = select(CentralDevice).where(CentralDevice.location_id.in_(loc_ids)) if loc_ids else select(CentralDevice).where(False)
+    else:
+        dev_stmt = select(CentralDevice)
+    dev_stmt = dev_stmt.order_by(CentralDevice.last_sync_at.desc().nullslast()).limit(20)
+    dev_result = await db.execute(dev_stmt)
+    recent_devices = []
+    now = _utcnow()
+    for d in dev_result.scalars().all():
+        online = False
+        if d.last_sync_at:
+            diff = (now - _aware(d.last_sync_at)).total_seconds()
+            online = diff < 600  # 10 min
+        recent_devices.append({
+            "id": d.id, "device_name": d.device_name, "status": d.status,
+            "online": online, "binding_status": d.binding_status,
+            "last_sync_at": d.last_sync_at.isoformat() if d.last_sync_at else None,
+            "sync_count": d.sync_count,
+        })
+
+    return {
+        "customers": customers, "locations": locations, "devices": devices,
+        "licenses_total": total_lic, "licenses_active": active_lic,
+        "recent_devices": recent_devices,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# ROLES INFO
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/roles")
+async def get_roles(user: AuthUser = Depends(get_current_user)):
+    """Return role hierarchy and what the current user can create."""
+    from central_server.auth import ROLE_CAN_CREATE
+    return {
+        "current_role": user.role,
+        "hierarchy": ROLE_HIERARCHY,
+        "can_create": sorted(ROLE_CAN_CREATE.get(user.role, set())),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# SYNC ENDPOINT (Kiosk → Central)
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/licensing/sync")
+async def sync_license(body: dict, request: Request, db: AsyncSession = Depends(get_db)):
+    """Main sync endpoint. Called by kiosk devices periodically."""
+    api_key = request.headers.get("X-License-Key")
+    if not api_key:
+        raise HTTPException(401, "Missing X-License-Key header")
+
+    result = await db.execute(select(CentralDevice).where(CentralDevice.api_key == api_key))
+    device = result.scalar_one_or_none()
+    if not device:
+        raise HTTPException(403, "Invalid API key")
+    if device.status == "blocked":
+        raise HTTPException(403, "Device is blocked")
+
+    now = _utcnow()
+    install_id = body.get("install_id")
+    device_name = body.get("device_name")
+
+    if install_id and not device.install_id:
+        device.install_id = install_id
+        device.binding_status = "bound"
+    elif install_id and device.install_id == install_id:
+        device.binding_status = "bound"
+    elif install_id and device.install_id != install_id:
+        device.binding_status = "mismatch"
+
+    if device_name:
+        device.device_name = device_name
+    device.last_sync_at = now
+    device.last_sync_ip = request.client.host if request.client else None
+    device.sync_count = (device.sync_count or 0) + 1
+    await db.flush()
+
+    # Resolve license chain
+    location = None
+    customer = None
+    if device.location_id:
+        res = await db.execute(select(CentralLocation).where(CentralLocation.id == device.location_id))
+        location = res.scalar_one_or_none()
+    if location and location.customer_id:
+        res = await db.execute(select(CentralCustomer).where(CentralCustomer.id == location.customer_id))
+        customer = res.scalar_one_or_none()
+
+    if not customer:
+        return {"license_status": "no_license", "binding_status": device.binding_status,
+                "expiry": None, "server_timestamp": now.isoformat(), "plan_type": None, "customer_name": None}
+
+    if customer.status == CustomerStatus.BLOCKED.value:
+        return {"license_status": "blocked", "binding_status": device.binding_status,
+                "expiry": None, "server_timestamp": now.isoformat(), "plan_type": None, "customer_name": customer.name}
+
+    conditions = [CentralLicense.customer_id == customer.id]
+    if location:
+        conditions.append((CentralLicense.location_id == location.id) | (CentralLicense.location_id.is_(None)))
+    res = await db.execute(select(CentralLicense).where(and_(*conditions)))
+    licenses = res.scalars().all()
+
+    if not licenses:
+        return {"license_status": "no_license", "binding_status": device.binding_status,
+                "expiry": None, "server_timestamp": now.isoformat(), "plan_type": None, "customer_name": customer.name}
+
+    best_lic, best_status = _find_best_license(licenses, now)
+    if not best_lic:
+        return {"license_status": "no_license", "binding_status": device.binding_status,
+                "expiry": None, "server_timestamp": now.isoformat(), "plan_type": None, "customer_name": customer.name}
+
+    return {
+        "license_status": best_status, "binding_status": device.binding_status,
+        "expiry": best_lic.ends_at.isoformat() if best_lic.ends_at else None,
+        "grace_until": best_lic.grace_until.isoformat() if best_lic.grace_until else None,
+        "server_timestamp": now.isoformat(), "plan_type": best_lic.plan_type,
+        "customer_name": customer.name, "license_id": best_lic.id, "max_devices": best_lic.max_devices,
+    }
+
+
+def _compute_status(lic, now):
+    if lic.status == LicenseStatus.BLOCKED.value:
+        return LicenseStatus.BLOCKED.value
+    if lic.status == LicenseStatus.TEST.value:
+        if lic.ends_at and _aware(lic.ends_at) < now:
+            return LicenseStatus.EXPIRED.value
+        return LicenseStatus.TEST.value
+    if lic.starts_at and _aware(lic.starts_at) > now:
+        return LicenseStatus.EXPIRED.value
+    if not lic.ends_at:
+        return LicenseStatus.ACTIVE.value
+    ends = _aware(lic.ends_at)
+    if ends > now:
+        return LicenseStatus.ACTIVE.value
+    grace_end = _aware(lic.grace_until) if lic.grace_until else (ends + timedelta(days=lic.grace_days or 0))
+    if now <= grace_end:
+        return LicenseStatus.GRACE.value
+    return LicenseStatus.EXPIRED.value
+
+
+def _find_best_license(licenses, now):
+    priority_map = {"active": 5, "test": 4, "grace": 3, "expired": 1, "blocked": 0}
+    best_lic = None
+    best_status = None
+    best_p = -1
+    for lic in licenses:
+        s = _compute_status(lic, now)
+        p = priority_map.get(s, 0)
+        if p > best_p:
+            best_p = p
+            best_lic = lic
+            best_status = s
+    return best_lic, best_status
+
+
+# ═══════════════════════════════════════════════════════════════
+# CUSTOMERS — installer+ can create, all scoped roles can read
+# ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/licensing/customers")
 async def list_customers(user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -447,19 +609,53 @@ async def list_customers(user: AuthUser = Depends(get_current_user), db: AsyncSe
 
 @app.post("/api/licensing/customers")
 async def create_customer(data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    require_superadmin(user)
+    require_installer_or_above(user)
     c = CentralCustomer(name=data["name"], contact_email=data.get("contact_email"))
     db.add(c)
     await db.flush()
+    # Auto-add to creator's scope if not superadmin
+    if not user.is_superadmin:
+        u_result = await db.execute(select(CentralUser).where(CentralUser.id == user.id))
+        u = u_result.scalar_one_or_none()
+        if u:
+            ids = list(u.allowed_customer_ids or [])
+            ids.append(c.id)
+            u.allowed_customer_ids = ids
+            await db.flush()
+    await _log_audit(db, "CUSTOMER_CREATED", actor=user.username, message=f"Customer '{c.name}' created")
     return _ser_customer(c)
 
+
+@app.put("/api/licensing/customers/{customer_id}")
+async def update_customer(customer_id: str, data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    require_installer_or_above(user)
+    if not can_access_customer(user, customer_id):
+        raise HTTPException(403, "Access denied")
+    result = await db.execute(select(CentralCustomer).where(CentralCustomer.id == customer_id))
+    c = result.scalar_one_or_none()
+    if not c:
+        raise HTTPException(404, "Customer not found")
+    old_status = c.status
+    for field in ("name", "contact_email", "contact_phone", "notes", "status"):
+        if field in data:
+            setattr(c, field, data[field])
+    await db.flush()
+    if "status" in data and data["status"] != old_status:
+        await _log_audit(db, "CUSTOMER_STATUS_CHANGED", actor=user.username,
+                         message=f"Customer '{c.name}' status: {old_status} -> {data['status']}")
+    return _ser_customer(c)
+
+
+# ═══════════════════════════════════════════════════════════════
+# LOCATIONS — installer+ can create within scope
+# ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/licensing/locations")
 async def list_locations(customer_id: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     stmt = select(CentralLocation).order_by(CentralLocation.name)
     if customer_id:
         if not can_access_customer(user, customer_id):
-            raise HTTPException(403, "Access denied to this customer")
+            raise HTTPException(403, "Access denied")
         stmt = stmt.where(CentralLocation.customer_id == customer_id)
     else:
         stmt = apply_customer_scope(stmt, user, CentralLocation.customer_id)
@@ -469,21 +665,50 @@ async def list_locations(customer_id: str = None, user: AuthUser = Depends(get_c
 
 @app.post("/api/licensing/locations")
 async def create_location(data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    require_superadmin(user)
+    require_installer_or_above(user)
+    if not can_access_customer(user, data["customer_id"]):
+        raise HTTPException(403, "Access denied to this customer")
     loc = CentralLocation(customer_id=data["customer_id"], name=data["name"], address=data.get("address"))
     db.add(loc)
     await db.flush()
+    await _log_audit(db, "LOCATION_CREATED", actor=user.username, message=f"Location '{loc.name}' created")
     return _ser_location(loc)
 
 
+@app.put("/api/licensing/locations/{location_id}")
+async def update_location(location_id: str, data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    require_installer_or_above(user)
+    if not await can_access_location(user, location_id, db):
+        raise HTTPException(403, "Access denied")
+    result = await db.execute(select(CentralLocation).where(CentralLocation.id == location_id))
+    loc = result.scalar_one_or_none()
+    if not loc:
+        raise HTTPException(404, "Location not found")
+    for field in ("name", "address", "status"):
+        if field in data:
+            setattr(loc, field, data[field])
+    await db.flush()
+    await _log_audit(db, "LOCATION_UPDATED", actor=user.username, message=f"Location '{loc.name}' updated")
+    return _ser_location(loc)
+
+
+# ═══════════════════════════════════════════════════════════════
+# DEVICES — installer+ can create, all scoped can read
+# ═══════════════════════════════════════════════════════════════
+
 @app.get("/api/licensing/devices")
-async def list_devices(location_id: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def list_devices(location_id: str = None, customer_id: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     if location_id:
         if not await can_access_location(user, location_id, db):
-            raise HTTPException(403, "Access denied to this location")
+            raise HTTPException(403, "Access denied")
         stmt = select(CentralDevice).where(CentralDevice.location_id == location_id)
+    elif customer_id:
+        if not can_access_customer(user, customer_id):
+            raise HTTPException(403, "Access denied")
+        loc_ids_r = await db.execute(select(CentralLocation.id).where(CentralLocation.customer_id == customer_id))
+        loc_ids = [r[0] for r in loc_ids_r.fetchall()]
+        stmt = select(CentralDevice).where(CentralDevice.location_id.in_(loc_ids)) if loc_ids else select(CentralDevice).where(False)
     else:
-        # Join with locations to filter by customer scope
         if user.is_superadmin:
             stmt = select(CentralDevice)
         else:
@@ -496,26 +721,49 @@ async def list_devices(location_id: str = None, user: AuthUser = Depends(get_cur
 
 @app.post("/api/licensing/devices")
 async def create_device(data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    require_superadmin(user)
+    require_installer_or_above(user)
+    if not await can_access_location(user, data["location_id"], db):
+        raise HTTPException(403, "Access denied to this location")
     api_key = data.get("api_key") or f"dk_{secrets.token_urlsafe(32)}"
-    d = CentralDevice(
-        location_id=data["location_id"],
-        device_name=data.get("device_name"),
-        api_key=api_key,
-        install_id=data.get("install_id"),
-    )
+    d = CentralDevice(location_id=data["location_id"], device_name=data.get("device_name"),
+                       api_key=api_key, install_id=data.get("install_id"))
     db.add(d)
     await db.flush()
-    logger.info(f"[ADMIN] Device registered: {d.device_name} api_key={api_key[:12]}...")
+    await _log_audit(db, "DEVICE_CREATED", device_id=d.id, actor=user.username, message=f"Device '{d.device_name}' created")
     return _ser_device(d)
 
+
+@app.put("/api/licensing/devices/{device_id}")
+async def update_device(device_id: str, data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Update device. installer+ within scope."""
+    require_installer_or_above(user)
+    result = await db.execute(select(CentralDevice).where(CentralDevice.id == device_id))
+    d = result.scalar_one_or_none()
+    if not d:
+        raise HTTPException(404, "Device not found")
+    if not await can_access_location(user, d.location_id, db):
+        raise HTTPException(403, "Access denied")
+    old_status = d.status
+    for field in ("device_name", "status"):
+        if field in data:
+            setattr(d, field, data[field])
+    await db.flush()
+    if "status" in data and data["status"] != old_status:
+        await _log_audit(db, "DEVICE_STATUS_CHANGED", device_id=d.id, actor=user.username,
+                         message=f"Device '{d.device_name}' status: {old_status} -> {data['status']}")
+    return _ser_device(d)
+
+
+# ═══════════════════════════════════════════════════════════════
+# LICENSES — superadmin + installer can manage
+# ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/licensing/licenses")
 async def list_licenses(customer_id: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     stmt = select(CentralLicense).order_by(CentralLicense.created_at.desc())
     if customer_id:
         if not can_access_customer(user, customer_id):
-            raise HTTPException(403, "Access denied to this customer")
+            raise HTTPException(403, "Access denied")
         stmt = stmt.where(CentralLicense.customer_id == customer_id)
     else:
         stmt = apply_customer_scope(stmt, user, CentralLicense.customer_id)
@@ -525,30 +773,57 @@ async def list_licenses(customer_id: str = None, user: AuthUser = Depends(get_cu
 
 @app.post("/api/licensing/licenses")
 async def create_license(data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    require_superadmin(user)
+    require_installer_or_above(user)
+    if not can_access_customer(user, data["customer_id"]):
+        raise HTTPException(403, "Access denied to this customer")
     ends_at = None
     grace_until = None
     if data.get("ends_at"):
         ends_at = datetime.fromisoformat(data["ends_at"].replace("Z", "+00:00"))
         grace_days = data.get("grace_days", 7)
         grace_until = ends_at + timedelta(days=grace_days)
-
     lic = CentralLicense(
-        customer_id=data["customer_id"],
-        location_id=data.get("location_id"),
-        plan_type=data.get("plan_type", "standard"),
-        max_devices=data.get("max_devices", 1),
+        customer_id=data["customer_id"], location_id=data.get("location_id"),
+        plan_type=data.get("plan_type", "standard"), max_devices=data.get("max_devices", 1),
         status=data.get("status", LicenseStatus.ACTIVE.value),
         starts_at=datetime.fromisoformat(data["starts_at"].replace("Z", "+00:00")) if data.get("starts_at") else _utcnow(),
-        ends_at=ends_at,
-        grace_days=data.get("grace_days", 7),
-        grace_until=grace_until,
-        notes=data.get("notes"),
+        ends_at=ends_at, grace_days=data.get("grace_days", 7), grace_until=grace_until, notes=data.get("notes"),
     )
     db.add(lic)
     await db.flush()
+    await _log_audit(db, "LICENSE_CREATED", license_id=lic.id, actor=user.username,
+                     message=f"License {lic.plan_type} created for customer {data['customer_id']}")
     return _ser_license(lic)
 
+
+@app.put("/api/licensing/licenses/{license_id}")
+async def update_license(license_id: str, data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    require_installer_or_above(user)
+    result = await db.execute(select(CentralLicense).where(CentralLicense.id == license_id))
+    lic = result.scalar_one_or_none()
+    if not lic:
+        raise HTTPException(404, "License not found")
+    if not can_access_customer(user, lic.customer_id):
+        raise HTTPException(403, "Access denied")
+    for field in ("plan_type", "max_devices", "status", "notes", "grace_days"):
+        if field in data:
+            setattr(lic, field, data[field])
+    if "ends_at" in data:
+        if data["ends_at"]:
+            lic.ends_at = datetime.fromisoformat(data["ends_at"].replace("Z", "+00:00"))
+            lic.grace_until = lic.ends_at + timedelta(days=lic.grace_days or 7)
+        else:
+            lic.ends_at = None
+            lic.grace_until = None
+    await db.flush()
+    await _log_audit(db, "LICENSE_UPDATED", license_id=lic.id, actor=user.username,
+                     message=f"License updated: status={lic.status}")
+    return _ser_license(lic)
+
+
+# ═══════════════════════════════════════════════════════════════
+# AUDIT LOG — scoped
+# ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/licensing/audit-log")
 async def get_audit_log(limit: int = 50, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
@@ -556,21 +831,13 @@ async def get_audit_log(limit: int = 50, user: AuthUser = Depends(get_current_us
     result = await db.execute(stmt)
     entries = result.scalars().all()
 
-    # For operators: filter audit entries by their device/license scope
     if not user.is_superadmin:
-        # Get allowed device IDs via location -> customer chain
         allowed_cids = set(user.allowed_customer_ids or [])
-        loc_result = await db.execute(
-            select(CentralLocation.id).where(CentralLocation.customer_id.in_(allowed_cids))
-        )
+        loc_result = await db.execute(select(CentralLocation.id).where(CentralLocation.customer_id.in_(allowed_cids)))
         allowed_lids = {r[0] for r in loc_result.fetchall()}
-        dev_result = await db.execute(
-            select(CentralDevice.id).where(CentralDevice.location_id.in_(allowed_lids))
-        )
+        dev_result = await db.execute(select(CentralDevice.id).where(CentralDevice.location_id.in_(allowed_lids)))
         allowed_dids = {r[0] for r in dev_result.fetchall()}
-        lic_result = await db.execute(
-            select(CentralLicense.id).where(CentralLicense.customer_id.in_(allowed_cids))
-        )
+        lic_result = await db.execute(select(CentralLicense.id).where(CentralLicense.customer_id.in_(allowed_cids)))
         allowed_licids = {r[0] for r in lic_result.fetchall()}
 
         entries = [
@@ -583,7 +850,7 @@ async def get_audit_log(limit: int = 50, user: AuthUser = Depends(get_current_us
         {
             "id": e.id, "timestamp": e.timestamp.isoformat() if e.timestamp else None,
             "action": e.action, "device_id": e.device_id, "install_id": e.install_id,
-            "message": e.message,
+            "message": e.message, "actor": e.actor,
         }
         for e in entries
     ]
@@ -591,41 +858,31 @@ async def get_audit_log(limit: int = 50, user: AuthUser = Depends(get_current_us
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "service": "central-license-server", "version": "3.5.2", "timestamp": _utcnow().isoformat()}
+    return {"status": "ok", "service": "central-license-server", "version": "3.6.0", "timestamp": _utcnow().isoformat()}
 
 
 # ═══════════════════════════════════════════════════════════════
-# REGISTRATION TOKEN HELPERS (v3.5.1)
+# REGISTRATION TOKENS — installer+ can manage
 # ═══════════════════════════════════════════════════════════════
 
 def _hash_token(raw_token: str) -> str:
-    """SHA-256 hash of a registration token. Never store raw token."""
     return hashlib.sha256(raw_token.encode()).hexdigest()
 
-
 def _generate_reg_token() -> tuple:
-    """Generate a cryptographically secure registration token.
-    Returns (raw_token, token_hash, token_preview)."""
     raw = f"drt_{secrets.token_urlsafe(32)}"
     hashed = _hash_token(raw)
     preview = f"{raw[:8]}...{raw[-4:]}"
     return raw, hashed, preview
 
-
 def _ser_reg_token(t: RegistrationToken) -> dict:
     return {
-        "id": t.id,
-        "token_preview": t.token_preview,
-        "customer_id": t.customer_id,
-        "location_id": t.location_id,
-        "license_id": t.license_id,
-        "device_name_template": t.device_name_template,
+        "id": t.id, "token_preview": t.token_preview,
+        "customer_id": t.customer_id, "location_id": t.location_id,
+        "license_id": t.license_id, "device_name_template": t.device_name_template,
         "expires_at": t.expires_at.isoformat() if t.expires_at else None,
         "used_at": t.used_at.isoformat() if t.used_at else None,
-        "used_by_install_id": t.used_by_install_id,
-        "used_by_device_id": t.used_by_device_id,
-        "created_by": t.created_by,
-        "note": t.note,
+        "used_by_install_id": t.used_by_install_id, "used_by_device_id": t.used_by_device_id,
+        "created_by": t.created_by, "note": t.note,
         "is_revoked": t.is_revoked,
         "revoked_at": t.revoked_at.isoformat() if t.revoked_at else None,
         "revoked_by": t.revoked_by,
@@ -633,104 +890,66 @@ def _ser_reg_token(t: RegistrationToken) -> dict:
         "status": _token_status(t),
     }
 
-
 def _token_status(t: RegistrationToken) -> str:
-    """Compute effective token status."""
-    if t.is_revoked:
-        return "revoked"
-    if t.used_at:
-        return "used"
+    if t.is_revoked: return "revoked"
+    if t.used_at: return "used"
     now = _utcnow()
-    if t.expires_at and _aware(t.expires_at) < now:
-        return "expired"
+    if t.expires_at and _aware(t.expires_at) < now: return "expired"
     return "active"
 
 
-# ═══════════════════════════════════════════════════════════════
-# REGISTRATION TOKEN CRUD (Admin)
-# ═══════════════════════════════════════════════════════════════
-
 @app.post("/api/registration-tokens")
-async def create_registration_token(
-    data: dict,
-    user: AuthUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a one-time registration token (superadmin only)."""
-    require_superadmin(user)
+async def create_registration_token(data: dict, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    require_installer_or_above(user)
+    if data.get("customer_id") and not can_access_customer(user, data["customer_id"]):
+        raise HTTPException(403, "Access denied to this customer")
     raw_token, token_hash, preview = _generate_reg_token()
     expires_in = int(data.get("expires_in_hours", 72))
-    expires_at = _utcnow() + timedelta(hours=expires_in)
-
     token = RegistrationToken(
-        token_hash=token_hash,
-        token_preview=preview,
-        customer_id=data.get("customer_id"),
-        location_id=data.get("location_id"),
-        license_id=data.get("license_id"),
-        device_name_template=data.get("device_name_template"),
-        expires_at=expires_at,
-        created_by=user.username,
-        note=data.get("note"),
+        token_hash=token_hash, token_preview=preview,
+        customer_id=data.get("customer_id"), location_id=data.get("location_id"),
+        license_id=data.get("license_id"), device_name_template=data.get("device_name_template"),
+        expires_at=_utcnow() + timedelta(hours=expires_in), created_by=user.username, note=data.get("note"),
     )
     db.add(token)
     await db.flush()
-
-    await _log_audit(db, "REG_TOKEN_CREATED", message=f"Token {preview} created by {user.username}, expires {expires_at.isoformat()}")
-    logger.info(f"[REG] Token created by {user.username}: {preview}")
-
+    await _log_audit(db, "REG_TOKEN_CREATED", actor=user.username, message=f"Token {preview} created, expires in {expires_in}h")
     result = _ser_reg_token(token)
     result["raw_token"] = raw_token
     return result
 
 
 @app.get("/api/registration-tokens")
-async def list_registration_tokens(
-    status: str = None,
-    user: AuthUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """List registration tokens. Operators see only tokens for their customers."""
+async def list_registration_tokens(status: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     stmt = select(RegistrationToken).order_by(RegistrationToken.created_at.desc())
     if not user.is_superadmin:
         allowed = user.allowed_customer_ids or []
         stmt = stmt.where(RegistrationToken.customer_id.in_(allowed))
     result = await db.execute(stmt)
-    tokens = result.scalars().all()
-
-    serialized = [_ser_reg_token(t) for t in tokens]
+    tokens = [_ser_reg_token(t) for t in result.scalars().all()]
     if status:
-        serialized = [t for t in serialized if t["status"] == status]
-    return serialized
+        tokens = [t for t in tokens if t["status"] == status]
+    return tokens
 
 
 @app.post("/api/registration-tokens/{token_id}/revoke")
-async def revoke_registration_token(
-    token_id: str,
-    data: dict = None,
-    user: AuthUser = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Revoke a registration token (superadmin only)."""
-    require_superadmin(user)
-    result = await db.execute(
-        select(RegistrationToken).where(RegistrationToken.id == token_id)
-    )
+async def revoke_registration_token(token_id: str, data: dict = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    require_installer_or_above(user)
+    result = await db.execute(select(RegistrationToken).where(RegistrationToken.id == token_id))
     token = result.scalar_one_or_none()
     if not token:
         raise HTTPException(404, "Token not found")
+    if token.customer_id and not can_access_customer(user, token.customer_id):
+        raise HTTPException(403, "Access denied")
     if token.is_revoked:
         raise HTTPException(400, "Token already revoked")
     if token.used_at:
-        raise HTTPException(400, "Token already used — cannot revoke")
-
+        raise HTTPException(400, "Token already used")
     token.is_revoked = True
     token.revoked_at = _utcnow()
     token.revoked_by = user.username
     await db.flush()
-
-    await _log_audit(db, "REG_TOKEN_REVOKED", message=f"Token {token.token_preview} revoked by {user.username}")
-    logger.info(f"[REG] Token revoked by {user.username}: {token.token_preview}")
+    await _log_audit(db, "REG_TOKEN_REVOKED", actor=user.username, message=f"Token {token.token_preview} revoked")
     return _ser_reg_token(token)
 
 
@@ -739,26 +958,8 @@ async def revoke_registration_token(
 # ═══════════════════════════════════════════════════════════════
 
 @app.post("/api/register-device")
-async def register_device(
-    body: dict,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-):
-    """Register a new device using a one-time registration token.
-
-    Body: {
-        "token": "drt_...",           (required — raw token)
-        "install_id": "...",          (required)
-        "device_name": "...",         (optional)
-        "hostname": "...",            (optional)
-        "app_version": "...",         (optional)
-    }
-
-    Security:
-    - Token must be valid, unused, not expired, not revoked
-    - install_id must not already be bound to another device
-    - No silent overwrites — hard errors on conflicts
-    """
+async def register_device(body: dict, request: Request, db: AsyncSession = Depends(get_db)):
+    """Register a new device using a one-time registration token. Public endpoint."""
     raw_token = body.get("token")
     install_id = body.get("install_id")
     device_name = body.get("device_name")
@@ -768,86 +969,52 @@ async def register_device(
     if not install_id:
         raise HTTPException(400, "Missing install_id")
 
-    # Step 1: Find and validate token
     token_hash = _hash_token(raw_token)
-    result = await db.execute(
-        select(RegistrationToken).where(RegistrationToken.token_hash == token_hash)
-    )
+    result = await db.execute(select(RegistrationToken).where(RegistrationToken.token_hash == token_hash))
     token = result.scalar_one_or_none()
 
     if not token:
-        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id,
-                         message="Invalid registration token")
+        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id, message="Invalid token")
         raise HTTPException(403, "Invalid registration token")
-
     if token.is_revoked:
-        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id,
-                         message=f"Token {token.token_preview} is revoked")
-        raise HTTPException(403, "Registration token has been revoked")
-
+        raise HTTPException(403, "Token has been revoked")
     if token.used_at:
-        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id,
-                         message=f"Token {token.token_preview} already used")
-        raise HTTPException(403, "Registration token has already been used")
-
+        raise HTTPException(403, "Token already used")
     now = _utcnow()
     if token.expires_at and _aware(token.expires_at) < now:
-        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id,
-                         message=f"Token {token.token_preview} expired at {token.expires_at.isoformat()}")
-        raise HTTPException(403, "Registration token has expired")
+        raise HTTPException(403, "Token expired")
 
-    # Step 2: Check for install_id conflicts
-    existing = await db.execute(
-        select(CentralDevice).where(CentralDevice.install_id == install_id)
-    )
-    existing_device = existing.scalar_one_or_none()
-    if existing_device:
-        await _log_audit(db, "DEVICE_REGISTERED_BIND_CONFLICT", install_id=install_id,
-                         device_id=existing_device.id,
-                         message=f"install_id {install_id} already bound to device {existing_device.id}")
-        raise HTTPException(409, f"install_id already bound to device {existing_device.id}. Rebind requires Superadmin.")
+    existing = await db.execute(select(CentralDevice).where(CentralDevice.install_id == install_id))
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, "install_id already registered")
 
-    # Step 3: Resolve customer/location from token
     location_id = token.location_id
     customer_id = token.customer_id
-
     if location_id and not customer_id:
-        loc_result = await db.execute(select(CentralLocation).where(CentralLocation.id == location_id))
-        loc = loc_result.scalar_one_or_none()
-        if loc:
-            customer_id = loc.customer_id
-
+        loc_r = await db.execute(select(CentralLocation).where(CentralLocation.id == location_id))
+        loc = loc_r.scalar_one_or_none()
+        if loc: customer_id = loc.customer_id
     if not location_id and not customer_id:
-        await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id,
-                         message="Token has no customer/location assignment")
-        raise HTTPException(400, "Token has no customer or location assigned — cannot register device")
+        raise HTTPException(400, "Token has no customer/location")
 
-    # Step 4: Create device with API key + bind install_id
     api_key = f"dk_{secrets.token_urlsafe(32)}"
     effective_name = device_name or token.device_name_template or f"Kiosk-{install_id[:8]}"
 
     new_device = CentralDevice(
-        location_id=location_id,
-        install_id=install_id,
-        api_key=api_key,
-        device_name=effective_name,
-        status="active",
-        binding_status="bound",
-        last_sync_at=now,
-        last_sync_ip=request.client.host if request.client else None,
-        sync_count=0,
-        registered_via_token_id=token.id,
+        location_id=location_id, install_id=install_id, api_key=api_key,
+        device_name=effective_name, status="active", binding_status="bound",
+        last_sync_at=now, last_sync_ip=request.client.host if request.client else None,
+        sync_count=0, registered_via_token_id=token.id,
     )
     db.add(new_device)
     await db.flush()
 
-    # Step 5: Mark token as used
     token.used_at = now
     token.used_by_install_id = install_id
     token.used_by_device_id = new_device.id
     await db.flush()
 
-    # Step 6: Resolve license info for response
+    # Resolve license
     license_status = "no_license"
     license_id = token.license_id
     plan_type = None
@@ -855,80 +1022,53 @@ async def register_device(
     customer_name = None
 
     if customer_id:
-        cust_result = await db.execute(select(CentralCustomer).where(CentralCustomer.id == customer_id))
-        cust = cust_result.scalar_one_or_none()
-        if cust:
-            customer_name = cust.name
+        cust_r = await db.execute(select(CentralCustomer).where(CentralCustomer.id == customer_id))
+        cust = cust_r.scalar_one_or_none()
+        if cust: customer_name = cust.name
 
     if license_id:
-        lic_result = await db.execute(select(CentralLicense).where(CentralLicense.id == license_id))
-        lic = lic_result.scalar_one_or_none()
+        lic_r = await db.execute(select(CentralLicense).where(CentralLicense.id == license_id))
+        lic = lic_r.scalar_one_or_none()
         if lic:
             license_status = _compute_status(lic, now)
             plan_type = lic.plan_type
             expiry = lic.ends_at.isoformat() if lic.ends_at else None
     elif customer_id:
-        # Find best license for customer/location
         conditions = [CentralLicense.customer_id == customer_id]
         if location_id:
-            conditions.append(
-                (CentralLicense.location_id == location_id) | (CentralLicense.location_id.is_(None))
-            )
-        lic_result = await db.execute(select(CentralLicense).where(and_(*conditions)))
-        lics = lic_result.scalars().all()
+            conditions.append((CentralLicense.location_id == location_id) | (CentralLicense.location_id.is_(None)))
+        lic_r = await db.execute(select(CentralLicense).where(and_(*conditions)))
+        lics = lic_r.scalars().all()
         if lics:
-            best = max(lics, key=lambda x: {"active": 5, "test": 4, "grace": 3, "expired": 1, "blocked": 0}.get(_compute_status(x, now), 0))
-            license_status = _compute_status(best, now)
-            plan_type = best.plan_type
-            license_id = best.id
-            expiry = best.ends_at.isoformat() if best.ends_at else None
+            best, best_s = _find_best_license(lics, now)
+            if best:
+                license_status = best_s
+                plan_type = best.plan_type
+                license_id = best.id
+                expiry = best.ends_at.isoformat() if best.ends_at else None
 
-    await _log_audit(
-        db, "DEVICE_REGISTERED",
-        device_id=new_device.id,
-        install_id=install_id,
-        license_id=license_id,
-        message=f"Device {effective_name} registered via token {token.token_preview}. "
-                f"Customer={customer_name} License={license_status}",
-    )
-    await _log_audit(db, "REG_TOKEN_USED", message=f"Token {token.token_preview} used by {install_id}")
-
-    logger.info(f"[REG] Device registered: {effective_name} install_id={install_id[:12]}... api_key={api_key[:12]}...")
+    await _log_audit(db, "DEVICE_REGISTERED", device_id=new_device.id, install_id=install_id,
+                     license_id=license_id, actor="registration",
+                     message=f"Device {effective_name} registered via token {token.token_preview}")
 
     return {
-        "success": True,
-        "device_id": new_device.id,
-        "device_name": effective_name,
-        "api_key": api_key,
-        "customer_id": customer_id,
-        "customer_name": customer_name,
-        "location_id": location_id,
-        "license_id": license_id,
-        "license_status": license_status,
-        "plan_type": plan_type,
-        "expiry": expiry,
-        "binding_status": "bound",
+        "success": True, "device_id": new_device.id, "device_name": effective_name,
+        "api_key": api_key, "customer_id": customer_id, "customer_name": customer_name,
+        "location_id": location_id, "license_id": license_id, "license_status": license_status,
+        "plan_type": plan_type, "expiry": expiry, "binding_status": "bound",
         "server_timestamp": now.isoformat(),
     }
 
 
-async def _log_audit(
-    db: AsyncSession,
-    action: str,
-    device_id: str = None,
-    install_id: str = None,
-    license_id: str = None,
-    message: str = None,
-):
-    """Write to central audit log."""
+# ═══════════════════════════════════════════════════════════════
+# AUDIT LOG HELPER
+# ═══════════════════════════════════════════════════════════════
+
+async def _log_audit(db, action, device_id=None, install_id=None, license_id=None, actor=None, message=None):
     try:
         entry = CentralAuditLog(
-            action=action,
-            device_id=device_id,
-            install_id=install_id,
-            license_id=license_id,
-            message=message,
-            timestamp=_utcnow(),
+            action=action, device_id=device_id, install_id=install_id,
+            license_id=license_id, actor=actor, message=message, timestamp=_utcnow(),
         )
         db.add(entry)
         await db.flush()
