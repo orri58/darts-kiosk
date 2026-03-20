@@ -232,3 +232,20 @@ class ConfigProfile(Base):
     updated_by = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+
+class RemoteAction(Base):
+    """
+    Queued remote actions for devices. Devices poll for pending actions.
+    """
+    __tablename__ = "remote_actions"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    device_id = Column(String(36), nullable=False, index=True)
+    action_type = Column(String(30), nullable=False)  # force_sync | restart_backend | reload_ui
+    status = Column(String(20), default="pending")     # pending | acked | failed | expired
+    issued_by = Column(String(100), nullable=False)
+    issued_at = Column(DateTime, default=_utcnow)
+    acked_at = Column(DateTime, nullable=True)
+    result_message = Column(Text, nullable=True)

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Monitor, KeyRound, Building2, MapPin,
-  ScrollText, LogOut, Menu, X, Users, Shield
+  ScrollText, LogOut, Menu, X, Users, Shield, Settings
 } from 'lucide-react';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import ScopeSwitcher from '../../components/central/ScopeSwitcher';
@@ -41,6 +41,9 @@ export default function PortalLayout() {
   }
   if (canManageStaff) {
     NAV_ITEMS.push({ path: '/portal/users', icon: Users, label: 'Benutzer', tid: 'portal-nav-users' });
+  }
+  if (canManage) {
+    NAV_ITEMS.push({ path: '/portal/config', icon: Settings, label: 'Konfiguration', tid: 'portal-nav-config' });
   }
   NAV_ITEMS.push({ path: '/portal/audit', icon: ScrollText, label: 'Aktivitaet', tid: 'portal-nav-audit' });
 

@@ -20,11 +20,13 @@ import PortalLayout from "./pages/portal/PortalLayout";
 import PortalLogin from "./pages/portal/PortalLogin";
 import PortalDashboard from "./pages/portal/PortalDashboard";
 import PortalDevices from "./pages/portal/PortalDevices";
+import PortalDeviceDetail from "./pages/portal/PortalDeviceDetail";
 import PortalLicenses from "./pages/portal/PortalLicenses";
 import PortalCustomers from "./pages/portal/PortalCustomers";
 import PortalLocations from "./pages/portal/PortalLocations";
 import PortalAudit from "./pages/portal/PortalAudit";
 import PortalUsers from "./pages/portal/PortalUsers";
+import PortalConfig from "./pages/portal/PortalConfig";
 
 // Context
 import { AuthProvider } from "./context/AuthContext";
@@ -79,10 +81,12 @@ function App() {
             <Route path="/portal" element={<PortalLayout />}>
               <Route index element={<PortalDashboard />} />
               <Route path="devices" element={<PortalDevices />} />
+              <Route path="devices/:deviceId" element={<PortalDeviceDetail />} />
               <Route path="licenses" element={<PortalLicenses />} />
               <Route path="customers" element={<PortalCustomers />} />
               <Route path="locations" element={<PortalLocations />} />
               <Route path="users" element={<PortalUsers />} />
+              <Route path="config" element={<PortalConfig />} />
               <Route path="audit" element={<PortalAudit />} />
             </Route>
 

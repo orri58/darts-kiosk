@@ -27,7 +27,7 @@ from central_server.database import get_db, init_db, AsyncSessionLocal
 from central_server.models import (
     CentralCustomer, CentralLocation, CentralDevice, CentralLicense,
     CentralAuditLog, RegistrationToken, CentralUser, LicenseStatus, CustomerStatus,
-    TelemetryEvent, DeviceDailyStats, ConfigProfile,
+    TelemetryEvent, DeviceDailyStats, ConfigProfile, RemoteAction,
 )
 from central_server.auth import (
     get_current_user, AuthUser, require_superadmin, require_min_role,
@@ -177,6 +177,30 @@ async def lifespan(app: FastAPI):
             db.add(global_config)
             await db.commit()
             logger.info("[INIT] Default global config profile created")
+
+    # v3.9.0: Create remote_actions table
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(_text("SELECT id FROM remote_actions LIMIT 1"))
+    except Exception:
+        async with AsyncSessionLocal() as db:
+            try:
+                await db.execute(_text("""
+                    CREATE TABLE IF NOT EXISTS remote_actions (
+                        id VARCHAR(36) PRIMARY KEY,
+                        device_id VARCHAR(36) NOT NULL,
+                        action_type VARCHAR(30) NOT NULL,
+                        status VARCHAR(20) DEFAULT 'pending',
+                        issued_by VARCHAR(100) NOT NULL,
+                        issued_at DATETIME,
+                        acked_at DATETIME,
+                        result_message TEXT
+                    )
+                """))
+                await db.commit()
+                logger.info("[MIGRATE] Created remote_actions table")
+            except Exception as e:
+                logger.warning(f"[MIGRATE] remote_actions: {e}")
 
     logger.info("Central License Server v3.8.0 started")
     yield
@@ -1587,17 +1611,17 @@ async def upsert_config_profile(
     if scope_type == "global" and user.role != "superadmin":
         raise HTTPException(403, "Only superadmin can modify global config")
     elif scope_type == "customer":
-        if not await can_access_customer(scope_id, user, db):
+        if not can_access_customer(user, scope_id):
             raise HTTPException(403, "No access to this customer")
     elif scope_type == "location":
         loc = await db.get(CentralLocation, scope_id)
-        if not loc or not await can_access_customer(loc.customer_id, user, db):
+        if not loc or not can_access_customer(user, loc.customer_id):
             raise HTTPException(403, "No access to this location")
     elif scope_type == "device":
         dev = await db.get(CentralDevice, scope_id)
         if dev:
             loc = await db.get(CentralLocation, dev.location_id)
-            if not loc or not await can_access_customer(loc.customer_id, user, db):
+            if not loc or not can_access_customer(user, loc.customer_id):
                 raise HTTPException(403, "No access to this device")
 
     # Upsert
@@ -1732,4 +1756,212 @@ async def get_effective_config(
             "location_id": resolved_location_id,
             "device_id": resolved_device_id,
         },
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# v3.9.0: REMOTE ACTIONS
+# ═══════════════════════════════════════════════════════════════
+
+VALID_ACTIONS = {"force_sync", "restart_backend", "reload_ui"}
+
+
+def _ser_action(a):
+    return {
+        "id": a.id, "device_id": a.device_id, "action_type": a.action_type,
+        "status": a.status, "issued_by": a.issued_by,
+        "issued_at": a.issued_at.isoformat() if a.issued_at else None,
+        "acked_at": a.acked_at.isoformat() if a.acked_at else None,
+        "result_message": a.result_message,
+    }
+
+
+@app.post("/api/remote-actions/{device_id}")
+async def issue_remote_action(
+    device_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Issue a remote action to a device. Requires owner+ role."""
+    require_min_role(user, "owner")
+
+    # Verify device exists and user has access
+    dev = await db.get(CentralDevice, device_id)
+    if not dev:
+        raise HTTPException(404, "Device not found")
+    if dev.location_id:
+        loc = await db.get(CentralLocation, dev.location_id)
+        if loc and not can_access_customer(user, loc.customer_id):
+            raise HTTPException(403, "No access to this device")
+
+    body = await request.json()
+    action_type = body.get("action_type", "")
+    if action_type not in VALID_ACTIONS:
+        raise HTTPException(400, f"action_type must be one of: {', '.join(sorted(VALID_ACTIONS))}")
+
+    action = RemoteAction(
+        device_id=device_id, action_type=action_type,
+        issued_by=user.username,
+    )
+    db.add(action)
+    await db.commit()
+    await db.refresh(action)
+
+    await _log_audit(db, "remote_action_issued", device_id=device_id, actor=user.username,
+                     message=f"Action '{action_type}' issued for device {dev.device_name or device_id}")
+    await db.commit()
+
+    return _ser_action(action)
+
+
+@app.get("/api/remote-actions/{device_id}")
+async def list_device_actions(
+    device_id: str,
+    status: str = None,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """List recent remote actions for a device."""
+    require_min_role(user, "staff")
+    stmt = select(RemoteAction).where(RemoteAction.device_id == device_id)
+    if status:
+        stmt = stmt.where(RemoteAction.status == status)
+    stmt = stmt.order_by(RemoteAction.issued_at.desc()).limit(limit)
+    result = await db.execute(stmt)
+    return [_ser_action(a) for a in result.scalars().all()]
+
+
+@app.get("/api/remote-actions/{device_id}/pending")
+async def get_pending_actions(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Device-facing endpoint: get pending actions to execute.
+    Authenticated via X-License-Key header.
+    """
+    stmt = (
+        select(RemoteAction)
+        .where(RemoteAction.device_id == device_id, RemoteAction.status == "pending")
+        .order_by(RemoteAction.issued_at.asc())
+    )
+    result = await db.execute(stmt)
+    return [_ser_action(a) for a in result.scalars().all()]
+
+
+@app.post("/api/remote-actions/{device_id}/ack")
+async def ack_remote_action(
+    device_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Device acknowledges completion of a remote action."""
+    body = await request.json()
+    action_id = body.get("action_id")
+    success = body.get("success", True)
+    message = body.get("message", "")
+
+    action = await db.get(RemoteAction, action_id)
+    if not action or action.device_id != device_id:
+        raise HTTPException(404, "Action not found")
+
+    action.status = "acked" if success else "failed"
+    action.acked_at = _utcnow()
+    action.result_message = message
+    await db.commit()
+    return {"ok": True}
+
+
+# ═══════════════════════════════════════════════════════════════
+# v3.9.0: ENHANCED DEVICE DETAIL
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/telemetry/device/{device_id}")
+async def get_device_detail(
+    device_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Get enriched device detail: status, version, last activity, recent events, daily stats."""
+    require_min_role(user, "staff")
+
+    dev = await db.get(CentralDevice, device_id)
+    if not dev:
+        raise HTTPException(404, "Device not found")
+
+    # Check access
+    if dev.location_id:
+        loc = await db.get(CentralLocation, dev.location_id)
+        if loc and not can_access_customer(user, loc.customer_id):
+            raise HTTPException(403, "No access to this device")
+    else:
+        loc = None
+
+    # Location + customer names
+    cust = None
+    if loc and loc.customer_id:
+        cust = await db.get(CentralCustomer, loc.customer_id)
+
+    # Online status (handle naive datetimes from SQLite)
+    is_online = False
+    if dev.last_heartbeat_at:
+        hb = dev.last_heartbeat_at
+        now = _utcnow()
+        # Make both aware or both naive for comparison
+        if hb.tzinfo is None:
+            from datetime import timezone as _tz
+            hb = hb.replace(tzinfo=_tz.utc)
+        diff = (now - hb).total_seconds()
+        is_online = diff < 300  # 5min threshold
+
+    # Last 10 telemetry events
+    events_q = await db.execute(
+        select(TelemetryEvent)
+        .where(TelemetryEvent.device_id == device_id)
+        .order_by(TelemetryEvent.timestamp.desc())
+        .limit(10)
+    )
+    recent_events = [
+        {"event_type": e.event_type, "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+         "data": e.data}
+        for e in events_q.scalars().all()
+    ]
+
+    # Last 7 days of daily stats
+    stats_q = await db.execute(
+        select(DeviceDailyStats)
+        .where(DeviceDailyStats.device_id == device_id)
+        .order_by(DeviceDailyStats.date.desc())
+        .limit(7)
+    )
+    daily_stats = [
+        {"date": s.date, "revenue_cents": s.revenue_cents, "sessions": s.sessions,
+         "games": s.games, "credits_added": s.credits_added, "errors": s.errors}
+        for s in stats_q.scalars().all()
+    ]
+
+    # Pending remote actions
+    actions_q = await db.execute(
+        select(RemoteAction)
+        .where(RemoteAction.device_id == device_id)
+        .order_by(RemoteAction.issued_at.desc())
+        .limit(10)
+    )
+    recent_actions = [_ser_action(a) for a in actions_q.scalars().all()]
+
+    return {
+        "id": dev.id, "device_name": dev.device_name, "hardware_id": getattr(dev, 'hardware_id', None),
+        "status": dev.status,
+        "is_online": is_online,
+        "last_heartbeat_at": dev.last_heartbeat_at.isoformat() if dev.last_heartbeat_at else None,
+        "reported_version": dev.reported_version,
+        "last_error": dev.last_error,
+        "last_activity_at": dev.last_activity_at.isoformat() if dev.last_activity_at else None,
+        "location": {"id": loc.id, "name": loc.name} if loc else None,
+        "customer": {"id": cust.id, "name": cust.name} if cust else None,
+        "recent_events": recent_events,
+        "daily_stats": daily_stats,
+        "recent_actions": recent_actions,
     }
