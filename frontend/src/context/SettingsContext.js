@@ -1,7 +1,8 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const CONFIG_POLL_INTERVAL = 30000; // 30 seconds
 
 const SettingsContext = createContext(null);
 
@@ -49,6 +50,7 @@ export function SettingsProvider({ children }) {
     path: '/public/leaderboard',
   });
   const [loading, setLoading] = useState(true);
+  const lastConfigVersion = useRef(null);
 
   const fetchSettings = useCallback(async () => {
     try {
@@ -84,6 +86,24 @@ export function SettingsProvider({ children }) {
 
   useEffect(() => {
     fetchSettings();
+  }, [fetchSettings]);
+
+  // Poll for config version changes — re-fetch settings only when version bumps
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await axios.get(`${API}/settings/config-version`);
+        const newVersion = data.version;
+        if (lastConfigVersion.current !== null && newVersion !== lastConfigVersion.current) {
+          console.log(`[SettingsContext] Config version changed ${lastConfigVersion.current} → ${newVersion}, re-fetching`);
+          fetchSettings();
+        }
+        lastConfigVersion.current = newVersion;
+      } catch {
+        // Fail silently — polling is best-effort
+      }
+    }, CONFIG_POLL_INTERVAL);
+    return () => clearInterval(interval);
   }, [fetchSettings]);
 
   // Apply palette CSS variables when palette changes

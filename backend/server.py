@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy import select
 from datetime import datetime, timezone
 import os
+import asyncio
 import logging
 import logging.handlers
 import json
@@ -234,15 +235,35 @@ async def lifespan(app: FastAPI):
     from backend.services.cyclic_license_checker import cyclic_license_checker
     await cyclic_license_checker.start()
 
+    # v3.9.1: Read central sync config from local DB for all sync services
+    _sync_cfg = {}
+    try:
+        from backend.models import Settings as _SettingsModel
+        async with AsyncSessionLocal() as _cfg_db:
+            _cfg_result = await _cfg_db.execute(
+                select(_SettingsModel).where(_SettingsModel.key == "license_sync_config")
+            )
+            _cfg_row = _cfg_result.scalar_one_or_none()
+            if _cfg_row and isinstance(_cfg_row.value, dict):
+                _sync_cfg = _cfg_row.value
+    except Exception as exc:
+        logger.warning(f"Failed to read license_sync_config (non-critical): {exc}")
+
+    _central_url = _sync_cfg.get("server_url", "")
+    _central_api_key = _sync_cfg.get("api_key", "")
+    _central_device_id = _sync_cfg.get("device_id")  # Central Server device UUID, set during registration
+    if _central_url and _central_api_key:
+        logger.info(f"[SYNC] Central config found: url={_central_url} device_id={_central_device_id}")
+    else:
+        logger.info("[SYNC] No central server configured — sync services skipped")
+
     # v3.7.0: Start telemetry sync client
     from backend.services.telemetry_sync_client import telemetry_sync
     try:
-        from backend.services.license_sync_client import license_sync_client
-        central_url = license_sync_client._central_server_url
-        api_key = license_sync_client._api_key
-        version = open(Path(__file__).resolve().parent.parent / "VERSION").read().strip() if (Path(__file__).resolve().parent.parent / "VERSION").exists() else "unknown"
-        telemetry_sync.configure(central_url=central_url, api_key=api_key, version=version)
-        await telemetry_sync.start()
+        if _central_url and _central_api_key:
+            version = open(Path(__file__).resolve().parent.parent / "VERSION").read().strip() if (Path(__file__).resolve().parent.parent / "VERSION").exists() else "unknown"
+            telemetry_sync.configure(central_url=_central_url, api_key=_central_api_key, version=version)
+            await telemetry_sync.start()
     except Exception as exc:
         logger.warning(f"Telemetry sync start failed (non-critical): {exc}")
 
@@ -250,25 +271,18 @@ async def lifespan(app: FastAPI):
     from backend.services.config_sync_client import config_sync_client
     from backend.services.config_apply import on_config_synced
     try:
-        from backend.services.license_sync_client import license_sync_client as _lsc
-        _central_url = _lsc._central_server_url
-        _api_key = _lsc._api_key
-        _device_id = _lsc._device_id if hasattr(_lsc, '_device_id') else None
-        config_sync_client.configure(central_url=_central_url, api_key=_api_key, device_id=_device_id)
-        config_sync_client.on_config_change(on_config_synced)
-        asyncio.create_task(config_sync_client.start())
+        if _central_url and _central_api_key:
+            config_sync_client.configure(central_url=_central_url, api_key=_central_api_key, device_id=_central_device_id)
+            config_sync_client.on_config_change(on_config_synced)
+            asyncio.create_task(config_sync_client.start())
     except Exception as exc:
         logger.warning(f"Config sync start failed (non-critical): {exc}")
 
     # v3.9.1: Start remote action polling
     from backend.services.action_poller import action_poller
     try:
-        from backend.services.license_sync_client import license_sync_client as _lsc2
-        _central_url2 = _lsc2._central_server_url
-        _api_key2 = _lsc2._api_key
-        _device_id2 = _lsc2._device_id if hasattr(_lsc2, '_device_id') else None
-        if _central_url2 and _device_id2:
-            action_poller.configure(central_url=_central_url2, api_key=_api_key2, device_id=_device_id2)
+        if _central_url and _central_api_key and _central_device_id:
+            action_poller.configure(central_url=_central_url, api_key=_central_api_key, device_id=_central_device_id)
             asyncio.create_task(action_poller.start())
     except Exception as exc:
         logger.warning(f"Action poller start failed (non-critical): {exc}")
@@ -283,6 +297,8 @@ async def lifespan(app: FastAPI):
     await telemetry_sync.stop()
     from backend.services.config_sync_client import config_sync_client
     config_sync_client.stop()
+    from backend.services.action_poller import action_poller
+    action_poller.stop()
     await cyclic_license_checker.stop()
     await stop_watchdog()
     from backend.services.autodarts_observer import observer_manager

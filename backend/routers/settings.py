@@ -347,3 +347,36 @@ async def update_autodarts_desktop_settings(data: SettingsUpdate, admin: User = 
     await db.flush()
     await log_audit(db, admin, "update_autodarts_desktop", "settings", "autodarts_desktop")
     return setting.value
+
+
+
+# ===== Config Sync Status & Controls =====
+
+@router.get("/settings/config-sync/status")
+async def get_config_sync_status():
+    """Return status of config sync, action poller, and applied config version."""
+    from backend.services.config_sync_client import config_sync_client
+    from backend.services.action_poller import action_poller
+    from backend.services.config_apply import get_applied_version
+    return {
+        "config_sync": config_sync_client.status,
+        "action_poller": action_poller.status,
+        "applied_config_version": get_applied_version(),
+    }
+
+
+@router.get("/settings/config-version")
+async def get_config_version():
+    """Lightweight endpoint for frontend polling. Returns current applied config version."""
+    from backend.services.config_apply import get_applied_version
+    return {"version": get_applied_version()}
+
+
+@router.post("/settings/config-sync/force")
+async def force_config_sync(admin: User = Depends(require_admin)):
+    """Admin-only: Force an immediate config sync with central server."""
+    from backend.services.config_sync_client import config_sync_client
+    if not config_sync_client.is_configured:
+        raise HTTPException(400, "Config sync not configured")
+    changed = await config_sync_client.sync_now()
+    return {"success": True, "changed": changed, "status": config_sync_client.status}

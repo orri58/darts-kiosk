@@ -7,10 +7,12 @@ reads from local settings endpoints.
 
 Flow: Central Config → config_apply → Local SQLite Settings → SettingsContext → UI
 """
+import copy
 import logging
 from backend.database import AsyncSessionLocal
 from backend.models import Settings
 from sqlalchemy import select
+from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger("config_apply")
 
@@ -127,9 +129,8 @@ async def apply_config(config: dict) -> dict:
                 select(Settings).where(Settings.key == settings_key)
             )
             setting = result.scalar_one_or_none()
-            current_value = setting.value if setting else {}
-            if not isinstance(current_value, dict):
-                current_value = {}
+            # Deep copy to avoid SQLAlchemy mutation tracking issues
+            current_value = copy.deepcopy(setting.value) if setting and isinstance(setting.value, dict) else {}
 
             # Apply each mapped field
             changed = False
@@ -140,10 +141,12 @@ async def apply_config(config: dict) -> dict:
                     if existing_val != central_val:
                         _set_nested(current_value, local_path, central_val)
                         changed = True
+                        logger.debug(f"[CONFIG-APPLY] {settings_key}.{local_path}: {existing_val} -> {central_val}")
 
             if changed:
                 if setting:
                     setting.value = current_value
+                    flag_modified(setting, "value")
                 else:
                     setting = Settings(key=settings_key, value=current_value)
                     db.add(setting)
