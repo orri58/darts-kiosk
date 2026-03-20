@@ -715,19 +715,23 @@ async def register_device_via_token(data: dict):
         pass
 
     server_url = None
-    try:
-        from backend.database import AsyncSessionLocal
-        async with AsyncSessionLocal() as db:
-            stmt = select(Settings).where(Settings.key == "license_sync_config")
-            result = await db.execute(stmt)
-            s = result.scalar_one_or_none()
-            if s and s.value:
-                server_url = s.value.get("server_url")
-    except Exception:
-        pass
-
+    # 1. Check env var CENTRAL_SERVER_URL
+    import os
+    server_url = os.environ.get("CENTRAL_SERVER_URL", "").strip() or None
+    # 2. Check sync config in DB
     if not server_url:
-        # Also check if data dict has server_url
+        try:
+            from backend.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                stmt = select(Settings).where(Settings.key == "license_sync_config")
+                result = await db.execute(stmt)
+                s = result.scalar_one_or_none()
+                if s and s.value:
+                    server_url = s.value.get("server_url")
+        except Exception:
+            pass
+    # 3. Check request body
+    if not server_url:
         server_url = data.get("server_url", "").strip() or None
 
     if not server_url:

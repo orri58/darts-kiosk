@@ -85,7 +85,7 @@ export default function RegistrationOverlay({ onRegistered }) {
     try {
       const body = { token: token.trim() };
       if (deviceName.trim()) body.device_name = deviceName.trim();
-      if (!serverConfigured && serverUrl.trim()) body.server_url = serverUrl.trim();
+      if (serverUrl.trim()) body.server_url = serverUrl.trim();
 
       const res = await axios.post(`${API}/licensing/register-device`, body);
       setSuccess(true);
