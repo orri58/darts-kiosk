@@ -4,7 +4,8 @@ import { toast } from 'sonner';
 import {
   Save, RefreshCw, DollarSign, Palette, Paintbrush, Monitor,
   Type, Languages, Volume2, QrCode, Code, Layers, ChevronDown,
-  Globe, Building2, MapPin, ToggleLeft, ToggleRight, Eye, History, Undo2
+  Globe, Building2, MapPin, ToggleLeft, ToggleRight, Eye, History, Undo2,
+  ArrowLeftRight, X, Plus, Minus
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -356,6 +357,166 @@ function EffectiveSummary({ config }) {
   );
 }
 
+// ─── Config Diff View ───────────────────────────────────────
+const DIFF_CATEGORIES = {
+  pricing: 'Preise', branding: 'Branding', kiosk: 'Kiosk',
+  texts: 'Texte', language: 'Sprache', sound: 'Sound', sharing: 'QR / Sharing',
+};
+
+const DIFF_FIELD_LABELS = {
+  'pricing.mode': 'Preismodell',
+  'pricing.per_game.price_per_credit': 'Preis pro Credit',
+  'pricing.per_game.default_credits': 'Standard-Credits',
+  'pricing.min_amount': 'Mindestbetrag',
+  'branding.cafe_name': 'Cafe-Name',
+  'branding.subtitle': 'Untertitel',
+  'branding.logo_url': 'Logo URL',
+  'branding.primary_color': 'Primaerfarbe',
+  'branding.secondary_color': 'Sekundaerfarbe',
+  'branding.accent_color': 'Akzentfarbe',
+  'kiosk.auto_lock_timeout_min': 'Auto-Lock (Min)',
+  'kiosk.idle_timeout_min': 'Idle Timeout (Min)',
+  'kiosk.auto_start': 'Auto-Start',
+  'kiosk.fullscreen': 'Vollbild',
+  'texts.welcome_title': 'Willkommen Titel',
+  'texts.welcome_subtitle': 'Willkommen Untertitel',
+  'texts.locked_message': 'Gesperrt Nachricht',
+  'texts.game_over': 'Game-Over Text',
+  'language.default': 'Standard-Sprache',
+  'language.allow_switch': 'Sprachwechsel',
+  'sound.enabled': 'Sound aktiviert',
+  'sound.volume': 'Lautstaerke',
+  'sound.quiet_hours_start': 'Ruhezeiten Start',
+  'sound.quiet_hours_end': 'Ruhezeiten Ende',
+  'sharing.qr_enabled': 'QR-Code',
+  'sharing.public_results': 'Oeffentliche Ergebnisse',
+  'sharing.leaderboard_public': 'Oeffentliches Leaderboard',
+};
+
+function fmtDiffVal(val, key) {
+  if (val === null || val === undefined) return { text: '\u2014', isColor: false };
+  if (val === true) return { text: 'Aktiviert', isColor: false };
+  if (val === false) return { text: 'Deaktiviert', isColor: false };
+  if (typeof val === 'string' && /^#[0-9a-fA-F]{6}$/i.test(val))
+    return { text: val, isColor: true, hex: val };
+  if (key === 'pricing.mode') {
+    const m = { per_game: 'Pro Spiel', per_time: 'Pro Zeit', per_credit: 'Pro Credit' };
+    return { text: m[val] || String(val), isColor: false };
+  }
+  if (key === 'language.default')
+    return { text: val === 'en' ? 'English' : val === 'de' ? 'Deutsch' : String(val), isColor: false };
+  return { text: String(val), isColor: false };
+}
+
+function DiffVal({ val, fKey }) {
+  const f = fmtDiffVal(val, fKey);
+  if (f.isColor) return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="w-3.5 h-3.5 rounded-sm border border-zinc-600 inline-block" style={{ backgroundColor: f.hex }} />
+      <span className="font-mono text-[11px]">{f.text}</span>
+    </span>
+  );
+  return <span className="text-[11px]">{f.text}</span>;
+}
+
+function DiffPanel({ diff, onClose, showAll, setShowAll }) {
+  if (!diff) return null;
+
+  const visible = showAll ? diff.changes : diff.changes.filter(c => c.status !== 'unchanged');
+  const grouped = {};
+  for (const ch of visible) {
+    const cat = ch.key.split('.')[0];
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(ch);
+  }
+  const catOrder = Object.keys(DIFF_CATEGORIES);
+  const categories = Object.entries(grouped).sort(
+    (a, b) => catOrder.indexOf(a[0]) - catOrder.indexOf(b[0])
+  );
+
+  const added = diff.changes.filter(c => c.status === 'added').length;
+  const changed = diff.changes.filter(c => c.status === 'changed').length;
+  const removed = diff.changes.filter(c => c.status === 'removed').length;
+
+  return (
+    <div className="space-y-3" data-testid="config-diff-panel">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <ArrowLeftRight className="w-4 h-4 text-indigo-400" />
+          <p className="text-sm text-white font-medium">
+            Version {diff.old_version} <span className="text-zinc-500">{'\u2192'}</span> v{diff.new_version}{' '}
+            <span className="text-[10px] text-zinc-500">(Aktuell)</span>
+          </p>
+        </div>
+        <button onClick={onClose} className="p-1 text-zinc-500 hover:text-white rounded" data-testid="diff-close-btn">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Summary badges */}
+      <div className="flex items-center gap-2 text-[10px] flex-wrap">
+        {changed > 0 && <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 rounded font-medium">{changed} geaendert</span>}
+        {added > 0 && <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 rounded font-medium">{added} hinzugefuegt</span>}
+        {removed > 0 && <span className="px-1.5 py-0.5 bg-red-500/10 text-red-400 rounded font-medium">{removed} entfernt</span>}
+        {diff.total_changes === 0 && <span className="text-zinc-500">Keine Aenderungen</span>}
+      </div>
+
+      {/* Toggle */}
+      <button onClick={() => setShowAll(!showAll)} data-testid="diff-toggle-all"
+        className={`flex items-center gap-1.5 text-[10px] px-2 py-1 rounded border transition-colors ${
+          showAll ? 'bg-indigo-500/10 border-indigo-500/20 text-indigo-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'
+        }`}>
+        <Eye className="w-3 h-3" />
+        {showAll ? 'Alle Felder' : 'Nur Aenderungen'}
+      </button>
+
+      {/* Grouped changes */}
+      {categories.length > 0 ? (
+        <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+          {categories.map(([cat, changes]) => (
+            <div key={cat} className="bg-zinc-950 rounded-lg border border-zinc-800/50 overflow-hidden">
+              <div className="px-3 py-1.5 bg-zinc-900/50 border-b border-zinc-800/50">
+                <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+                  {DIFF_CATEGORIES[cat] || cat}
+                </span>
+              </div>
+              <div className="divide-y divide-zinc-800/30">
+                {changes.map(ch => (
+                  <div key={ch.key} className={`px-3 py-2 ${ch.status === 'unchanged' ? 'opacity-50' : ''}`} data-testid={`diff-row-${ch.key}`}>
+                    <div className="flex items-center gap-2 mb-0.5">
+                      {ch.status === 'changed' && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />}
+                      {ch.status === 'added' && <Plus className="w-3 h-3 text-emerald-400 flex-shrink-0" />}
+                      {ch.status === 'removed' && <Minus className="w-3 h-3 text-red-400 flex-shrink-0" />}
+                      {ch.status === 'unchanged' && <span className="w-1.5 h-1.5 rounded-full bg-zinc-600 flex-shrink-0" />}
+                      <span className="text-xs text-zinc-300">{DIFF_FIELD_LABELS[ch.key] || ch.key}</span>
+                    </div>
+                    {ch.status !== 'unchanged' && (
+                      <div className="ml-3.5 flex items-center gap-2 flex-wrap">
+                        {ch.status !== 'added' && (
+                          <span className="text-red-400/70 line-through"><DiffVal val={ch.old} fKey={ch.key} /></span>
+                        )}
+                        {ch.status === 'changed' && <span className="text-zinc-600 text-[10px]">{'\u2192'}</span>}
+                        {ch.status !== 'removed' && (
+                          <span className="text-emerald-400"><DiffVal val={ch.new} fKey={ch.key} /></span>
+                        )}
+                      </div>
+                    )}
+                    {ch.status === 'unchanged' && (
+                      <div className="ml-3.5"><span className="text-zinc-500"><DiffVal val={ch.old} fKey={ch.key} /></span></div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-zinc-500 py-4 text-center">Keine Unterschiede</p>
+      )}
+    </div>
+  );
+}
+
 // ═══════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════
@@ -374,6 +535,10 @@ export default function PortalConfig() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [rollbackTarget, setRollbackTarget] = useState(null); // version to confirm
   const [rollbackLoading, setRollbackLoading] = useState(false);
+  const [diffData, setDiffData] = useState(null);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffVersion, setDiffVersion] = useState(null);
+  const [diffShowAll, setDiffShowAll] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -433,6 +598,31 @@ export default function PortalConfig() {
     } finally {
       setRollbackLoading(false);
     }
+  };
+
+  const fetchDiff = async (version) => {
+    setDiffLoading(true);
+    setDiffVersion(version);
+    try {
+      const sid = editScope === 'global' ? 'global' : currentScopeId;
+      const res = await axios.get(`${apiBase}/config/diff/${editScope}/${sid}`, {
+        headers: authHeaders,
+        params: { version },
+      });
+      setDiffData(res.data);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Diff konnte nicht geladen werden');
+      setDiffData(null);
+      setDiffVersion(null);
+    } finally {
+      setDiffLoading(false);
+    }
+  };
+
+  const closeDiff = () => {
+    setDiffData(null);
+    setDiffVersion(null);
+    setDiffShowAll(false);
   };
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -719,26 +909,38 @@ export default function PortalConfig() {
                           {h.saved_at ? new Date(h.saved_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
                         </span>
                         {h.version !== history.active_version && (
-                          rollbackTarget === h.version ? (
-                            <div className="flex items-center gap-1">
-                              <button onClick={() => handleRollback(h.version)} disabled={rollbackLoading}
-                                className="px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded text-[10px] font-medium hover:bg-amber-500/20 disabled:opacity-50"
-                                data-testid={`rollback-confirm-v${h.version}`}>
-                                {rollbackLoading ? '...' : 'Ja'}
-                              </button>
-                              <button onClick={() => setRollbackTarget(null)}
-                                className="px-2 py-0.5 text-zinc-600 rounded text-[10px] hover:text-zinc-400">
-                                Nein
-                              </button>
-                            </div>
-                          ) : (
-                            <button onClick={() => setRollbackTarget(h.version)}
-                              className="text-zinc-600 hover:text-amber-400 transition-colors"
-                              title="Auf diese Version zuruecksetzen"
-                              data-testid={`rollback-btn-v${h.version}`}>
-                              <Undo2 className="w-3.5 h-3.5" />
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => fetchDiff(h.version)}
+                              disabled={diffLoading && diffVersion === h.version}
+                              className={`p-0.5 rounded transition-colors ${diffVersion === h.version ? 'text-indigo-400' : 'text-zinc-600 hover:text-indigo-400'}`}
+                              title="Mit aktiver Version vergleichen"
+                              data-testid={`diff-btn-v${h.version}`}>
+                              {diffLoading && diffVersion === h.version
+                                ? <RefreshCw className="w-3 h-3 animate-spin" />
+                                : <ArrowLeftRight className="w-3 h-3" />}
                             </button>
-                          )
+                            {rollbackTarget === h.version ? (
+                              <>
+                                <button onClick={() => handleRollback(h.version)} disabled={rollbackLoading}
+                                  className="px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded text-[10px] font-medium hover:bg-amber-500/20 disabled:opacity-50"
+                                  data-testid={`rollback-confirm-v${h.version}`}>
+                                  {rollbackLoading ? '...' : 'Ja'}
+                                </button>
+                                <button onClick={() => setRollbackTarget(null)}
+                                  className="px-2 py-0.5 text-zinc-600 rounded text-[10px] hover:text-zinc-400">
+                                  Nein
+                                </button>
+                              </>
+                            ) : (
+                              <button onClick={() => setRollbackTarget(h.version)}
+                                className="text-zinc-600 hover:text-amber-400 transition-colors"
+                                title="Auf diese Version zuruecksetzen"
+                                data-testid={`rollback-btn-v${h.version}`}>
+                                <Undo2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                         )}
                       </div>
                     ))}
@@ -746,6 +948,23 @@ export default function PortalConfig() {
                 ) : (
                   <p className="text-[10px] text-zinc-600">Keine frueheren Versionen vorhanden</p>
                 )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Config Diff Panel */}
+          {advancedMode && diffData && (
+            <Card className="bg-zinc-900 border-zinc-800" data-testid="config-diff-card">
+              <CardContent className="p-4">
+                <DiffPanel diff={diffData} onClose={closeDiff} showAll={diffShowAll} setShowAll={setDiffShowAll} />
+              </CardContent>
+            </Card>
+          )}
+          {advancedMode && diffLoading && !diffData && (
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardContent className="p-4 flex items-center justify-center">
+                <div className="w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+                <span className="ml-2 text-xs text-zinc-500">Diff wird geladen...</span>
               </CardContent>
             </Card>
           )}

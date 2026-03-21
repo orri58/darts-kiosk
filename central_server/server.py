@@ -2028,13 +2028,16 @@ async def get_config_diff(
             changes.append({"key": key, "status": "removed", "old": old_val, "new": None})
         elif old_val != new_val:
             changes.append({"key": key, "status": "changed", "old": old_val, "new": new_val})
+        else:
+            changes.append({"key": key, "status": "unchanged", "old": old_val, "new": new_val})
 
+    actual_changes = [c for c in changes if c["status"] != "unchanged"]
     return {
         "scope_type": scope_type,
         "scope_id": sid,
         "old_version": version,
         "new_version": active.version,
-        "total_changes": len(changes),
+        "total_changes": len(actual_changes),
         "changes": changes,
     }
 
@@ -2112,7 +2115,7 @@ async def bulk_remote_actions(
             skipped_count += 1
             continue
 
-        action = RemoteAction(device_id=did, action_type=action_type, issued_by=user.username)
+        action = RemoteAction(id=secrets.token_hex(18), device_id=did, action_type=action_type, issued_by=user.username)
         db.add(action)
         results.append({"device_id": did, "device_name": dev.device_name, "status": "created", "action_id": action.id})
         created_count += 1
