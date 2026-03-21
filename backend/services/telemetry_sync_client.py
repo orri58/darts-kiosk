@@ -95,17 +95,30 @@ class TelemetrySyncClient:
                 logger.debug(f"[TELEMETRY] Flush failed (non-fatal): {e}")
 
     async def _send_heartbeat(self):
-        """Send a single heartbeat to the central server."""
+        """Send heartbeat with health snapshot + recent logs to central server."""
         if not self.is_configured:
             return
         try:
+            payload = {
+                "version": self._version,
+                "timestamp": _utcnow().isoformat(),
+            }
+            # Append health snapshot (fail-safe)
+            try:
+                payload["health"] = self._collect_health_snapshot()
+            except Exception:
+                pass
+            # Append recent logs (fail-safe, capped)
+            try:
+                from backend.services.device_log_buffer import device_logs
+                payload["logs"] = device_logs.get_recent(30)
+            except Exception:
+                pass
+
             async with httpx.AsyncClient(timeout=10.0) as client:
                 resp = await client.post(
                     f"{self._central_url}/api/telemetry/heartbeat",
-                    json={
-                        "version": self._version,
-                        "timestamp": _utcnow().isoformat(),
-                    },
+                    json=payload,
                     headers={"X-License-Key": self._api_key},
                 )
                 if resp.status_code == 200:
@@ -114,6 +127,52 @@ class TelemetrySyncClient:
                     logger.debug(f"[TELEMETRY] Heartbeat {resp.status_code}")
         except Exception as e:
             logger.debug(f"[TELEMETRY] Heartbeat error: {e}")
+
+    @staticmethod
+    def _collect_health_snapshot() -> dict:
+        """Collect current device health for heartbeat. Never raises."""
+        snapshot = {}
+        try:
+            from backend.services.config_sync_client import config_sync_client
+            s = config_sync_client.status
+            snapshot["config_sync"] = {
+                "config_version": s.get("config_version", 0),
+                "last_sync_at": s.get("last_sync_at"),
+                "consecutive_errors": s.get("consecutive_errors", 0),
+                "last_error": s.get("last_error"),
+                "sync_count": s.get("sync_count", 0),
+            }
+        except Exception:
+            snapshot["config_sync"] = None
+        try:
+            from backend.services.action_poller import action_poller
+            a = action_poller.status
+            snapshot["action_poller"] = {
+                "last_poll_at": a.get("last_poll_at"),
+                "last_action_at": a.get("last_action_at"),
+                "actions_executed": a.get("actions_executed", 0),
+                "actions_failed": a.get("actions_failed", 0),
+                "consecutive_poll_errors": a.get("consecutive_poll_errors", 0),
+                "last_error": a.get("last_error"),
+            }
+        except Exception:
+            snapshot["action_poller"] = None
+        try:
+            from backend.services.config_apply import get_applied_version
+            snapshot["config_applied_version"] = get_applied_version()
+        except Exception:
+            snapshot["config_applied_version"] = None
+        try:
+            # Determine health status
+            ce = snapshot.get("config_sync", {}) or {}
+            ae = snapshot.get("action_poller", {}) or {}
+            if ce.get("consecutive_errors", 0) >= 3 or ae.get("consecutive_poll_errors", 0) >= 5:
+                snapshot["health_status"] = "degraded"
+            else:
+                snapshot["health_status"] = "healthy"
+        except Exception:
+            snapshot["health_status"] = "unknown"
+        return snapshot
 
     async def _flush_events(self):
         """Send pending events in batches."""

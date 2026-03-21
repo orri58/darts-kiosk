@@ -202,7 +202,21 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"[MIGRATE] remote_actions: {e}")
 
-    logger.info("Central License Server v3.8.0 started")
+    # v3.9.3: Add observability columns to devices table
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(_text("SELECT health_snapshot FROM devices LIMIT 1"))
+    except Exception:
+        async with AsyncSessionLocal() as db:
+            try:
+                await db.execute(_text("ALTER TABLE devices ADD COLUMN health_snapshot TEXT"))
+                await db.execute(_text("ALTER TABLE devices ADD COLUMN device_logs TEXT"))
+                await db.commit()
+                logger.info("[MIGRATE] Added health_snapshot + device_logs columns to devices")
+            except Exception as e:
+                logger.warning(f"[MIGRATE] observability columns: {e}")
+
+    logger.info("Central License Server v3.9.3 started")
     yield
     logger.info("Central License Server shutting down")
 
@@ -1197,6 +1211,14 @@ async def telemetry_heartbeat(body: dict, request: Request, db: AsyncSession = D
     elif device.last_error and body.get("clear_error"):
         device.last_error = None
 
+    # v3.9.3: Store health snapshot + device logs
+    if body.get("health"):
+        import json as _json
+        device.health_snapshot = _json.dumps(body["health"])
+    if body.get("logs"):
+        import json as _json
+        device.device_logs = _json.dumps(body["logs"])
+
     # Update daily stats heartbeat count
     date_str = now.strftime("%Y-%m-%d")
     stats = await _get_or_create_daily_stats(db, device.id, date_str)
@@ -1951,6 +1973,22 @@ async def get_device_detail(
     )
     recent_actions = [_ser_action(a) for a in actions_q.scalars().all()]
 
+    # Parse stored health snapshot + logs
+    health_snapshot = None
+    stored_logs = []
+    if dev.health_snapshot:
+        try:
+            import json as _json
+            health_snapshot = _json.loads(dev.health_snapshot)
+        except Exception:
+            pass
+    if dev.device_logs:
+        try:
+            import json as _json
+            stored_logs = _json.loads(dev.device_logs)
+        except Exception:
+            pass
+
     return {
         "id": dev.id, "device_name": dev.device_name, "hardware_id": getattr(dev, 'hardware_id', None),
         "status": dev.status,
@@ -1961,6 +1999,8 @@ async def get_device_detail(
         "last_activity_at": dev.last_activity_at.isoformat() if dev.last_activity_at else None,
         "location": {"id": loc.id, "name": loc.name} if loc else None,
         "customer": {"id": cust.id, "name": cust.name} if cust else None,
+        "health_snapshot": health_snapshot,
+        "device_logs": stored_logs,
         "recent_events": recent_events,
         "daily_stats": daily_stats,
         "recent_actions": recent_actions,

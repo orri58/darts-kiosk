@@ -88,6 +88,9 @@ class CentralDevice(Base):
     reported_version = Column(String(20), nullable=True)
     last_error = Column(Text, nullable=True)
     last_activity_at = Column(DateTime, nullable=True)
+    # v3.9.3: Observability — health snapshot + logs from heartbeat
+    health_snapshot = Column(Text, nullable=True)  # JSON
+    device_logs = Column(Text, nullable=True)  # JSON array
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 

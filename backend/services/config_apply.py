@@ -23,6 +23,8 @@ from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger("config_apply")
 
+from backend.services.device_log_buffer import device_logs
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DATA_DIR = _PROJECT_ROOT / "data"
 _VERSION_FILE = _DATA_DIR / "config_applied_version.json"
@@ -207,12 +209,15 @@ async def apply_config(config: dict) -> dict:
             try:
                 await db.commit()
                 logger.info(f"[CONFIG-APPLY] Applied {len(changes)} setting(s): {list(changes.keys())}")
+                device_logs.info("config_apply", "settings_applied", f"Applied: {list(changes.keys())}", {"count": len(changes)})
             except Exception as e:
                 logger.error(f"[CONFIG-APPLY] DB commit failed: {e}", exc_info=True)
+                device_logs.error("config_apply", "commit_failed", str(e))
                 changes = {}
 
     if errors:
         logger.warning(f"[CONFIG-APPLY] {len(errors)} section(s) had errors: {errors}")
+        device_logs.warn("config_apply", "section_errors", f"{len(errors)} sections failed", {"errors": errors})
 
     return changes
 

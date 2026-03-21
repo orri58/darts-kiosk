@@ -22,6 +22,8 @@ import httpx
 
 logger = logging.getLogger("config_sync")
 
+from backend.services.device_log_buffer import device_logs
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DATA_DIR = _PROJECT_ROOT / "data"
 _CACHE_FILE = _DATA_DIR / "config_cache.json"
@@ -160,6 +162,7 @@ class ConfigSyncClient:
             if changed:
                 layers = data.get("layers_applied", [])
                 logger.info(f"[CONFIG-SYNC] Config updated to v{new_version}, layers={layers}")
+                device_logs.info("config_sync", "config_updated", f"Config v{new_version} applied", {"layers": layers, "version": new_version})
                 await self._run_callbacks(new_config)
             else:
                 logger.debug(f"[CONFIG-SYNC] No changes (v{new_version})")
@@ -172,6 +175,7 @@ class ConfigSyncClient:
             self._last_error = "timeout"
             if self._consecutive_errors <= 3 or self._consecutive_errors % 10 == 0:
                 logger.warning(f"[CONFIG-SYNC] Sync timeout (consecutive={self._consecutive_errors}, using cache)")
+                device_logs.warn("config_sync", "sync_timeout", f"Timeout (consecutive={self._consecutive_errors})")
             return False
 
         except Exception as e:
@@ -180,6 +184,7 @@ class ConfigSyncClient:
             self._last_error = str(e)
             if self._consecutive_errors <= 3 or self._consecutive_errors % 10 == 0:
                 logger.warning(f"[CONFIG-SYNC] Sync failed (consecutive={self._consecutive_errors}, using cache): {e}")
+                device_logs.warn("config_sync", "sync_failed", str(e), {"consecutive": self._consecutive_errors})
             return False
 
     async def _run_callbacks(self, config: dict):

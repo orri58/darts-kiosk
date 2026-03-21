@@ -24,6 +24,8 @@ import httpx
 
 logger = logging.getLogger("action_poller")
 
+from backend.services.device_log_buffer import device_logs
+
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DATA_DIR = _PROJECT_ROOT / "data"
 _HISTORY_FILE = _DATA_DIR / "action_history.json"
@@ -259,9 +261,11 @@ class ActionPoller:
         if success:
             self._actions_executed += 1
             logger.info(f"[ACTION-POLL] Action DONE: type={action_type} id={action_id} msg={message}")
+            device_logs.info("action_poller", "action_done", f"{action_type}: {message}", {"action_id": action_id, "type": action_type})
         else:
             self._actions_failed += 1
             logger.warning(f"[ACTION-POLL] Action FAILED: type={action_type} id={action_id} msg={message}")
+            device_logs.error("action_poller", "action_failed", f"{action_type}: {message}", {"action_id": action_id, "type": action_type})
 
         # Acknowledge with retry
         await self._ack_with_retry(action_id, success=success, message=message)
