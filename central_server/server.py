@@ -1844,8 +1844,7 @@ async def rollback_config(
     # Audit log (separate commit, non-critical)
     try:
         await _log_audit(db, "config_rollback", actor=user.username,
-                         message=f"Config {scope_type}/{sid} rolled back to v{version} (now v{profile.version})",
-                         details={"rolled_back_to": version, "new_version": profile.version})
+                         message=f"Config {scope_type}/{sid} rolled back to v{version} (now v{profile.version})")
         await db.commit()
     except Exception:
         pass
