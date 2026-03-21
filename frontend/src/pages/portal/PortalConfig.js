@@ -886,6 +886,7 @@ export default function PortalConfig() {
       });
       toast.success(`Rollback auf Version ${version} erfolgreich`);
       setRollbackTarget(null);
+      closeDiff();
       fetchData();
       fetchHistory();
     } catch (err) {
@@ -1193,7 +1194,7 @@ export default function PortalConfig() {
                   authHeaders={authHeaders}
                   editScope={editScope}
                   currentScopeId={currentScopeId}
-                  onImportDone={() => { setShowImport(false); fetchData(); }}
+                  onImportDone={() => { setShowImport(false); fetchData(); fetchHistory(); }}
                 />
               </CardContent>
             </Card>

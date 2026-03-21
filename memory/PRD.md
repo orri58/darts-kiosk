@@ -6,7 +6,7 @@ Multi-tenant Darts Kiosk SaaS platform with central management portal and local 
 ## Core Requirements
 - **Central Portal**: Multi-tenant management with RBAC (superadmin, installer, owner, staff)
 - **Local Kiosk Clients**: Autonomous operation with config sync and remote action polling
-- **Configuration Management**: Scoped configs (global/customer/location/device), version history, rollback
+- **Configuration Management**: Scoped configs (global/customer/location/device), version history, rollback, export/import
 - **Device Management**: Registration, licensing, health monitoring, binding verification
 - **Autodarts Integration**: Playwright-based browser automation for game control
 - **White-Label**: Custom branding, color palettes, logos per customer
@@ -36,6 +36,7 @@ Multi-tenant Darts Kiosk SaaS platform with central management portal and local 
 - Persistent sync/action clients with self-recovery
 - Structured centralized logging from devices
 - Device binding with hardware fingerprint verification
+- Config export/import with validation, diff preview, merge/replace modes
 
 ## Feature Status
 See CHANGELOG.md for completed features and ROADMAP.md for upcoming work.
