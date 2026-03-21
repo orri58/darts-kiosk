@@ -165,6 +165,13 @@ class ActionPoller:
             self._consecutive_errors = 0
             self._last_error = None
 
+            # v3.9.7: Notify offline queue that central is reachable
+            try:
+                from backend.services.offline_queue import offline_queue
+                offline_queue.notify_online()
+            except Exception:
+                pass
+
             if not actions:
                 return
 
@@ -334,6 +341,19 @@ class ActionPoller:
                 await asyncio.sleep(backoff)
 
         logger.error(f"[ACTION-POLL] Ack FAILED after {_ACK_MAX_RETRIES} attempts for {action_id}")
+
+        # v3.9.7: Enqueue to offline queue for later retry
+        try:
+            from backend.services.offline_queue import offline_queue
+            offline_queue.enqueue(
+                msg_type="action_ack",
+                method="POST",
+                url_path=f"/api/remote-actions/{self._device_id}/ack",
+                payload={"action_id": action_id, "success": success, "message": message},
+                idempotency_key=f"ack_{action_id}",
+            )
+        except Exception as qe:
+            logger.warning(f"[ACTION-POLL] Offline queue enqueue failed (non-fatal): {qe}")
 
 
 # Singleton

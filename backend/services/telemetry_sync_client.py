@@ -123,6 +123,12 @@ class TelemetrySyncClient:
                 )
                 if resp.status_code == 200:
                     logger.debug("[TELEMETRY] Heartbeat OK")
+                    # v3.9.7: Notify offline queue that central is reachable
+                    try:
+                        from backend.services.offline_queue import offline_queue
+                        offline_queue.notify_online()
+                    except Exception:
+                        pass
                 else:
                     logger.debug(f"[TELEMETRY] Heartbeat {resp.status_code}")
         except Exception as e:
@@ -162,11 +168,28 @@ class TelemetrySyncClient:
             snapshot["config_applied_version"] = get_applied_version()
         except Exception:
             snapshot["config_applied_version"] = None
+        # v3.9.7: Offline queue status
+        try:
+            from backend.services.offline_queue import offline_queue
+            oq = offline_queue.status
+            snapshot["offline_queue"] = {
+                "pending": oq.get("pending", 0),
+                "drained_total": oq.get("drained_total", 0),
+                "dropped_total": oq.get("dropped_total", 0),
+                "drain_errors": oq.get("drain_errors", 0),
+                "last_drain_at": oq.get("last_drain_at"),
+                "last_drain_error": oq.get("last_drain_error"),
+            }
+        except Exception:
+            snapshot["offline_queue"] = None
         try:
             # Determine health status
             ce = snapshot.get("config_sync", {}) or {}
             ae = snapshot.get("action_poller", {}) or {}
+            oq = snapshot.get("offline_queue", {}) or {}
             if ce.get("consecutive_errors", 0) >= 3 or ae.get("consecutive_poll_errors", 0) >= 5:
+                snapshot["health_status"] = "degraded"
+            elif oq.get("pending", 0) > 0:
                 snapshot["health_status"] = "degraded"
             else:
                 snapshot["health_status"] = "healthy"
@@ -199,8 +222,28 @@ class TelemetrySyncClient:
                         logger.info(f"[TELEMETRY] Flushed {accepted} events ({dupes} dupes)")
                 else:
                     logger.warning(f"[TELEMETRY] Ingest returned {resp.status_code} — will retry")
+                    self._enqueue_batch_to_offline(batch)
         except Exception as e:
             logger.debug(f"[TELEMETRY] Ingest error (will retry): {e}")
+            self._enqueue_batch_to_offline(batch)
+
+    def _enqueue_batch_to_offline(self, batch):
+        """v3.9.7: Persist failed telemetry events to offline queue."""
+        try:
+            from backend.services.offline_queue import offline_queue
+            for event in batch:
+                eid = event.get("event_id", "")
+                offline_queue.enqueue(
+                    msg_type="telemetry_event",
+                    method="POST",
+                    url_path="/api/telemetry/ingest",
+                    payload={"events": [event]},
+                    idempotency_key=f"telem_{eid}",
+                )
+            # Remove from in-memory queue (now persisted on disk)
+            self._pending_events = self._pending_events[len(batch):]
+        except Exception as qe:
+            logger.warning(f"[TELEMETRY] Offline queue enqueue failed (non-fatal): {qe}")
 
     async def force_flush(self):
         """Manually trigger a flush (e.g., on shutdown)."""

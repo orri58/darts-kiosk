@@ -325,6 +325,15 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Action poller start failed (non-critical): {exc}")
 
+    # v3.9.7: Start offline queue
+    from backend.services.offline_queue import offline_queue
+    try:
+        if _central_url and _central_api_key:
+            offline_queue.configure(central_url=_central_url, api_key=_central_api_key)
+            await offline_queue.start()
+    except Exception as exc:
+        logger.warning(f"Offline queue start failed (non-critical): {exc}")
+
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
     logger.info(f"Autodarts mode: {os.environ.get('AUTODARTS_MODE', 'observer')}")
@@ -337,6 +346,10 @@ async def lifespan(app: FastAPI):
     config_sync_client.stop()
     from backend.services.action_poller import action_poller
     action_poller.stop()
+    # v3.9.7: Stop offline queue (persists remaining entries)
+    from backend.services.offline_queue import offline_queue
+    await offline_queue.force_drain()
+    offline_queue.stop()
     await cyclic_license_checker.stop()
     await stop_watchdog()
     from backend.services.autodarts_observer import observer_manager

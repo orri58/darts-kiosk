@@ -52,10 +52,13 @@ function getHealthReason(hs, isOnline) {
   const reasons = [];
   const cs = hs.config_sync;
   const ap = hs.action_poller;
+  const oq = hs.offline_queue;
   if (cs?.consecutive_errors >= 3) reasons.push(`${cs.consecutive_errors} Sync-Fehler`);
   if (cs?.last_error) reasons.push(`Sync: ${cs.last_error}`);
   if (ap?.consecutive_poll_errors >= 5) reasons.push(`${ap.consecutive_poll_errors} Poll-Fehler`);
   if (ap?.last_error) reasons.push(`Poller: ${ap.last_error}`);
+  if (oq?.pending > 0) reasons.push(`Offline Queue: ${oq.pending} ausstehend`);
+  if (oq?.last_drain_error) reasons.push(`Queue: ${oq.last_drain_error}`);
   return reasons.length > 0 ? reasons.join(' | ') : null;
 }
 
@@ -189,6 +192,7 @@ export default function PortalDeviceDetail() {
         <StatusCell label="Config Version" value={hs?.config_applied_version ?? '\u2014'} sub={hs?.config_sync?.config_version ? `Zentral: v${hs.config_sync.config_version}` : null} />
         <StatusCell label="Letzter Sync" value={hs?.config_sync?.last_sync_at ? timeAgo(hs.config_sync.last_sync_at) : null} sub={`${hs?.config_sync?.sync_count ?? 0} Syncs, ${hs?.config_sync?.consecutive_errors ?? 0} Fehler`} />
         <StatusCell label="Letzte Aktion" value={hs?.action_poller?.last_action_at ? timeAgo(hs.action_poller.last_action_at) : null} sub={`${hs?.action_poller?.actions_executed ?? 0} OK, ${hs?.action_poller?.actions_failed ?? 0} Fehler`} />
+        <StatusCell label="Offline Queue" value={hs?.offline_queue?.pending > 0 ? `${hs.offline_queue.pending} ausstehend` : 'Leer'} sub={hs?.offline_queue?.last_drain_at ? `Letzter Drain: ${timeAgo(hs.offline_queue.last_drain_at)}` : `${hs?.offline_queue?.drained_total ?? 0} gesendet, ${hs?.offline_queue?.dropped_total ?? 0} verworfen`} />
       </div>
 
       {/* Last Error */}
