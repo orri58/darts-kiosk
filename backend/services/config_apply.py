@@ -1,14 +1,21 @@
 """
-Config Apply Service — v3.9.1
+Config Apply Service — v3.9.2 (Hardened)
 
 Takes the effective central config and writes it into the local Settings table.
-This bridges the gap between central config and the existing kiosk UI which
-reads from local settings endpoints.
+Bridges central config → local DB → existing Kiosk UI.
 
-Flow: Central Config → config_apply → Local SQLite Settings → SettingsContext → UI
+Hardening:
+- Per-section try/except: one corrupt section cannot block others
+- Deep copy to avoid SQLAlchemy mutation tracking issues
+- flag_modified for JSON column change detection
+- Persistent applied-version counter (survives restarts)
+- Atomic: all-or-nothing commit per apply call
 """
 import copy
+import json
 import logging
+from pathlib import Path
+
 from backend.database import AsyncSessionLocal
 from backend.models import Settings
 from sqlalchemy import select
@@ -16,7 +23,13 @@ from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger("config_apply")
 
-# Map central config keys → local settings keys + merge strategy
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_DATA_DIR = _PROJECT_ROOT / "data"
+_VERSION_FILE = _DATA_DIR / "config_applied_version.json"
+
+
+# ── Config Mapping ──
+
 CONFIG_TO_SETTINGS_MAP = {
     "pricing": {
         "settings_key": "pricing",
@@ -83,8 +96,9 @@ CONFIG_TO_SETTINGS_MAP = {
 }
 
 
+# ── Helpers ──
+
 def _get_nested(obj, path):
-    """Get nested value from dict using dot notation."""
     keys = path.split(".")
     current = obj
     for k in keys:
@@ -95,7 +109,6 @@ def _get_nested(obj, path):
 
 
 def _set_nested(obj, path, value):
-    """Set nested value in dict using dot notation."""
     keys = path.split(".")
     current = obj
     for k in keys[:-1]:
@@ -105,74 +118,112 @@ def _set_nested(obj, path, value):
     current[keys[-1]] = value
 
 
+# ── Version Persistence ──
+
+_config_applied_version = 0
+
+
+def _load_version():
+    global _config_applied_version
+    try:
+        if _VERSION_FILE.exists():
+            data = json.loads(_VERSION_FILE.read_text())
+            _config_applied_version = data.get("version", 0)
+            logger.info(f"[CONFIG-APPLY] Loaded persisted version: {_config_applied_version}")
+    except Exception as e:
+        logger.warning(f"[CONFIG-APPLY] Failed to load version (starting at 0): {e}")
+
+
+def _save_version():
+    try:
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
+        _VERSION_FILE.write_text(json.dumps({"version": _config_applied_version}))
+    except Exception as e:
+        logger.warning(f"[CONFIG-APPLY] Failed to save version: {e}")
+
+
+# Load on module import
+_load_version()
+
+
+def get_applied_version() -> int:
+    return _config_applied_version
+
+
+# ── Core Apply ──
+
 async def apply_config(config: dict) -> dict:
     """
-    Apply central config to local settings.
-    Returns dict of what was changed.
+    Apply central config to local settings table.
+    Per-section isolation: one failing section cannot block others.
+    Returns dict of changed settings keys → new values.
     """
     if not config:
         logger.debug("[CONFIG-APPLY] No config to apply")
         return {}
 
     changes = {}
+    errors = []
 
     async with AsyncSessionLocal() as db:
         for section_key, mapping in CONFIG_TO_SETTINGS_MAP.items():
-            section_data = config.get(section_key)
-            if not section_data:
-                continue
+            try:
+                section_data = config.get(section_key)
+                if not section_data:
+                    continue
 
-            settings_key = mapping["settings_key"]
+                settings_key = mapping["settings_key"]
 
-            # Get current local setting
-            result = await db.execute(
-                select(Settings).where(Settings.key == settings_key)
-            )
-            setting = result.scalar_one_or_none()
-            # Deep copy to avoid SQLAlchemy mutation tracking issues
-            current_value = copy.deepcopy(setting.value) if setting and isinstance(setting.value, dict) else {}
+                result = await db.execute(
+                    select(Settings).where(Settings.key == settings_key)
+                )
+                setting = result.scalar_one_or_none()
+                current_value = copy.deepcopy(setting.value) if setting and isinstance(setting.value, dict) else {}
 
-            # Apply each mapped field
-            changed = False
-            for central_path, local_path in mapping["fields"].items():
-                central_val = _get_nested(section_data, central_path)
-                if central_val is not None:
-                    existing_val = _get_nested(current_value, local_path)
-                    if existing_val != central_val:
-                        _set_nested(current_value, local_path, central_val)
-                        changed = True
-                        logger.debug(f"[CONFIG-APPLY] {settings_key}.{local_path}: {existing_val} -> {central_val}")
+                changed = False
+                for central_path, local_path in mapping["fields"].items():
+                    central_val = _get_nested(section_data, central_path)
+                    if central_val is not None:
+                        existing_val = _get_nested(current_value, local_path)
+                        if existing_val != central_val:
+                            _set_nested(current_value, local_path, central_val)
+                            changed = True
+                            logger.debug(f"[CONFIG-APPLY] {settings_key}.{local_path}: {existing_val!r} -> {central_val!r}")
 
-            if changed:
-                if setting:
-                    setting.value = current_value
-                    flag_modified(setting, "value")
-                else:
-                    setting = Settings(key=settings_key, value=current_value)
-                    db.add(setting)
-                changes[settings_key] = current_value
+                if changed:
+                    if setting:
+                        setting.value = current_value
+                        flag_modified(setting, "value")
+                    else:
+                        setting = Settings(key=settings_key, value=current_value)
+                        db.add(setting)
+                    changes[settings_key] = current_value
+
+            except Exception as e:
+                errors.append(f"{section_key}: {e}")
+                logger.error(f"[CONFIG-APPLY] Section '{section_key}' failed: {e}", exc_info=True)
 
         if changes:
-            await db.commit()
-            logger.info(f"[CONFIG-APPLY] Applied {len(changes)} settings: {list(changes.keys())}")
-        else:
-            logger.debug("[CONFIG-APPLY] No changes to apply")
+            try:
+                await db.commit()
+                logger.info(f"[CONFIG-APPLY] Applied {len(changes)} setting(s): {list(changes.keys())}")
+            except Exception as e:
+                logger.error(f"[CONFIG-APPLY] DB commit failed: {e}", exc_info=True)
+                changes = {}
+
+    if errors:
+        logger.warning(f"[CONFIG-APPLY] {len(errors)} section(s) had errors: {errors}")
 
     return changes
 
 
-# Increment-based version tracking for frontend polling
-_config_applied_version = 0
-
-
-def get_applied_version():
-    return _config_applied_version
-
+# ── Callback ──
 
 async def on_config_synced(config: dict):
-    """Callback for config_sync_client — runs after each successful sync."""
+    """Callback invoked by config_sync_client after each successful sync with changes."""
     global _config_applied_version
     changes = await apply_config(config)
     if changes:
         _config_applied_version += 1
-        logger.info(f"[CONFIG-APPLY] Version bumped to {_config_applied_version}")
+        _save_version()
+        logger.info(f"[CONFIG-APPLY] Version bumped to {_config_applied_version} (changed: {list(changes.keys())})")

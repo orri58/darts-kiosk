@@ -1,44 +1,56 @@
 """
-Config Sync Client — v3.8.0
+Config Sync Client — v3.9.2 (Hardened)
 
 Pulls effective configuration from the Central Server at startup and periodically.
-The local kiosk uses this as its source of truth for pricing, branding, and kiosk behavior.
 Fail-open: if the central server is unreachable, the last known config is used.
+
+Hardening:
+- asyncio.Lock prevents concurrent sync_now() calls (periodic + force_sync)
+- Exponential backoff on consecutive failures (30s → 60s → 120s → cap 300s)
+- Consecutive error counter for health reporting
+- Sync count and error stats for diagnostics
+- Disk cache survives restarts
 """
 import asyncio
 import json
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 import httpx
 
 logger = logging.getLogger("config_sync")
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_DATA_DIR = _PROJECT_ROOT / "data"
+_CACHE_FILE = _DATA_DIR / "config_cache.json"
+
+_BASE_INTERVAL = 300          # 5 minutes normal
+_MIN_BACKOFF = 30             # minimum retry interval on error
+_MAX_BACKOFF = 300            # cap backoff at 5 minutes
+_HTTP_TIMEOUT = 15
 
 
 def _utcnow():
     return datetime.now(timezone.utc)
 
 
-# Resolve data dir for caching
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_DATA_DIR = _PROJECT_ROOT / "data"
-_CACHE_FILE = _DATA_DIR / "config_cache.json"
-
-
 class ConfigSyncClient:
     def __init__(self):
-        self._central_url = None
-        self._api_key = None
-        self._device_id = None
+        self._central_url: Optional[str] = None
+        self._api_key: Optional[str] = None
+        self._device_id: Optional[str] = None
         self._running = False
-        self._sync_interval = 300  # 5 minutes
-        self._current_config = {}
-        self._config_version = 0
-        self._last_sync_at = None
-        self._last_error = None
-        self._callbacks = []  # list of async callables invoked on config change
+        self._sync_lock = asyncio.Lock()
+        self._current_config: dict = {}
+        self._config_version: int = 0
+        self._last_sync_at: Optional[datetime] = None
+        self._last_error: Optional[str] = None
+        self._callbacks: list = []
+        self._sync_count: int = 0
+        self._sync_errors: int = 0
+        self._consecutive_errors: int = 0
 
     def configure(self, central_url: str, api_key: str, device_id: str = None):
         self._central_url = central_url.rstrip("/") if central_url else None
@@ -48,7 +60,6 @@ class ConfigSyncClient:
             logger.info(f"[CONFIG-SYNC] Configured: {self._central_url} device={self._device_id}")
         else:
             logger.info("[CONFIG-SYNC] Not configured (no central URL)")
-        # Load cached config on startup
         self._load_cache()
 
     @property
@@ -67,18 +78,21 @@ class ConfigSyncClient:
     def status(self) -> dict:
         return {
             "configured": self.is_configured,
+            "running": self._running,
             "last_sync_at": self._last_sync_at.isoformat() if self._last_sync_at else None,
             "config_version": self._config_version,
             "last_error": self._last_error,
-            "running": self._running,
+            "sync_count": self._sync_count,
+            "sync_errors": self._sync_errors,
+            "consecutive_errors": self._consecutive_errors,
         }
 
     def on_config_change(self, callback):
-        """Register an async callback for config changes."""
         self._callbacks.append(callback)
 
+    # ── Cache ──
+
     def _load_cache(self):
-        """Load last-known config from disk cache."""
         try:
             if _CACHE_FILE.exists():
                 data = json.loads(_CACHE_FILE.read_text())
@@ -89,7 +103,6 @@ class ConfigSyncClient:
             logger.warning(f"[CONFIG-SYNC] Failed to load cache: {e}")
 
     def _save_cache(self):
-        """Save current config to disk for offline fallback."""
         try:
             _DATA_DIR.mkdir(parents=True, exist_ok=True)
             _CACHE_FILE.write_text(json.dumps({
@@ -100,15 +113,31 @@ class ConfigSyncClient:
         except Exception as e:
             logger.warning(f"[CONFIG-SYNC] Failed to save cache: {e}")
 
+    # ── Sync ──
+
     async def sync_now(self) -> bool:
-        """Pull effective config from central server. Returns True if config changed."""
+        """Pull effective config. Lock-protected against concurrent calls.
+        Returns True if config changed."""
         if not self.is_configured:
             return False
+
+        # Non-blocking lock check: if already syncing, skip
+        if self._sync_lock.locked():
+            logger.debug("[CONFIG-SYNC] Sync skipped — already in progress")
+            return False
+
+        async with self._sync_lock:
+            return await self._do_sync()
+
+    async def _do_sync(self) -> bool:
+        """Internal sync — must be called within _sync_lock."""
+        self._sync_count += 1
         try:
             params = {}
             if self._device_id:
                 params["device_id"] = self._device_id
-            async with httpx.AsyncClient(timeout=15) as client:
+
+            async with httpx.AsyncClient(timeout=_HTTP_TIMEOUT) as client:
                 resp = await client.get(
                     f"{self._central_url}/api/config/effective",
                     params=params,
@@ -125,34 +154,66 @@ class ConfigSyncClient:
             self._config_version = new_version
             self._last_sync_at = _utcnow()
             self._last_error = None
+            self._consecutive_errors = 0
             self._save_cache()
 
             if changed:
-                logger.info(f"[CONFIG-SYNC] Config updated to v{new_version}, layers: {data.get('layers_applied', [])}")
-                for cb in self._callbacks:
-                    try:
-                        await cb(new_config)
-                    except Exception as e:
-                        logger.error(f"[CONFIG-SYNC] Callback error: {e}")
+                layers = data.get("layers_applied", [])
+                logger.info(f"[CONFIG-SYNC] Config updated to v{new_version}, layers={layers}")
+                await self._run_callbacks(new_config)
+            else:
+                logger.debug(f"[CONFIG-SYNC] No changes (v{new_version})")
+
             return changed
 
-        except Exception as e:
-            self._last_error = str(e)
-            logger.warning(f"[CONFIG-SYNC] Sync failed (using cache): {e}")
+        except httpx.TimeoutException:
+            self._sync_errors += 1
+            self._consecutive_errors += 1
+            self._last_error = "timeout"
+            if self._consecutive_errors <= 3 or self._consecutive_errors % 10 == 0:
+                logger.warning(f"[CONFIG-SYNC] Sync timeout (consecutive={self._consecutive_errors}, using cache)")
             return False
 
+        except Exception as e:
+            self._sync_errors += 1
+            self._consecutive_errors += 1
+            self._last_error = str(e)
+            if self._consecutive_errors <= 3 or self._consecutive_errors % 10 == 0:
+                logger.warning(f"[CONFIG-SYNC] Sync failed (consecutive={self._consecutive_errors}, using cache): {e}")
+            return False
+
+    async def _run_callbacks(self, config: dict):
+        """Run all registered callbacks. Errors are isolated per callback."""
+        for cb in self._callbacks:
+            try:
+                await cb(config)
+            except Exception as e:
+                logger.error(f"[CONFIG-SYNC] Callback {cb.__name__} error: {e}", exc_info=True)
+
+    # ── Lifecycle ──
+
+    def _compute_interval(self) -> float:
+        """Compute next sleep interval with exponential backoff on errors."""
+        if self._consecutive_errors == 0:
+            return _BASE_INTERVAL
+        # Backoff: 30, 60, 120, 240, capped at 300
+        backoff = _MIN_BACKOFF * (2 ** min(self._consecutive_errors - 1, 4))
+        return min(backoff, _MAX_BACKOFF)
+
     async def start(self):
-        """Start periodic config sync loop."""
         if self._running or not self.is_configured:
             return
         self._running = True
-        logger.info(f"[CONFIG-SYNC] Starting sync loop (interval={self._sync_interval}s)")
+        logger.info(f"[CONFIG-SYNC] Starting sync loop (base_interval={_BASE_INTERVAL}s)")
 
         # Initial sync
         await self.sync_now()
 
         while self._running:
-            await asyncio.sleep(self._sync_interval)
+            interval = self._compute_interval()
+            if self._consecutive_errors > 0:
+                logger.debug(f"[CONFIG-SYNC] Next sync in {interval}s (backoff, errors={self._consecutive_errors})")
+            await asyncio.sleep(interval)
             if not self._running:
                 break
             await self.sync_now()
