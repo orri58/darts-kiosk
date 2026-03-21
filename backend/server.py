@@ -334,6 +334,19 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Offline queue start failed (non-critical): {exc}")
 
+    # v3.10.0: Start WebSocket push client
+    from backend.services.ws_push_client import ws_push_client
+    try:
+        if _central_url and _central_api_key:
+            ws_push_client.configure(central_url=_central_url, api_key=_central_api_key)
+            ws_push_client.set_handlers(
+                on_config_updated=config_sync_client.sync_now,
+                on_action_created=action_poller.trigger_poll,
+            )
+            await ws_push_client.start()
+    except Exception as exc:
+        logger.warning(f"WS push client start failed (non-critical): {exc}")
+
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
     logger.info(f"Autodarts mode: {os.environ.get('AUTODARTS_MODE', 'observer')}")
@@ -350,6 +363,9 @@ async def lifespan(app: FastAPI):
     from backend.services.offline_queue import offline_queue
     await offline_queue.force_drain()
     offline_queue.stop()
+    # v3.10.0: Stop WS push client
+    from backend.services.ws_push_client import ws_push_client
+    ws_push_client.stop()
     await cyclic_license_checker.stop()
     await stop_watchdog()
     from backend.services.autodarts_observer import observer_manager

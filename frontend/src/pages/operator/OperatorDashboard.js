@@ -107,7 +107,7 @@ export default function OperatorDashboard() {
           icon={Monitor}
           label="Geräte online"
           value={`${data.devices_online} / ${data.devices_total}`}
-          sub={`${onlinePct}% erreichbar`}
+          sub={data.ws_connected_count != null ? `${data.ws_connected_count} via WebSocket` : `${onlinePct}% erreichbar`}
           color={data.devices_online > 0 ? 'emerald' : 'zinc'}
           tid="kpi-online"
         />

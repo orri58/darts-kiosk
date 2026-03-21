@@ -145,6 +145,16 @@ class ActionPoller:
         self._running = False
         logger.info("[ACTION-POLL] Stopped")
 
+    async def trigger_poll(self):
+        """Trigger an immediate poll cycle (called by WS push). Lock-protected against concurrent runs."""
+        if not self.is_configured:
+            return
+        logger.info("[ACTION-POLL] Immediate poll triggered via WS push")
+        try:
+            await self._poll_once()
+        except Exception as e:
+            logger.warning(f"[ACTION-POLL] Triggered poll error: {e}")
+
     # ── Core Poll ──
 
     async def _poll_once(self):

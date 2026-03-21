@@ -74,6 +74,7 @@ class SystemHealth:
     config_sync: Dict = field(default_factory=dict)
     action_poller: Dict = field(default_factory=dict)
     offline_queue: Dict = field(default_factory=dict)
+    ws_push: Dict = field(default_factory=dict)
     recent_errors: List[dict] = field(default_factory=list)
     last_check: str = ""
 
@@ -249,6 +250,14 @@ class HealthMonitor:
         except Exception:
             oq_status = {"configured": False, "error": "import_failed"}
 
+        # v3.10.0: WS push client health
+        ws_push_status = {}
+        try:
+            from backend.services.ws_push_client import ws_push_client
+            ws_push_status = ws_push_client.status
+        except Exception:
+            ws_push_status = {"configured": False, "error": "import_failed"}
+
         return SystemHealth(
             status=status,
             uptime_seconds=uptime,
@@ -261,6 +270,7 @@ class HealthMonitor:
             config_sync=sync_status,
             action_poller=poller_status,
             offline_queue=oq_status,
+            ws_push=ws_push_status,
             recent_errors=list(self._recent_errors),
             last_check=now.isoformat(),
         )

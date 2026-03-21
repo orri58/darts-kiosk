@@ -404,7 +404,7 @@ export default function PortalDevices() {
                   )}
                   <td className="px-4 py-2.5 cursor-pointer" onClick={() => navigate(`/portal/devices/${d.id}`)}>
                     {online
-                      ? <span className="inline-flex items-center gap-1.5 text-emerald-400 text-xs"><Wifi className="w-3.5 h-3.5" /> Online</span>
+                      ? <span className="inline-flex items-center gap-1.5 text-emerald-400 text-xs"><Wifi className="w-3.5 h-3.5" /> Online{d.ws_connected ? ' (WS)' : ''}</span>
                       : <span className="inline-flex items-center gap-1.5 text-zinc-500 text-xs"><WifiOff className="w-3.5 h-3.5" /> Offline</span>}
                   </td>
                   <td className="px-4 py-2.5 font-medium cursor-pointer" onClick={() => navigate(`/portal/devices/${d.id}`)}>{d.device_name || d.id.slice(0, 8)}</td>

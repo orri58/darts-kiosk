@@ -18,7 +18,7 @@ import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
 from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,6 +36,7 @@ from central_server.auth import (
     apply_customer_scope, hash_password, verify_password, create_jwt,
     can_create_role, VALID_ROLES, ROLE_HIERARCHY,
 )
+from central_server.ws_hub import device_ws_hub
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [CENTRAL] %(levelname)s %(message)s")
 logger = logging.getLogger("central_server")
@@ -270,6 +271,7 @@ def _ser_location(loc):
     }
 
 def _ser_device(d):
+    ws_info = device_ws_hub.device_ws_status(d.id)
     return {
         "id": d.id, "location_id": d.location_id, "install_id": d.install_id,
         "api_key": d.api_key, "device_name": d.device_name, "status": d.status,
@@ -277,6 +279,7 @@ def _ser_device(d):
         "last_sync_at": d.last_sync_at.isoformat() if d.last_sync_at else None,
         "sync_count": d.sync_count,
         "created_at": d.created_at.isoformat() if d.created_at else None,
+        "ws_connected": ws_info.get("ws_connected", False),
     }
 
 def _ser_license(lic):
@@ -1416,6 +1419,7 @@ async def telemetry_dashboard(
         "devices_online": online_count,
         "devices_offline": offline_count,
         "devices_total": len(devices),
+        "ws_connected_count": device_ws_hub.connected_count,
         "revenue_today_cents": today_stats["revenue_cents"],
         "revenue_7d_cents": week_stats["revenue_cents"],
         "sessions_today": today_stats["sessions"],
@@ -1734,6 +1738,15 @@ async def upsert_config_profile(
     await _log_audit(db, "config_updated", actor=user.username,
                      message=f"Config {scope_type}/{sid} updated (v{profile.version})")
     await db.commit()
+
+    # v3.10.0: Push config_updated to affected devices
+    try:
+        affected = await _resolve_affected_devices(db, scope_type, scope_id)
+        if affected:
+            await device_ws_hub.push_to_devices(affected, "config_updated", {"scope_type": scope_type, "scope_id": scope_id, "version": profile.version})
+    except Exception as e:
+        logger.debug(f"[WS-PUSH] config_updated push error: {e}")
+
     return _ser_config_profile(profile)
 
 
@@ -1848,6 +1861,14 @@ async def rollback_config(
         await db.commit()
     except Exception:
         pass
+
+    # v3.10.0: Push config_updated to affected devices
+    try:
+        affected = await _resolve_affected_devices(db, scope_type, scope_id)
+        if affected:
+            await device_ws_hub.push_to_devices(affected, "config_updated", {"scope_type": scope_type, "scope_id": scope_id, "version": profile.version})
+    except Exception as e:
+        logger.debug(f"[WS-PUSH] rollback push error: {e}")
 
     return {
         "success": True,
@@ -2314,6 +2335,14 @@ async def apply_import(
                      message=f"Config imported ({mode}) to {target_scope_type}/{sid} v{profile.version} {source_info}")
     await db.commit()
 
+    # v3.10.0: Push config_updated to affected devices
+    try:
+        affected = await _resolve_affected_devices(db, target_scope_type, target_scope_id or "global")
+        if affected:
+            await device_ws_hub.push_to_devices(affected, "config_updated", {"scope_type": target_scope_type, "version": profile.version})
+    except Exception as e:
+        logger.debug(f"[WS-PUSH] import push error: {e}")
+
     return {
         "success": True,
         "mode": mode,
@@ -2404,6 +2433,14 @@ async def bulk_remote_actions(
     except Exception:
         pass
 
+    # v3.10.0: Push action_created to all devices that got a created action
+    try:
+        created_device_ids = [r["device_id"] for r in results if r["status"] == "created"]
+        if created_device_ids:
+            await device_ws_hub.push_to_devices(created_device_ids, "action_created", {"action_type": action_type, "bulk": True})
+    except Exception as e:
+        logger.debug(f"[WS-PUSH] bulk action push error: {e}")
+
     return {
         "action_type": action_type, "total": len(unique_ids),
         "created": created_count, "skipped": skipped_count, "denied": denied_count,
@@ -2447,6 +2484,12 @@ async def issue_remote_action(
     await _log_audit(db, "remote_action_issued", device_id=device_id, actor=user.username,
                      message=f"Action '{action_type}' issued for device {dev.device_name or device_id}")
     await db.commit()
+
+    # v3.10.0: Push action_created to target device
+    try:
+        await device_ws_hub.push_to_device(device_id, "action_created", {"action_type": action_type, "action_id": action.id})
+    except Exception as e:
+        logger.debug(f"[WS-PUSH] action push error: {e}")
 
     return _ser_action(action)
 
@@ -2621,3 +2664,111 @@ async def get_device_detail(
         "daily_stats": daily_stats,
         "recent_actions": recent_actions,
     }
+
+
+# ═══════════════════════════════════════════════════════════════
+# v3.10.0: WEBSOCKET PUSH SYSTEM
+# ═══════════════════════════════════════════════════════════════
+
+
+@app.websocket("/ws/devices")
+async def ws_device_endpoint(ws: WebSocket):
+    """
+    WebSocket endpoint for device push connections.
+    Auth via query param: ?key=<license_api_key>
+    """
+    api_key = ws.query_params.get("key", "")
+    if not api_key:
+        await ws.close(code=4001, reason="Missing API key")
+        return
+
+    # Resolve device by API key
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(CentralDevice).where(CentralDevice.api_key == api_key, CentralDevice.status == "active")
+            )
+            device = result.scalar_one_or_none()
+    except Exception as e:
+        logger.error(f"[WS] Auth DB error: {e}")
+        await ws.close(code=4003, reason="Server error")
+        return
+
+    if not device:
+        await ws.close(code=4002, reason="Invalid API key")
+        return
+
+    device_id = device.id
+    await ws.accept()
+    await device_ws_hub.register(device_id, ws)
+
+    try:
+        # Send welcome event
+        await ws.send_json({"event": "connected", "device_id": device_id})
+
+        # Keep-alive loop: listen for client messages
+        while True:
+            try:
+                msg = await ws.receive_json()
+            except Exception:
+                break
+            # Handle ping/pong
+            if isinstance(msg, dict) and msg.get("type") == "ping":
+                try:
+                    await ws.send_json({"event": "pong"})
+                except Exception:
+                    break
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        logger.debug(f"[WS] Device {device_id} connection error: {e}")
+    finally:
+        await device_ws_hub.unregister(device_id)
+
+
+@app.get("/api/ws/status")
+async def ws_status(user: AuthUser = Depends(get_current_user)):
+    """Get WebSocket hub status — connected devices, event counts."""
+    require_min_role(user, "owner")
+    return device_ws_hub.status()
+
+
+@app.get("/api/ws/device/{device_id}")
+async def ws_device_status(device_id: str, user: AuthUser = Depends(get_current_user)):
+    """Get WS connection status for a specific device."""
+    require_min_role(user, "staff")
+    return device_ws_hub.device_ws_status(device_id)
+
+
+# ── Helper: Resolve affected device IDs for a config scope change ──
+
+async def _resolve_affected_devices(db: AsyncSession, scope_type: str, scope_id: str) -> list[str]:
+    """Given a config scope, return the list of device IDs that are affected."""
+    if scope_type == "device":
+        return [scope_id] if scope_id else []
+
+    if scope_type == "location":
+        result = await db.execute(
+            select(CentralDevice.id).where(CentralDevice.location_id == scope_id, CentralDevice.status == "active")
+        )
+        return [r[0] for r in result.all()]
+
+    if scope_type == "customer":
+        loc_result = await db.execute(
+            select(CentralLocation.id).where(CentralLocation.customer_id == scope_id)
+        )
+        location_ids = [r[0] for r in loc_result.all()]
+        if not location_ids:
+            return []
+        dev_result = await db.execute(
+            select(CentralDevice.id).where(CentralDevice.location_id.in_(location_ids), CentralDevice.status == "active")
+        )
+        return [r[0] for r in dev_result.all()]
+
+    if scope_type == "global":
+        result = await db.execute(
+            select(CentralDevice.id).where(CentralDevice.status == "active")
+        )
+        return [r[0] for r in result.all()]
+
+    return []
