@@ -3,67 +3,72 @@
 ## Original Problem Statement
 Production-ready, local-first Darts Kiosk + Admin Control system for a cafe.
 Central SaaS platform with 4-tier RBAC, centralized management, telemetry, and revenue mirroring.
-Config Runtime Integration: Central config flows to kiosk runtime via sync/apply/local DB/UI.
-System Hardening v3.9.2: Robustness, idempotency, retry, persistence, fail-open.
-**Observability v3.9.3**: Device debug panel in portal with health, logs, action history, config status.
+Config Runtime Integration, System Hardening, Observability, and now **Stability Package v3.9.4**.
 
-## System Architecture (v3.9.3)
+## Stability Package v3.9.4 — Design
+
+### 1. device_id Auto-Resolution
 ```
-Device Heartbeat Flow:
-  Kiosk Backend
-    → DeviceLogBuffer (ring buffer, 100 entries)
-    → TelemetrySyncClient heartbeat (every 60s)
-       payload: { version, health_snapshot, logs[last 30] }
-    → Central Server (stores in devices table)
-    → Portal Device Detail (reads via device detail API)
+Startup → Read license_sync_config from DB
+       → If device_id missing + server_url + api_key present:
+         → GET {central}/api/device/resolve (X-License-Key header)
+         → 200: Persist device_id to license_sync_config in DB
+         → 404: Not registered yet (fail-safe, continue without)
+         → Error: Log warning, continue without
+       → Next startup: Load device_id from DB (no network call)
 ```
+**Edge Cases:**
+- API key not registered → 404 → runs without device_id (action poller disabled)
+- Central unreachable → timeout → same as 404 behavior
+- device_id already present → skips resolution entirely
+- No server_url/api_key → skips resolution entirely
 
-## Observability Data Model (v3.9.3)
+### 2. Config Schema Validation
+| Section | Field | Rule |
+|---------|-------|------|
+| pricing | mode | in [per_game, per_time, per_player] |
+| pricing | per_game.price_per_credit | number >= 0 |
+| pricing | per_game.default_credits | integer >= 1 |
+| pricing | per_time.price_per_30/60_min | number >= 0 |
+| pricing | min_amount | number >= 0 |
+| branding | cafe_name | non-empty string, max 100 chars |
+| branding | subtitle | string, max 200 chars |
+| branding | primary/secondary/accent_color | #RRGGBB hex format |
+| branding | logo_url | http/https URL or null |
+| kiosk | auto_lock/idle_timeout_min | number > 0 |
+| kiosk | auto_start, fullscreen | boolean |
+| texts | * | string, max 200 chars |
+| language | default | "de" or "en" |
+| language | allow_switch | boolean |
+| sound | enabled | boolean |
+| sound | volume | 0-100 |
+| sound | quiet_hours_start/end | 0-23 |
+| sharing | qr_enabled/public_results/leaderboard_public | boolean |
 
-### Heartbeat Payload (Device → Central)
-```json
-{
-  "version": "3.9.3",
-  "health": {
-    "health_status": "healthy|degraded|unknown",
-    "config_sync": { "config_version", "last_sync_at", "consecutive_errors", "last_error", "sync_count" },
-    "action_poller": { "last_poll_at", "last_action_at", "actions_executed", "actions_failed", "consecutive_poll_errors", "last_error" },
-    "config_applied_version": 3
-  },
-  "logs": [
-    { "ts": "ISO8601", "level": "info|warn|error", "src": "config_sync|config_apply|action_poller", "evt": "event_type", "msg": "message", "ctx": {} }
-  ]
-}
+### 3. Config Rollback
 ```
+Upsert Flow:
+  1. Validate config_data → 422 if invalid
+  2. If profile exists: save current to config_history
+  3. Update profile with new data + bump version
+  4. Audit log
 
-### Health Status Rules
-- **healthy**: All systems nominal, 0 consecutive sync/poll errors
-- **degraded**: 3+ consecutive config sync errors OR 5+ action poller errors
-- **offline**: No heartbeat received within threshold (5 min)
-
-### Portal Device Detail Sections
-| Section | Data Source | Content |
-|---------|-----------|---------|
-| Health Badge | health_snapshot.health_status | healthy/degraded/offline with reason |
-| Status Grid | health_snapshot + device fields | version, last heartbeat, config version, last sync, last action |
-| Health Reason | computed | "3 Sync-Fehler", "Kein Heartbeat / Offline", etc. |
-| Config-Sync Card | health_snapshot.config_sync | version, applied version, sync count, errors |
-| Action-Poller Card | health_snapshot.action_poller | executed, failed, poll errors |
-| Remote Actions | POST /api/remote-actions/{id} | Config-Sync, Backend Restart, UI Reload |
-| Action History | remote_actions table | status badges, duration, error messages |
-| Device Logs | device_logs column | color-coded (INFO/WARN/ERROR), filterable |
-| Daily Stats | device_daily_stats table | last 7 days revenue/sessions/games |
-| Recent Events | telemetry_events table | last events with timestamps |
+Rollback Flow:
+  1. Find history entry for requested version
+  2. Save current profile to history (preserves chain)
+  3. Restore history entry's config_data to profile
+  4. Bump version (never reuses old number)
+  5. Audit log with "rollback v{N}" marker
+```
 
 ## Key API Endpoints
-### Device Observability (Central Server)
-- POST /api/telemetry/heartbeat — accepts health + logs payload
-- GET /api/telemetry/device/{id} — returns full device detail with health_snapshot + device_logs
+### Device Identity (Central)
+- GET /api/device/resolve — resolve device_id from API key (X-License-Key header)
 
-### Config Sync & Status (Local Backend)
-- GET /api/settings/config-version — lightweight version polling
-- GET /api/settings/config-sync/status — full sync/poller status
-- POST /api/settings/config-sync/force — admin-only force sync
+### Config Validation & Rollback (Central)
+- PUT /api/config/profile/{scope}/{id} — upsert with schema validation (422 on error)
+- GET /api/config/history/{scope}/{id} — version history with active_version
+- POST /api/config/rollback/{scope}/{id}/{version} — rollback to previous version
 
 ## Test Credentials
 - **Central Portal superadmin**: superadmin / admin
