@@ -2079,6 +2079,8 @@ async def bulk_remote_actions(
     body = await request.json()
     device_ids = body.get("device_ids", [])
     action_type = body.get("action_type", "")
+    is_retry = body.get("is_retry", False)
+    retry_ref = body.get("retry_ref")  # optional: reference to original run timestamp
 
     if not isinstance(device_ids, list) or len(device_ids) == 0:
         raise HTTPException(400, "device_ids must be a non-empty list")
@@ -2121,9 +2123,12 @@ async def bulk_remote_actions(
         created_count += 1
 
     await db.commit()
+    audit_msg = f"Bulk '{action_type}': {created_count} erstellt, {skipped_count} uebersprungen, {denied_count} verweigert von {len(unique_ids)} Geraeten"
+    if is_retry:
+        audit_msg = f"[RETRY] {audit_msg}"
     try:
         await _log_audit(db, "bulk_remote_action", actor=user.username,
-                         message=f"Bulk '{action_type}': {created_count} erstellt, {skipped_count} uebersprungen, {denied_count} verweigert von {len(unique_ids)} Geraeten")
+                         message=audit_msg)
         await db.commit()
     except Exception:
         pass
@@ -2131,6 +2136,7 @@ async def bulk_remote_actions(
     return {
         "action_type": action_type, "total": len(unique_ids),
         "created": created_count, "skipped": skipped_count, "denied": denied_count,
+        "is_retry": is_retry, "retry_ref": retry_ref,
         "results": results,
     }
 

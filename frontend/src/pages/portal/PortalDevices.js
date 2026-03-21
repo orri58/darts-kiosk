@@ -4,7 +4,7 @@ import { useCentralData } from '../../hooks/useCentralData';
 import { useNavigate } from 'react-router-dom';
 import {
   Wifi, WifiOff, Ban, CheckCircle, AlertTriangle, ExternalLink,
-  RefreshCw, RotateCcw, Play, Square, SquareCheck, X, Loader2,
+  RefreshCw, RotateCcw, Play, Square, SquareCheck, X, Loader2, RotateCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
@@ -17,18 +17,108 @@ const BULK_ACTIONS = [
 ];
 
 const BULK_LIMIT = 50;
-const BULK_KEY = 'portal_last_bulk';
+const BULK_KEY = 'portal_bulk_runs';
+const FAILED_STATUSES = new Set(['denied', 'error', 'skipped']);
 
-function loadPersistedResults() {
+function loadPersistedRuns() {
   try {
     const raw = localStorage.getItem(BULK_KEY);
-    if (!raw) return null;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (parsed.ts && (Date.now() - parsed.ts) < 3600000) return parsed.data;
+    if (parsed.ts && (Date.now() - parsed.ts) < 3600000) return parsed.runs || [];
   } catch { /* ignore */ }
-  return null;
+  return [];
 }
 
+const actionLabel = (key) =>
+  key === 'force_sync' ? 'Config Sync' : key === 'reload_ui' ? 'UI Reload' : 'Backend Restart';
+
+const statusLabel = (s) =>
+  s === 'created' ? 'Erstellt' : s === 'skipped' ? 'Uebersprungen' : s === 'denied' ? 'Verweigert' : 'Fehler';
+
+const statusColor = (s) =>
+  s === 'created' ? 'bg-emerald-500/10 text-emerald-400' :
+  s === 'skipped' ? 'bg-amber-500/10 text-amber-400' : 'bg-red-500/10 text-red-400';
+
+const statusIcon = (s) =>
+  s === 'created' ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" /> :
+  s === 'skipped' ? <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" /> :
+  <Ban className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />;
+
+// ─── Run Results Panel ──────────────────────────────────────
+function RunPanel({ run, runIndex, totalRuns, onRetryFailed, onRetrySingle, retryLoading }) {
+  const failed = run.results.filter(r => FAILED_STATUSES.has(r.status));
+  const hasFailed = failed.length > 0;
+  const allSuccess = run.created === run.total;
+  const ts = run.timestamp ? new Date(run.timestamp).toLocaleString('de-DE', {
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  }) : '';
+
+  return (
+    <div className="border border-zinc-800/50 rounded-lg overflow-hidden" data-testid={`bulk-run-${runIndex}`}>
+      {/* Run header */}
+      <div className="flex items-center justify-between px-3 py-2 bg-zinc-900/60">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-zinc-500 uppercase">
+            Run #{runIndex + 1}{run.is_retry ? ' (Retry)' : ''}
+          </span>
+          <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${
+            allSuccess ? 'bg-emerald-500/10 text-emerald-400' :
+            run.created > 0 ? 'bg-amber-500/10 text-amber-400' : 'bg-red-500/10 text-red-400'
+          }`}>
+            {run.created}/{run.total} erfolgreich
+          </span>
+          {ts && <span className="text-[10px] text-zinc-600">{ts}</span>}
+        </div>
+        {/* Retry failed button */}
+        {hasFailed && (
+          <button
+            onClick={() => onRetryFailed(runIndex)}
+            disabled={retryLoading}
+            className="flex items-center gap-1 px-2 py-1 bg-red-500/5 border border-red-500/20 rounded-md text-[10px] text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors disabled:opacity-40"
+            data-testid={`retry-failed-run-${runIndex}`}
+          >
+            <RotateCw className="w-3 h-3" />
+            {failed.length} fehlgeschlagene erneut
+          </button>
+        )}
+      </div>
+      {/* Summary counters */}
+      <div className="flex items-center gap-3 px-3 py-1.5 border-b border-zinc-800/30 text-[10px]">
+        {run.created > 0 && <span className="text-emerald-400">{run.created} erstellt</span>}
+        {run.skipped > 0 && <span className="text-amber-400">{run.skipped} uebersprungen</span>}
+        {run.denied > 0 && <span className="text-red-400">{run.denied} verweigert</span>}
+      </div>
+      {/* Per-device results */}
+      <div className="divide-y divide-zinc-800/20 max-h-[160px] overflow-y-auto">
+        {run.results.map((r, i) => (
+          <div key={i} className="flex items-center gap-2 px-3 py-1.5 text-xs" data-testid={`run-${runIndex}-result-${r.device_id}`}>
+            {statusIcon(r.status)}
+            <span className="text-zinc-300 flex-1 truncate">{r.device_name || r.device_id?.slice(0, 8)}</span>
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${statusColor(r.status)}`}>
+              {statusLabel(r.status)}
+            </span>
+            {r.message && <span className="text-zinc-600 truncate max-w-[120px]" title={r.message}>{r.message}</span>}
+            {/* Per-device retry */}
+            {FAILED_STATUSES.has(r.status) && (
+              <button
+                onClick={() => onRetrySingle(r.device_id, run.action_type)}
+                disabled={retryLoading}
+                className="p-0.5 text-zinc-600 hover:text-red-400 transition-colors disabled:opacity-30"
+                title="Dieses Geraet erneut ausfuehren"
+                data-testid={`retry-single-${r.device_id}`}
+              >
+                <RotateCw className="w-3 h-3" />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Component ─────────────────────────────────────────
 export default function PortalDevices() {
   const navigate = useNavigate();
   const { apiBase, authHeaders, canManage, canManageStaff } = useCentralAuth();
@@ -37,12 +127,24 @@ export default function PortalDevices() {
   const [selected, setSelected] = useState(new Set());
   const [confirmAction, setConfirmAction] = useState(null);
   const [bulkLoading, setBulkLoading] = useState(false);
-  const [bulkResults, setBulkResults] = useState(loadPersistedResults);
+  const [bulkRuns, setBulkRuns] = useState(loadPersistedRuns);
 
-  const persistResults = (data) => {
-    setBulkResults(data);
-    if (data) localStorage.setItem(BULK_KEY, JSON.stringify({ data, ts: Date.now() }));
+  const persistRuns = (runs) => {
+    setBulkRuns(runs);
+    if (runs && runs.length > 0) localStorage.setItem(BULK_KEY, JSON.stringify({ runs, ts: Date.now() }));
     else localStorage.removeItem(BULK_KEY);
+  };
+
+  const addRun = (apiData, isRetry = false, retryRef = null) => {
+    const run = {
+      ...apiData,
+      is_retry: isRetry,
+      retry_ref: retryRef,
+      timestamp: new Date().toISOString(),
+    };
+    const next = [...bulkRuns, run];
+    persistRuns(next);
+    return next;
   };
 
   const handleToggle = async (d) => {
@@ -71,6 +173,7 @@ export default function PortalDevices() {
     setSelected(prev => prev.size === devices.length ? new Set() : new Set(devices.map(d => d.id)));
   };
 
+  // Execute a fresh bulk action from selection
   const executeBulk = async () => {
     if (!confirmAction || selected.size === 0) return;
     setBulkLoading(true);
@@ -79,13 +182,55 @@ export default function PortalDevices() {
         device_ids: Array.from(selected),
         action_type: confirmAction.key,
       }, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
-      persistResults(res.data);
+      addRun(res.data, false);
       toast.success(`${res.data.created} von ${res.data.total} Aktionen erstellt`);
     } catch (err) {
       toast.error(err?.response?.data?.detail || 'Bulk-Aktion fehlgeschlagen');
     } finally {
       setBulkLoading(false);
       setConfirmAction(null);
+    }
+  };
+
+  // Retry all failed devices from a specific run
+  const retryFailed = async (runIndex) => {
+    const run = bulkRuns[runIndex];
+    if (!run) return;
+    const failedIds = run.results.filter(r => FAILED_STATUSES.has(r.status)).map(r => r.device_id);
+    if (failedIds.length === 0) return;
+
+    setBulkLoading(true);
+    try {
+      const res = await axios.post(`${apiBase}/remote-actions/bulk`, {
+        device_ids: failedIds,
+        action_type: run.action_type,
+        is_retry: true,
+        retry_ref: run.timestamp,
+      }, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
+      addRun(res.data, true, run.timestamp);
+      toast.success(`Retry: ${res.data.created} von ${res.data.total} erstellt`);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Retry fehlgeschlagen');
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  // Retry a single device
+  const retrySingle = async (deviceId, actionType) => {
+    setBulkLoading(true);
+    try {
+      const res = await axios.post(`${apiBase}/remote-actions/bulk`, {
+        device_ids: [deviceId],
+        action_type: actionType,
+        is_retry: true,
+      }, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
+      addRun(res.data, true);
+      toast.success(res.data.created > 0 ? 'Aktion erstellt' : 'Aktion uebersprungen');
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || 'Retry fehlgeschlagen');
+    } finally {
+      setBulkLoading(false);
     }
   };
 
@@ -105,8 +250,8 @@ export default function PortalDevices() {
   const someSelected = selected.size > 0;
   const overLimit = selected.size > BULK_LIMIT;
 
-  const actionLabel = (key) =>
-    key === 'force_sync' ? 'Config Sync' : key === 'reload_ui' ? 'UI Reload' : 'Backend Restart';
+  // For table row highlighting: use the latest run's results
+  const latestRun = bulkRuns.length > 0 ? bulkRuns[bulkRuns.length - 1] : null;
 
   return (
     <div className="space-y-4" data-testid="portal-devices">
@@ -186,49 +331,33 @@ export default function PortalDevices() {
         </div>
       )}
 
-      {/* Bulk Results — persistent */}
-      {bulkResults && (
+      {/* Bulk Runs — multi-run display with retry */}
+      {bulkRuns.length > 0 && (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden" data-testid="bulk-results-panel">
           <div className="flex items-center justify-between px-4 py-3 border-b border-zinc-800">
             <div className="flex items-center gap-3">
               <h3 className="text-sm font-semibold text-white">
-                Ergebnis: {actionLabel(bulkResults.action_type)}
+                Ergebnis: {actionLabel(bulkRuns[0].action_type)}
               </h3>
-              <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                bulkResults.denied === 0 && bulkResults.created === bulkResults.total
-                  ? 'bg-emerald-500/10 text-emerald-400'
-                  : bulkResults.created > 0
-                    ? 'bg-amber-500/10 text-amber-400'
-                    : 'bg-red-500/10 text-red-400'
-              }`}>
-                {bulkResults.created}/{bulkResults.total} erstellt
+              <span className="text-[10px] text-zinc-600">
+                {bulkRuns.length} Run{bulkRuns.length !== 1 ? 's' : ''}
               </span>
             </div>
-            <button onClick={() => persistResults(null)} className="text-zinc-500 hover:text-zinc-300" data-testid="bulk-results-close">
+            <button onClick={() => persistRuns([])} className="text-zinc-500 hover:text-zinc-300" data-testid="bulk-results-close">
               <X className="w-4 h-4" />
             </button>
           </div>
-          <div className="flex items-center gap-4 px-4 py-2 border-b border-zinc-800/50 text-xs">
-            {bulkResults.created > 0 && <span className="text-emerald-400">{bulkResults.created} erstellt</span>}
-            {bulkResults.skipped > 0 && <span className="text-amber-400">{bulkResults.skipped} uebersprungen</span>}
-            {bulkResults.denied > 0 && <span className="text-red-400">{bulkResults.denied} verweigert</span>}
-          </div>
-          <div className="divide-y divide-zinc-800/30 max-h-[200px] overflow-y-auto">
-            {bulkResults.results.map((r, i) => (
-              <div key={i} className="flex items-center gap-2 px-4 py-2 text-xs" data-testid={`bulk-result-${r.device_id}`}>
-                {r.status === 'created' && <CheckCircle className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />}
-                {r.status === 'skipped' && <AlertTriangle className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />}
-                {(r.status === 'denied' || r.status === 'error') && <Ban className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />}
-                <span className="text-zinc-300 flex-1 truncate">{r.device_name || r.device_id?.slice(0, 8)}</span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${
-                  r.status === 'created' ? 'bg-emerald-500/10 text-emerald-400' :
-                  r.status === 'skipped' ? 'bg-amber-500/10 text-amber-400' :
-                  'bg-red-500/10 text-red-400'
-                }`}>
-                  {r.status === 'created' ? 'Erstellt' : r.status === 'skipped' ? 'Uebersprungen' : r.status === 'denied' ? 'Verweigert' : 'Fehler'}
-                </span>
-                {r.message && <span className="text-zinc-600 truncate max-w-[140px]" title={r.message}>{r.message}</span>}
-              </div>
+          <div className="p-3 space-y-2 max-h-[400px] overflow-y-auto">
+            {bulkRuns.map((run, idx) => (
+              <RunPanel
+                key={idx}
+                run={run}
+                runIndex={idx}
+                totalRuns={bulkRuns.length}
+                onRetryFailed={retryFailed}
+                onRetrySingle={retrySingle}
+                retryLoading={bulkLoading}
+              />
             ))}
           </div>
         </div>
@@ -260,9 +389,9 @@ export default function PortalDevices() {
             {(devices || []).map(d => {
               const online = d.last_sync_at && ((now - new Date(d.last_sync_at)) / 1000) < 600;
               const isSel = selected.has(d.id);
-              const rItem = bulkResults?.results?.find(r => r.device_id === d.id);
+              const rItem = latestRun?.results?.find(r => r.device_id === d.id);
               const rowHighlight = rItem
-                ? rItem.status === 'created' ? 'bg-emerald-500/[.03]' : (rItem.status === 'denied' || rItem.status === 'error') ? 'bg-red-500/[.03]' : ''
+                ? rItem.status === 'created' ? 'bg-emerald-500/[.03]' : FAILED_STATUSES.has(rItem.status) ? 'bg-red-500/[.03]' : ''
                 : isSel ? 'bg-indigo-500/5' : '';
               return (
                 <tr key={d.id} className={`text-zinc-300 hover:bg-zinc-900/30 ${rowHighlight}`} data-testid={`device-row-${d.id}`}>
