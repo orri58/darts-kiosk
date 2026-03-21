@@ -8,15 +8,17 @@ Multi-tenant Darts Kiosk SaaS platform with central management portal and local 
 - **Local Kiosk Clients**: Autonomous operation with config sync and remote action polling
 - **Configuration Management**: Scoped configs (global/customer/location/device), version history, rollback, export/import
 - **Device Management**: Registration, licensing, health monitoring, binding verification
+- **Real-time Push**: WebSocket-based push system for instant config/action delivery (polling as fallback)
 - **Autodarts Integration**: Playwright-based browser automation for game control
 - **White-Label**: Custom branding, color palettes, logos per customer
 - **i18n**: Full German/English support across portal and kiosk
 
 ## Architecture
-- **Central Server**: FastAPI (Python) — `/app/central_server/server.py`
-- **Local Backend**: FastAPI — `/app/backend/server.py`
+- **Central Server**: FastAPI (Python) — `/app/central_server/server.py` — port 8002
+- **Local Backend**: FastAPI — `/app/backend/server.py` — port 8001
 - **Frontend**: React + Tailwind + Shadcn/UI — `/app/frontend/`
 - **Database**: SQLite via SQLAlchemy (both central and local)
+- **WebSocket Hub**: `/ws/devices` on central server, `ws_push_client` on device backend
 
 ## User Personas
 | Role | Access |
@@ -28,15 +30,13 @@ Multi-tenant Darts Kiosk SaaS platform with central management portal and local 
 
 ## Credentials
 - **Central Portal**: superadmin / admin
-- **Local Admin Panel**: admin / admin123
 
 ## Key Technical Decisions
-- Pydantic validation for all config changes
 - Config scoping: global → customer → location → device (inheritance)
-- Persistent sync/action clients with self-recovery
-- Structured centralized logging from devices
-- Device binding with hardware fingerprint verification
-- Config export/import with validation, diff preview, merge/replace modes
+- WebSocket push as enhancement, polling as fallback (no single point of failure)
+- Push events scoped to affected devices only (via _resolve_affected_devices)
+- Persistent offline queue for network outage resilience
+- Exponential backoff for WS reconnect (5s → 60s max)
 
 ## Feature Status
 See CHANGELOG.md for completed features and ROADMAP.md for upcoming work.
