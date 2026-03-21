@@ -252,3 +252,20 @@ class RemoteAction(Base):
     issued_at = Column(DateTime, default=_utcnow)
     acked_at = Column(DateTime, nullable=True)
     result_message = Column(Text, nullable=True)
+
+
+class ConfigHistory(Base):
+    """
+    v3.9.4: Stores previous versions of config profiles for rollback.
+    Created automatically when a profile is updated.
+    """
+    __tablename__ = "config_history"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    profile_id = Column(String(36), nullable=False, index=True)
+    scope_type = Column(String(20), nullable=False, index=True)
+    scope_id = Column(String(36), nullable=True, index=True)
+    config_data = Column(JSON, nullable=False)
+    version = Column(Integer, nullable=False)
+    updated_by = Column(String(100), nullable=True)
+    saved_at = Column(DateTime, default=_utcnow)

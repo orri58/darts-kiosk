@@ -252,8 +252,46 @@ async def lifespan(app: FastAPI):
     _central_url = _sync_cfg.get("server_url", "")
     _central_api_key = _sync_cfg.get("api_key", "")
     _central_device_id = _sync_cfg.get("device_id")  # Central Server device UUID, set during registration
+
+    # v3.9.4: Auto-resolve device_id if missing
+    if _central_url and _central_api_key and not _central_device_id:
+        logger.info("[SYNC] device_id missing — attempting auto-resolution via API key...")
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10) as _hc:
+                _resolve_resp = await _hc.get(
+                    f"{_central_url.rstrip('/')}/api/device/resolve",
+                    headers={"X-License-Key": _central_api_key},
+                )
+                if _resolve_resp.status_code == 200:
+                    _resolved = _resolve_resp.json()
+                    _central_device_id = _resolved["device_id"]
+                    # Persist into license_sync_config
+                    _sync_cfg["device_id"] = _central_device_id
+                    async with AsyncSessionLocal() as _persist_db:
+                        from backend.models import Settings as _PersistModel
+                        _persist_result = await _persist_db.execute(
+                            select(_PersistModel).where(_PersistModel.key == "license_sync_config")
+                        )
+                        _persist_row = _persist_result.scalar_one_or_none()
+                        if _persist_row:
+                            import copy as _cp
+                            _new_val = _cp.deepcopy(_persist_row.value)
+                            _new_val["device_id"] = _central_device_id
+                            _persist_row.value = _new_val
+                            from sqlalchemy.orm.attributes import flag_modified as _fm
+                            _fm(_persist_row, "value")
+                            await _persist_db.commit()
+                    logger.info(f"[SYNC] device_id resolved and persisted: {_central_device_id}")
+                elif _resolve_resp.status_code == 404:
+                    logger.info("[SYNC] device_id resolution: no device found for this API key (not yet registered?)")
+                else:
+                    logger.warning(f"[SYNC] device_id resolution failed: HTTP {_resolve_resp.status_code}")
+        except Exception as _re:
+            logger.warning(f"[SYNC] device_id auto-resolution failed (non-critical): {_re}")
+
     if _central_url and _central_api_key:
-        logger.info(f"[SYNC] Central config found: url={_central_url} device_id={_central_device_id}")
+        logger.info(f"[SYNC] Central config: url={_central_url} device_id={_central_device_id or 'NONE'}")
     else:
         logger.info("[SYNC] No central server configured — sync services skipped")
 

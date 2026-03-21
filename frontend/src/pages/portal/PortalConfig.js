@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import {
   Save, RefreshCw, DollarSign, Palette, Paintbrush, Monitor,
   Type, Languages, Volume2, QrCode, Code, Layers, ChevronDown,
-  Globe, Building2, MapPin, ToggleLeft, ToggleRight, Eye
+  Globe, Building2, MapPin, ToggleLeft, ToggleRight, Eye, History, Undo2
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -370,6 +370,10 @@ export default function PortalConfig() {
   const [activeTab, setActiveTab] = useState('pricing');
   const [advancedMode, setAdvancedMode] = useState(false);
   const [scopeOpen, setScopeOpen] = useState(false);
+  const [history, setHistory] = useState(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [rollbackTarget, setRollbackTarget] = useState(null); // version to confirm
+  const [rollbackLoading, setRollbackLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -393,7 +397,46 @@ export default function PortalConfig() {
     }
   }, [apiBase, authHeaders, scope]);
 
+  const currentScopeId = editScope === 'global' ? 'global'
+    : editScope === 'customer' ? scope.customerId
+    : editScope === 'location' ? scope.locationId
+    : scope.deviceId;
+
+  const canEdit = editScope === 'global' ? isSuperadmin : !!currentScopeId;
+
+  const fetchHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const sid = editScope === 'global' ? 'global' : currentScopeId;
+      const res = await axios.get(`${apiBase}/config/history/${editScope}/${sid}`, { headers: authHeaders });
+      setHistory(res.data);
+    } catch {
+      setHistory(null);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [apiBase, authHeaders, editScope, currentScopeId]);
+
+  const handleRollback = async (version) => {
+    setRollbackLoading(true);
+    try {
+      const sid = editScope === 'global' ? 'global' : currentScopeId;
+      await axios.post(`${apiBase}/config/rollback/${editScope}/${sid}/${version}`, {}, {
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      });
+      toast.success(`Rollback auf Version ${version} erfolgreich`);
+      setRollbackTarget(null);
+      fetchData();
+      fetchHistory();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Rollback fehlgeschlagen');
+    } finally {
+      setRollbackLoading(false);
+    }
+  };
+
   useEffect(() => { fetchData(); }, [fetchData]);
+  useEffect(() => { if (advancedMode) fetchHistory(); }, [advancedMode, fetchHistory]);
 
   useEffect(() => {
     const scopeId = editScope === 'global' ? null
@@ -403,13 +446,6 @@ export default function PortalConfig() {
     const prof = profiles.find(p => p.scope_type === editScope && (editScope === 'global' ? !p.scope_id : p.scope_id === scopeId));
     setEditData(prof?.config_data || {});
   }, [editScope, profiles, scope]);
-
-  const currentScopeId = editScope === 'global' ? 'global'
-    : editScope === 'customer' ? scope.customerId
-    : editScope === 'location' ? scope.locationId
-    : scope.deviceId;
-
-  const canEdit = editScope === 'global' ? isSuperadmin : !!currentScopeId;
 
   const handleSet = (path, value) => {
     setEditData(prev => setN(prev, path, value));
@@ -427,7 +463,13 @@ export default function PortalConfig() {
       toast.success('Einstellungen gespeichert');
       fetchData();
     } catch (err) {
-      toast.error(err.response?.data?.detail || 'Speichern fehlgeschlagen');
+      const detail = err.response?.data?.detail;
+      if (detail && typeof detail === 'object' && detail.validation_errors) {
+        // Schema validation errors — show each one
+        detail.validation_errors.forEach(e => toast.error(e, { duration: 6000 }));
+      } else {
+        toast.error(typeof detail === 'string' ? detail : 'Speichern fehlgeschlagen');
+      }
     } finally {
       setSaving(false);
     }
@@ -640,6 +682,70 @@ export default function PortalConfig() {
                     );
                   })}
                 </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Config History & Rollback — in advanced mode */}
+          {advancedMode && history && (
+            <Card className="bg-zinc-900 border-zinc-800" data-testid="config-history-card">
+              <CardContent className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <History className="w-4 h-4 text-zinc-500" />
+                    <p className="text-xs text-zinc-400 font-medium">Versions-Historie</p>
+                  </div>
+                  <button onClick={fetchHistory} className="text-zinc-600 hover:text-zinc-400" data-testid="history-refresh-btn">
+                    <RefreshCw className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+
+                {/* Active version */}
+                {history.active_version && (
+                  <div className="flex items-center gap-2 py-2 mb-2 border-b border-zinc-800">
+                    <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-400 rounded text-[10px] font-medium border border-emerald-500/20">AKTIV</span>
+                    <span className="text-xs text-white font-mono">v{history.active_version}</span>
+                    <span className="text-[10px] text-zinc-600 ml-auto">{history.active_updated_by}</span>
+                  </div>
+                )}
+
+                {history.history?.length > 0 ? (
+                  <div className="space-y-1 max-h-[300px] overflow-y-auto">
+                    {history.history.map(h => (
+                      <div key={h.id} className="flex items-center gap-2 py-1.5 border-b border-zinc-800/30 last:border-0" data-testid={`history-entry-v${h.version}`}>
+                        <span className="text-xs text-zinc-400 font-mono w-8">v{h.version}</span>
+                        <span className="text-[10px] text-zinc-600 flex-1 truncate">{h.updated_by || '—'}</span>
+                        <span className="text-[10px] text-zinc-600">
+                          {h.saved_at ? new Date(h.saved_at).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+                        </span>
+                        {h.version !== history.active_version && (
+                          rollbackTarget === h.version ? (
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => handleRollback(h.version)} disabled={rollbackLoading}
+                                className="px-2 py-0.5 bg-amber-500/10 text-amber-400 rounded text-[10px] font-medium hover:bg-amber-500/20 disabled:opacity-50"
+                                data-testid={`rollback-confirm-v${h.version}`}>
+                                {rollbackLoading ? '...' : 'Ja'}
+                              </button>
+                              <button onClick={() => setRollbackTarget(null)}
+                                className="px-2 py-0.5 text-zinc-600 rounded text-[10px] hover:text-zinc-400">
+                                Nein
+                              </button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setRollbackTarget(h.version)}
+                              className="text-zinc-600 hover:text-amber-400 transition-colors"
+                              title="Auf diese Version zuruecksetzen"
+                              data-testid={`rollback-btn-v${h.version}`}>
+                              <Undo2 className="w-3.5 h-3.5" />
+                            </button>
+                          )
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[10px] text-zinc-600">Keine frueheren Versionen vorhanden</p>
+                )}
               </CardContent>
             </Card>
           )}

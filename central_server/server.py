@@ -216,7 +216,28 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"[MIGRATE] observability columns: {e}")
 
-    logger.info("Central License Server v3.9.3 started")
+    # v3.9.4: Create config_history table
+    async with AsyncSessionLocal() as db:
+        try:
+            await db.execute(_text("""
+                CREATE TABLE IF NOT EXISTS config_history (
+                    id VARCHAR(36) PRIMARY KEY,
+                    profile_id VARCHAR(36) NOT NULL,
+                    scope_type VARCHAR(20) NOT NULL,
+                    scope_id VARCHAR(36),
+                    config_data JSON NOT NULL,
+                    version INTEGER NOT NULL,
+                    updated_by VARCHAR(100),
+                    saved_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            """))
+            await db.execute(_text("CREATE INDEX IF NOT EXISTS ix_config_history_profile ON config_history(profile_id)"))
+            await db.execute(_text("CREATE INDEX IF NOT EXISTS ix_config_history_scope ON config_history(scope_type, scope_id)"))
+            await db.commit()
+        except Exception as e:
+            logger.warning(f"[MIGRATE] config_history: {e}")
+
+    logger.info("Central License Server v3.9.4 started")
     yield
     logger.info("Central License Server shutting down")
 
@@ -1165,6 +1186,29 @@ async def register_device(body: dict, request: Request, db: AsyncSession = Depen
     }
 
 
+
+# ═══════════════════════════════════════════════════════════════
+# DEVICE IDENTITY RESOLUTION — v3.9.4
+# ═══════════════════════════════════════════════════════════════
+
+@app.get("/api/device/resolve")
+async def resolve_device_id(request: Request, db: AsyncSession = Depends(get_db)):
+    """Resolve a device_id from an API key. Used by kiosk at startup to learn its own central ID."""
+    api_key = request.headers.get("X-License-Key")
+    if not api_key:
+        raise HTTPException(401, "Missing X-License-Key header")
+    result = await db.execute(select(CentralDevice).where(CentralDevice.api_key == api_key))
+    device = result.scalar_one_or_none()
+    if not device:
+        raise HTTPException(404, "No device found for this API key")
+    return {
+        "device_id": device.id,
+        "device_name": device.device_name,
+        "location_id": device.location_id,
+        "status": device.status,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════
 # TELEMETRY — v3.7.0
 # ═══════════════════════════════════════════════════════════════
@@ -1629,6 +1673,12 @@ async def upsert_config_profile(
     if not isinstance(config_data, dict):
         raise HTTPException(400, "config_data must be a JSON object")
 
+    # v3.9.4: Schema validation before save
+    from central_server.config_schema import validate_config
+    validation_errors = validate_config(config_data)
+    if validation_errors:
+        raise HTTPException(422, detail={"validation_errors": validation_errors})
+
     # Scope access check
     if scope_type == "global" and user.role != "superadmin":
         raise HTTPException(403, "Only superadmin can modify global config")
@@ -1656,6 +1706,18 @@ async def upsert_config_profile(
     )
     profile = result.scalar_one_or_none()
     if profile:
+        # v3.9.4: Save current version to history BEFORE overwriting
+        from central_server.models import ConfigHistory
+        history_entry = ConfigHistory(
+            profile_id=profile.id,
+            scope_type=profile.scope_type,
+            scope_id=profile.scope_id,
+            config_data=profile.config_data or {},
+            version=profile.version or 1,
+            updated_by=profile.updated_by,
+        )
+        db.add(history_entry)
+
         profile.config_data = config_data
         profile.version = (profile.version or 0) + 1
         profile.updated_by = user.username
@@ -1673,6 +1735,128 @@ async def upsert_config_profile(
                      message=f"Config {scope_type}/{sid} updated (v{profile.version})")
     await db.commit()
     return _ser_config_profile(profile)
+
+
+# ── Config History & Rollback — v3.9.4 ──
+
+@app.get("/api/config/history/{scope_type}/{scope_id}")
+async def get_config_history(
+    scope_type: str,
+    scope_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """List version history for a config scope."""
+    require_min_role(user, "owner")
+    sid = None if scope_type == "global" else scope_id
+    from central_server.models import ConfigHistory
+    result = await db.execute(
+        select(ConfigHistory).where(
+            ConfigHistory.scope_type == scope_type,
+            ConfigHistory.scope_id == sid,
+        ).order_by(ConfigHistory.version.desc()).limit(50)
+    )
+    entries = result.scalars().all()
+
+    # Also fetch the current active profile
+    active_result = await db.execute(
+        select(ConfigProfile).where(
+            ConfigProfile.scope_type == scope_type,
+            ConfigProfile.scope_id == sid,
+        )
+    )
+    active = active_result.scalar_one_or_none()
+
+    return {
+        "scope_type": scope_type,
+        "scope_id": sid,
+        "active_version": active.version if active else None,
+        "active_updated_by": active.updated_by if active else None,
+        "active_updated_at": active.updated_at.isoformat() if active and active.updated_at else None,
+        "history": [
+            {
+                "id": h.id,
+                "version": h.version,
+                "updated_by": h.updated_by,
+                "saved_at": h.saved_at.isoformat() if h.saved_at else None,
+                "config_data": h.config_data,
+            }
+            for h in entries
+        ],
+    }
+
+
+@app.post("/api/config/rollback/{scope_type}/{scope_id}/{version}")
+async def rollback_config(
+    scope_type: str,
+    scope_id: str,
+    version: int,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Rollback a config scope to a previous version."""
+    require_min_role(user, "owner")
+    sid = None if scope_type == "global" else scope_id
+
+    # Find the history entry
+    from central_server.models import ConfigHistory
+    result = await db.execute(
+        select(ConfigHistory).where(
+            ConfigHistory.scope_type == scope_type,
+            ConfigHistory.scope_id == sid,
+            ConfigHistory.version == version,
+        )
+    )
+    history_entry = result.scalar_one_or_none()
+    if not history_entry:
+        raise HTTPException(404, f"Version {version} nicht gefunden fuer {scope_type}/{scope_id}")
+
+    # Find current active profile
+    profile_result = await db.execute(
+        select(ConfigProfile).where(
+            ConfigProfile.scope_type == scope_type,
+            ConfigProfile.scope_id == sid,
+        )
+    )
+    profile = profile_result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(404, f"Kein aktives Profil fuer {scope_type}/{scope_id}")
+
+    # Save current version to history before rollback
+    current_history = ConfigHistory(
+        profile_id=profile.id,
+        scope_type=profile.scope_type,
+        scope_id=profile.scope_id,
+        config_data=profile.config_data or {},
+        version=profile.version or 1,
+        updated_by=profile.updated_by,
+    )
+    db.add(current_history)
+
+    # Apply the rollback
+    profile.config_data = history_entry.config_data
+    profile.version = (profile.version or 0) + 1
+    profile.updated_by = f"{user.username} (rollback v{version})"
+    profile.updated_at = _utcnow()
+
+    await db.commit()
+
+    # Audit log (separate commit, non-critical)
+    try:
+        await _log_audit(db, "config_rollback", actor=user.username,
+                         message=f"Config {scope_type}/{sid} rolled back to v{version} (now v{profile.version})",
+                         details={"rolled_back_to": version, "new_version": profile.version})
+        await db.commit()
+    except Exception:
+        pass
+
+    return {
+        "success": True,
+        "new_version": profile.version,
+        "rolled_back_to": version,
+        "config_data": profile.config_data,
+    }
+
 
 
 @app.get("/api/config/effective")
