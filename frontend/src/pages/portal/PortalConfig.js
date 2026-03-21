@@ -5,7 +5,7 @@ import {
   Save, RefreshCw, DollarSign, Palette, Paintbrush, Monitor,
   Type, Languages, Volume2, QrCode, Code, Layers, ChevronDown,
   Globe, Building2, MapPin, ToggleLeft, ToggleRight, Eye, History, Undo2,
-  ArrowLeftRight, X, Plus, Minus
+  ArrowLeftRight, X, Plus, Minus, Download, Upload, FileCheck, AlertCircle, Loader2
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent } from '../../components/ui/card';
@@ -517,6 +517,300 @@ function DiffPanel({ diff, onClose, showAll, setShowAll }) {
   );
 }
 
+// ─── Config Import Panel ────────────────────────────────────
+function ImportPanel({ apiBase, authHeaders, editScope, currentScopeId, onImportDone }) {
+  const [step, setStep] = useState('upload'); // upload | validating | preview | applying | done
+  const [importData, setImportData] = useState(null);
+  const [fileName, setFileName] = useState('');
+  const [validation, setValidation] = useState(null);
+  const [mode, setMode] = useState('merge');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setError(null);
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      setImportData(data);
+      setStep('validating');
+      // Auto-validate
+      const sid = editScope === 'global' ? 'global' : currentScopeId;
+      const res = await axios.post(`${apiBase}/config/import/validate`, {
+        import_data: data,
+        target_scope_type: editScope,
+        target_scope_id: sid,
+        mode,
+      }, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
+      setValidation(res.data);
+      setStep(res.data.valid ? 'preview' : 'upload');
+      if (!res.data.valid) setError(res.data.errors?.join(', '));
+    } catch (err) {
+      if (err instanceof SyntaxError) setError('Keine gueltige JSON-Datei');
+      else setError(err?.response?.data?.detail || 'Validierung fehlgeschlagen');
+      setStep('upload');
+    }
+  };
+
+  const revalidate = async (newMode) => {
+    if (!importData) return;
+    setMode(newMode);
+    setLoading(true);
+    try {
+      const sid = editScope === 'global' ? 'global' : currentScopeId;
+      const res = await axios.post(`${apiBase}/config/import/validate`, {
+        import_data: importData,
+        target_scope_type: editScope,
+        target_scope_id: sid,
+        mode: newMode,
+      }, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
+      setValidation(res.data);
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'Validierung fehlgeschlagen');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleApply = async () => {
+    if (!importData || !validation?.valid) return;
+    setStep('applying');
+    try {
+      const sid = editScope === 'global' ? 'global' : currentScopeId;
+      await axios.post(`${apiBase}/config/import/apply`, {
+        import_data: importData,
+        target_scope_type: editScope,
+        target_scope_id: sid,
+        mode,
+      }, { headers: { ...authHeaders, 'Content-Type': 'application/json' } });
+      toast.success(`Config importiert (${mode === 'merge' ? 'Merge' : 'Replace'})`);
+      setStep('done');
+      onImportDone();
+    } catch (err) {
+      setError(err?.response?.data?.detail || 'Import fehlgeschlagen');
+      setStep('preview');
+    }
+  };
+
+  const reset = () => {
+    setStep('upload'); setImportData(null); setFileName('');
+    setValidation(null); setError(null);
+  };
+
+  const diff = validation?.diff;
+  const visibleChanges = diff ? diff.changes.filter(c => c.status !== 'unchanged') : [];
+  const grouped = {};
+  for (const ch of visibleChanges) {
+    const cat = ch.key.split('.')[0];
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(ch);
+  }
+  const catOrder = Object.keys(DIFF_CATEGORIES);
+  const categories = Object.entries(grouped).sort((a, b) => catOrder.indexOf(a[0]) - catOrder.indexOf(b[0]));
+
+  return (
+    <div className="space-y-3" data-testid="config-import-panel">
+      {/* Header */}
+      <div className="flex items-center gap-2">
+        <Upload className="w-4 h-4 text-indigo-400" />
+        <span className="text-sm text-white font-medium">Config Import</span>
+        {step !== 'upload' && step !== 'done' && (
+          <button onClick={reset} className="ml-auto text-zinc-500 hover:text-white p-1 rounded" data-testid="import-reset">
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="flex items-start gap-2 px-3 py-2 bg-red-500/5 border border-red-500/20 rounded-lg" data-testid="import-error">
+          <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
+          <span className="text-xs text-red-400">{error}</span>
+        </div>
+      )}
+
+      {/* Step: Upload */}
+      {step === 'upload' && (
+        <div>
+          <label className="flex flex-col items-center gap-2 px-4 py-6 bg-zinc-950 border-2 border-dashed border-zinc-700 rounded-lg cursor-pointer hover:border-indigo-500/30 transition-colors" data-testid="import-file-input">
+            <Upload className="w-6 h-6 text-zinc-500" />
+            <span className="text-xs text-zinc-500">{fileName || 'JSON-Datei waehlen'}</span>
+            <input type="file" accept=".json" className="hidden" onChange={handleFile} />
+          </label>
+        </div>
+      )}
+
+      {/* Step: Validating */}
+      {step === 'validating' && (
+        <div className="flex items-center justify-center py-4 gap-2">
+          <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+          <span className="text-xs text-zinc-500">Wird validiert...</span>
+        </div>
+      )}
+
+      {/* Step: Preview */}
+      {step === 'preview' && validation && (
+        <div className="space-y-3">
+          {/* Source info */}
+          {validation.source_meta && (
+            <div className="text-[10px] text-zinc-500 bg-zinc-950 rounded px-2 py-1.5 border border-zinc-800">
+              <span>Quelle: {validation.source_meta.scope_type}/{validation.source_meta.scope_id}</span>
+              <span className="mx-1.5">{'\u2022'}</span>
+              <span>v{validation.source_meta.version}</span>
+              <span className="mx-1.5">{'\u2022'}</span>
+              <span>{validation.source_meta.exported_by}</span>
+            </div>
+          )}
+
+          {/* Warnings */}
+          {validation.warnings?.length > 0 && (
+            <div className="space-y-1">
+              {validation.warnings.map((w, i) => (
+                <div key={i} className="flex items-start gap-1.5 text-[10px] text-amber-400">
+                  <AlertCircle className="w-3 h-3 mt-0.5 flex-shrink-0" />
+                  {w}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Mode toggle */}
+          <div className="flex items-center gap-2" data-testid="import-mode-toggle">
+            <button
+              onClick={() => revalidate('merge')}
+              disabled={loading}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                mode === 'merge' ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'
+              }`}
+              data-testid="import-mode-merge"
+            >
+              Merge
+            </button>
+            <button
+              onClick={() => revalidate('replace')}
+              disabled={loading}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                mode === 'replace' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500 hover:text-zinc-300'
+              }`}
+              data-testid="import-mode-replace"
+            >
+              Replace
+            </button>
+            {loading && <Loader2 className="w-3.5 h-3.5 animate-spin text-zinc-500" />}
+          </div>
+
+          {/* Mode explanation */}
+          <p className="text-[10px] text-zinc-600">
+            {mode === 'merge'
+              ? 'Merge: Importierte Werte werden in bestehende Config eingefuegt. Nicht betroffene Felder bleiben erhalten.'
+              : 'Replace: Bestehender Override wird durch Import komplett ersetzt. Nicht enthaltene Felder werden entfernt.'}
+          </p>
+
+          {/* Diff summary */}
+          <div className="flex items-center gap-2 text-[10px] flex-wrap">
+            {diff?.total_changes > 0 ? (
+              <>
+                {visibleChanges.filter(c => c.status === 'changed').length > 0 && (
+                  <span className="px-1.5 py-0.5 bg-amber-500/10 text-amber-400 rounded font-medium">
+                    {visibleChanges.filter(c => c.status === 'changed').length} geaendert
+                  </span>
+                )}
+                {visibleChanges.filter(c => c.status === 'added').length > 0 && (
+                  <span className="px-1.5 py-0.5 bg-emerald-500/10 text-emerald-400 rounded font-medium">
+                    {visibleChanges.filter(c => c.status === 'added').length} neu
+                  </span>
+                )}
+                {visibleChanges.filter(c => c.status === 'removed').length > 0 && (
+                  <span className="px-1.5 py-0.5 bg-red-500/10 text-red-400 rounded font-medium">
+                    {visibleChanges.filter(c => c.status === 'removed').length} entfernt
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="text-zinc-500">Keine Aenderungen</span>
+            )}
+          </div>
+
+          {/* Diff details */}
+          {categories.length > 0 && (
+            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+              {categories.map(([cat, changes]) => (
+                <div key={cat} className="bg-zinc-950 rounded-lg border border-zinc-800/50 overflow-hidden">
+                  <div className="px-3 py-1.5 bg-zinc-900/50 border-b border-zinc-800/50">
+                    <span className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider">
+                      {DIFF_CATEGORIES[cat] || cat}
+                    </span>
+                  </div>
+                  <div className="divide-y divide-zinc-800/30">
+                    {changes.map(ch => (
+                      <div key={ch.key} className="px-3 py-1.5" data-testid={`import-diff-${ch.key}`}>
+                        <div className="flex items-center gap-2 mb-0.5">
+                          {ch.status === 'changed' && <span className="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0" />}
+                          {ch.status === 'added' && <Plus className="w-3 h-3 text-emerald-400 flex-shrink-0" />}
+                          {ch.status === 'removed' && <Minus className="w-3 h-3 text-red-400 flex-shrink-0" />}
+                          <span className="text-xs text-zinc-300">{DIFF_FIELD_LABELS[ch.key] || ch.key}</span>
+                        </div>
+                        <div className="ml-3.5 flex items-center gap-2 flex-wrap">
+                          {ch.status !== 'added' && (
+                            <span className="text-red-400/70 line-through"><DiffVal val={ch.old} fKey={ch.key} /></span>
+                          )}
+                          {ch.status === 'changed' && <span className="text-zinc-600 text-[10px]">{'\u2192'}</span>}
+                          {ch.status !== 'removed' && (
+                            <span className="text-emerald-400"><DiffVal val={ch.new} fKey={ch.key} /></span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Apply / Cancel */}
+          <div className="flex items-center gap-2 pt-1">
+            <button onClick={reset} className="px-3 py-1.5 text-xs text-zinc-500 hover:text-zinc-300" data-testid="import-cancel">
+              Abbrechen
+            </button>
+            <Button
+              onClick={handleApply}
+              disabled={!validation?.valid || step === 'applying'}
+              className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs"
+              data-testid="import-apply"
+            >
+              <FileCheck className="w-3.5 h-3.5 mr-1.5" />
+              {mode === 'merge' ? 'Merge anwenden' : 'Override ersetzen'}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* Step: Applying */}
+      {step === 'applying' && (
+        <div className="flex items-center justify-center py-4 gap-2">
+          <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />
+          <span className="text-xs text-zinc-500">Import wird angewendet...</span>
+        </div>
+      )}
+
+      {/* Step: Done */}
+      {step === 'done' && (
+        <div className="text-center py-4">
+          <FileCheck className="w-6 h-6 text-emerald-400 mx-auto mb-2" />
+          <p className="text-xs text-emerald-400 font-medium">Import erfolgreich</p>
+          <button onClick={reset} className="mt-2 text-[10px] text-zinc-500 hover:text-zinc-300" data-testid="import-another">
+            Weiteren Import starten
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 // ═══════════════════════════════════════════════════════════════
 // MAIN COMPONENT
 // ═══════════════════════════════════════════════════════════════
@@ -539,6 +833,7 @@ export default function PortalConfig() {
   const [diffLoading, setDiffLoading] = useState(false);
   const [diffVersion, setDiffVersion] = useState(null);
   const [diffShowAll, setDiffShowAll] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -623,6 +918,23 @@ export default function PortalConfig() {
     setDiffData(null);
     setDiffVersion(null);
     setDiffShowAll(false);
+  };
+
+  const handleExport = async () => {
+    try {
+      const sid = editScope === 'global' ? 'global' : currentScopeId;
+      const res = await axios.get(`${apiBase}/config/export/${editScope}/${sid}`, { headers: authHeaders });
+      const blob = new Blob([JSON.stringify(res.data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `config_${editScope}_${sid || 'global'}_v${res.data.meta?.version || '?'}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success('Config exportiert');
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Export fehlgeschlagen');
+    }
   };
 
   useEffect(() => { fetchData(); }, [fetchData]);
@@ -853,6 +1165,39 @@ export default function PortalConfig() {
               )}
             </CardContent>
           </Card>
+
+          {/* Export / Import buttons */}
+          {advancedMode && (
+            <div className="flex items-center gap-2" data-testid="config-export-import-bar">
+              <button onClick={handleExport}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-lg text-xs text-zinc-400 hover:text-white hover:border-zinc-600 transition-colors flex-1 justify-center"
+                data-testid="config-export-btn">
+                <Download className="w-3.5 h-3.5" /> Exportieren
+              </button>
+              <button onClick={() => setShowImport(!showImport)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-lg text-xs transition-colors flex-1 justify-center ${
+                  showImport ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-400' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-600'
+                }`}
+                data-testid="config-import-btn">
+                <Upload className="w-3.5 h-3.5" /> Importieren
+              </button>
+            </div>
+          )}
+
+          {/* Import Panel */}
+          {advancedMode && showImport && (
+            <Card className="bg-zinc-900 border-zinc-800" data-testid="config-import-card">
+              <CardContent className="p-4">
+                <ImportPanel
+                  apiBase={apiBase}
+                  authHeaders={authHeaders}
+                  editScope={editScope}
+                  currentScopeId={currentScopeId}
+                  onImportDone={() => { setShowImport(false); fetchData(); }}
+                />
+              </CardContent>
+            </Card>
+          )}
 
           {/* Profile List — only in advanced mode */}
           {advancedMode && profiles.length > 0 && (

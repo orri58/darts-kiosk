@@ -2051,6 +2051,278 @@ async def get_config_diff(
 VALID_ACTIONS = {"force_sync", "restart_backend", "reload_ui"}
 
 
+# ── Config Export / Import — v3.9.8 ──
+
+@app.get("/api/config/export/{scope_type}/{scope_id}")
+async def export_config(
+    scope_type: str,
+    scope_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Export the override config_data for a scope as downloadable JSON with metadata."""
+    require_min_role(user, "owner")
+    if scope_type not in ("global", "customer", "location", "device"):
+        raise HTTPException(400, "scope_type must be global|customer|location|device")
+
+    sid = None if scope_type == "global" else scope_id
+    result = await db.execute(
+        select(ConfigProfile).where(ConfigProfile.scope_type == scope_type, ConfigProfile.scope_id == sid)
+    )
+    profile = result.scalar_one_or_none()
+    if not profile:
+        raise HTTPException(404, f"No config for {scope_type}/{scope_id}")
+
+    # Scope access check
+    if scope_type == "customer" and not can_access_customer(user, scope_id):
+        raise HTTPException(403, "No access")
+    elif scope_type in ("location", "device"):
+        if scope_type == "location":
+            loc = await db.get(CentralLocation, scope_id)
+            if not loc or not can_access_customer(user, loc.customer_id):
+                raise HTTPException(403, "No access")
+        else:
+            dev = await db.get(CentralDevice, scope_id)
+            if dev:
+                loc = await db.get(CentralLocation, dev.location_id)
+                if not loc or not can_access_customer(user, loc.customer_id):
+                    raise HTTPException(403, "No access")
+
+    export_data = {
+        "meta": {
+            "type": "darts_kiosk_config_export",
+            "format_version": 1,
+            "scope_type": scope_type,
+            "scope_id": scope_id if scope_type != "global" else "global",
+            "version": profile.version,
+            "exported_at": _utcnow().isoformat(),
+            "exported_by": user.username,
+        },
+        "config_data": profile.config_data or {},
+    }
+
+    try:
+        await _log_audit(db, "config_export", actor=user.username,
+                         message=f"Config exported: {scope_type}/{sid} v{profile.version}")
+        await db.commit()
+    except Exception:
+        pass
+
+    return export_data
+
+
+@app.post("/api/config/import/validate")
+async def validate_import(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """
+    Validate an import file and return preview/diff.
+    Body: { import_data: {...exported JSON...}, target_scope_type, target_scope_id, mode: "replace"|"merge" }
+    """
+    require_min_role(user, "owner")
+    body = await request.json()
+
+    import_data = body.get("import_data", {})
+    target_scope_type = body.get("target_scope_type")
+    target_scope_id = body.get("target_scope_id")
+    mode = body.get("mode", "merge")
+
+    errors = []
+
+    # Structure validation
+    if not isinstance(import_data, dict):
+        return {"valid": False, "errors": ["Datei muss ein JSON-Objekt sein"], "diff": None}
+
+    meta = import_data.get("meta", {})
+    config_data = import_data.get("config_data", {})
+
+    if not isinstance(meta, dict) or meta.get("type") != "darts_kiosk_config_export":
+        errors.append("Keine gueltige Config-Export-Datei (meta.type fehlt oder ungueltig)")
+    if not isinstance(config_data, dict) or not config_data:
+        errors.append("config_data fehlt oder ist leer")
+
+    if errors:
+        return {"valid": False, "errors": errors, "diff": None}
+
+    # Config schema validation
+    from central_server.config_schema import validate_config
+    schema_errors = validate_config(config_data)
+    if schema_errors:
+        return {"valid": False, "errors": [f"Schema: {e}" for e in schema_errors], "diff": None}
+
+    # Target scope
+    tst = target_scope_type or meta.get("scope_type", "global")
+    tsi = target_scope_id or meta.get("scope_id")
+    if tst not in ("global", "customer", "location", "device"):
+        errors.append(f"Ungueltiger Ziel-Scope: {tst}")
+        return {"valid": False, "errors": errors, "diff": None}
+
+    sid = None if tst == "global" else tsi
+
+    # Scope access
+    if tst == "customer" and not can_access_customer(user, tsi):
+        return {"valid": False, "errors": ["Kein Zugriff auf diesen Scope"], "diff": None}
+    elif tst == "global" and user.role != "superadmin":
+        return {"valid": False, "errors": ["Nur Superadmin kann globale Config importieren"], "diff": None}
+
+    # Get current config for diff
+    result = await db.execute(
+        select(ConfigProfile).where(ConfigProfile.scope_type == tst, ConfigProfile.scope_id == sid)
+    )
+    current = result.scalar_one_or_none()
+    current_data = current.config_data if current else {}
+
+    # Compute what will be applied
+    if mode == "replace":
+        new_data = config_data
+    else:
+        new_data = _deep_merge(current_data or {}, config_data)
+
+    # Compute diff
+    old_flat = _flatten_dict(current_data or {})
+    new_flat = _flatten_dict(new_data)
+    all_keys = sorted(set(old_flat.keys()) | set(new_flat.keys()))
+
+    changes = []
+    for key in all_keys:
+        old_val = old_flat.get(key)
+        new_val = new_flat.get(key)
+        if key not in old_flat:
+            changes.append({"key": key, "status": "added", "old": None, "new": new_val})
+        elif key not in new_flat:
+            changes.append({"key": key, "status": "removed", "old": old_val, "new": None})
+        elif old_val != new_val:
+            changes.append({"key": key, "status": "changed", "old": old_val, "new": new_val})
+        else:
+            changes.append({"key": key, "status": "unchanged", "old": old_val, "new": new_val})
+
+    actual_changes = [c for c in changes if c["status"] != "unchanged"]
+
+    warnings = []
+    if mode == "replace" and current_data:
+        removed = [c for c in actual_changes if c["status"] == "removed"]
+        if removed:
+            warnings.append(f"Replace-Modus: {len(removed)} bestehende Felder werden entfernt")
+    if meta.get("scope_type") and meta["scope_type"] != tst:
+        warnings.append(f"Originaler Scope war '{meta['scope_type']}', Ziel ist '{tst}'")
+
+    return {
+        "valid": True,
+        "errors": [],
+        "warnings": warnings,
+        "mode": mode,
+        "target_scope_type": tst,
+        "target_scope_id": tsi or "global",
+        "source_meta": meta,
+        "diff": {
+            "total_changes": len(actual_changes),
+            "changes": changes,
+        },
+    }
+
+
+@app.post("/api/config/import/apply")
+async def apply_import(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """
+    Apply a validated import. Creates history, validates, saves.
+    Body: { import_data, target_scope_type, target_scope_id, mode }
+    """
+    require_min_role(user, "owner")
+    body = await request.json()
+
+    import_data = body.get("import_data", {})
+    target_scope_type = body.get("target_scope_type", "global")
+    target_scope_id = body.get("target_scope_id")
+    mode = body.get("mode", "merge")
+
+    config_data = import_data.get("config_data", {})
+    meta = import_data.get("meta", {})
+
+    if not isinstance(config_data, dict) or not config_data:
+        raise HTTPException(400, "config_data fehlt oder ist leer")
+    if target_scope_type not in ("global", "customer", "location", "device"):
+        raise HTTPException(400, "Ungueltiger scope_type")
+
+    # Re-validate schema
+    from central_server.config_schema import validate_config
+    schema_errors = validate_config(config_data)
+    if schema_errors:
+        raise HTTPException(422, detail={"validation_errors": schema_errors})
+
+    # Scope access (same checks as upsert_config_profile)
+    if target_scope_type == "global" and user.role != "superadmin":
+        raise HTTPException(403, "Only superadmin can modify global config")
+    elif target_scope_type == "customer":
+        if not can_access_customer(user, target_scope_id):
+            raise HTTPException(403, "No access to this customer")
+    elif target_scope_type == "location":
+        loc = await db.get(CentralLocation, target_scope_id)
+        if not loc or not can_access_customer(user, loc.customer_id):
+            raise HTTPException(403, "No access to this location")
+    elif target_scope_type == "device":
+        dev = await db.get(CentralDevice, target_scope_id)
+        if dev:
+            loc = await db.get(CentralLocation, dev.location_id)
+            if not loc or not can_access_customer(user, loc.customer_id):
+                raise HTTPException(403, "No access to this device")
+
+    sid = None if target_scope_type == "global" else target_scope_id
+
+    # Upsert with history (reusing existing pattern)
+    result = await db.execute(
+        select(ConfigProfile).where(
+            ConfigProfile.scope_type == target_scope_type, ConfigProfile.scope_id == sid,
+        )
+    )
+    profile = result.scalar_one_or_none()
+
+    if profile:
+        # Save current to history
+        from central_server.models import ConfigHistory
+        db.add(ConfigHistory(
+            profile_id=profile.id, scope_type=profile.scope_type, scope_id=profile.scope_id,
+            config_data=profile.config_data or {}, version=profile.version or 1,
+            updated_by=profile.updated_by,
+        ))
+
+        if mode == "merge":
+            profile.config_data = _deep_merge(profile.config_data or {}, config_data)
+        else:
+            profile.config_data = config_data
+
+        profile.version = (profile.version or 0) + 1
+        profile.updated_by = f"{user.username} (import-{mode})"
+        profile.updated_at = _utcnow()
+    else:
+        profile = ConfigProfile(
+            scope_type=target_scope_type, scope_id=sid,
+            config_data=config_data,
+            updated_by=f"{user.username} (import-{mode})",
+        )
+        db.add(profile)
+
+    await db.commit()
+    await db.refresh(profile)
+
+    source_info = f"from {meta.get('scope_type','?')}/{meta.get('scope_id','?')} v{meta.get('version','?')}"
+    await _log_audit(db, "config_import", actor=user.username,
+                     message=f"Config imported ({mode}) to {target_scope_type}/{sid} v{profile.version} {source_info}")
+    await db.commit()
+
+    return {
+        "success": True,
+        "mode": mode,
+        "profile": _ser_config_profile(profile),
+        "source_meta": meta,
+    }
+
+
 def _ser_action(a):
     return {
         "id": a.id, "device_id": a.device_id, "action_type": a.action_type,
