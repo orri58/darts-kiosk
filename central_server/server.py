@@ -1965,6 +1965,82 @@ async def get_effective_config(
     }
 
 
+# ── Config Diff — v3.9.5 ──
+
+def _flatten_dict(d, prefix=""):
+    """Flatten a nested dict into dot-notation keys."""
+    items = {}
+    if not isinstance(d, dict):
+        return {prefix: d} if prefix else {}
+    for k, v in d.items():
+        key = f"{prefix}.{k}" if prefix else k
+        if isinstance(v, dict):
+            items.update(_flatten_dict(v, key))
+        else:
+            items[key] = v
+    return items
+
+
+@app.get("/api/config/diff/{scope_type}/{scope_id}")
+async def get_config_diff(
+    scope_type: str,
+    scope_id: str,
+    version: int,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Compare a history version against the active config for a scope. Returns flat field-level diff."""
+    require_min_role(user, "owner")
+    sid = None if scope_type == "global" else scope_id
+
+    # Get active profile
+    active_result = await db.execute(
+        select(ConfigProfile).where(ConfigProfile.scope_type == scope_type, ConfigProfile.scope_id == sid)
+    )
+    active = active_result.scalar_one_or_none()
+    if not active:
+        raise HTTPException(404, f"Kein aktives Profil fuer {scope_type}/{scope_id}")
+
+    # Get history version
+    from central_server.models import ConfigHistory
+    hist_result = await db.execute(
+        select(ConfigHistory).where(
+            ConfigHistory.scope_type == scope_type,
+            ConfigHistory.scope_id == sid,
+            ConfigHistory.version == version,
+        )
+    )
+    hist = hist_result.scalar_one_or_none()
+    if not hist:
+        raise HTTPException(404, f"Version {version} nicht gefunden")
+
+    old_flat = _flatten_dict(hist.config_data or {})
+    new_flat = _flatten_dict(active.config_data or {})
+    all_keys = sorted(set(old_flat.keys()) | set(new_flat.keys()))
+
+    changes = []
+    for key in all_keys:
+        old_val = old_flat.get(key)
+        new_val = new_flat.get(key)
+        if key not in old_flat:
+            changes.append({"key": key, "status": "added", "old": None, "new": new_val})
+        elif key not in new_flat:
+            changes.append({"key": key, "status": "removed", "old": old_val, "new": None})
+        elif old_val != new_val:
+            changes.append({"key": key, "status": "changed", "old": old_val, "new": new_val})
+
+    return {
+        "scope_type": scope_type,
+        "scope_id": sid,
+        "old_version": version,
+        "new_version": active.version,
+        "total_changes": len(changes),
+        "changes": changes,
+    }
+
+
+
+
 # ═══════════════════════════════════════════════════════════════
 # v3.9.0: REMOTE ACTIONS
 # ═══════════════════════════════════════════════════════════════
@@ -1979,6 +2055,80 @@ def _ser_action(a):
         "issued_at": a.issued_at.isoformat() if a.issued_at else None,
         "acked_at": a.acked_at.isoformat() if a.acked_at else None,
         "result_message": a.result_message,
+    }
+
+
+
+# ── Bulk Device Actions — v3.9.5 (MUST be before {device_id} routes) ──
+
+_BULK_MAX_DEVICES = 50
+_BULK_DEDUP_SECONDS = 30
+
+
+@app.post("/api/remote-actions/bulk")
+async def bulk_remote_actions(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    """Issue a remote action to multiple devices at once. Owner+ role required."""
+    require_min_role(user, "owner")
+    body = await request.json()
+    device_ids = body.get("device_ids", [])
+    action_type = body.get("action_type", "")
+
+    if not isinstance(device_ids, list) or len(device_ids) == 0:
+        raise HTTPException(400, "device_ids must be a non-empty list")
+    if len(device_ids) > _BULK_MAX_DEVICES:
+        raise HTTPException(400, f"Maximal {_BULK_MAX_DEVICES} Geraete pro Bulk-Aktion")
+    if action_type not in VALID_ACTIONS:
+        raise HTTPException(400, f"action_type must be one of: {', '.join(sorted(VALID_ACTIONS))}")
+
+    unique_ids = list(dict.fromkeys(device_ids))
+    results = []
+    created_count = skipped_count = denied_count = 0
+
+    for did in unique_ids:
+        dev = await db.get(CentralDevice, did)
+        if not dev:
+            results.append({"device_id": did, "status": "error", "message": "Geraet nicht gefunden"})
+            continue
+        if dev.location_id:
+            loc = await db.get(CentralLocation, dev.location_id)
+            if loc and not can_access_customer(user, loc.customer_id):
+                results.append({"device_id": did, "device_name": dev.device_name, "status": "denied", "message": "Kein Zugriff"})
+                denied_count += 1
+                continue
+
+        dedup_cutoff = _utcnow() - timedelta(seconds=_BULK_DEDUP_SECONDS)
+        dedup_q = await db.execute(
+            select(RemoteAction).where(
+                RemoteAction.device_id == did, RemoteAction.action_type == action_type,
+                RemoteAction.issued_at >= dedup_cutoff, RemoteAction.status == "pending",
+            ).limit(1)
+        )
+        if dedup_q.scalar_one_or_none():
+            results.append({"device_id": did, "device_name": dev.device_name, "status": "skipped", "message": "Bereits ausstehend"})
+            skipped_count += 1
+            continue
+
+        action = RemoteAction(device_id=did, action_type=action_type, issued_by=user.username)
+        db.add(action)
+        results.append({"device_id": did, "device_name": dev.device_name, "status": "created", "action_id": action.id})
+        created_count += 1
+
+    await db.commit()
+    try:
+        await _log_audit(db, "bulk_remote_action", actor=user.username,
+                         message=f"Bulk '{action_type}': {created_count} erstellt, {skipped_count} uebersprungen, {denied_count} verweigert von {len(unique_ids)} Geraeten")
+        await db.commit()
+    except Exception:
+        pass
+
+    return {
+        "action_type": action_type, "total": len(unique_ids),
+        "created": created_count, "skipped": skipped_count, "denied": denied_count,
+        "results": results,
     }
 
 
@@ -2019,6 +2169,8 @@ async def issue_remote_action(
     await db.commit()
 
     return _ser_action(action)
+
+
 
 
 @app.get("/api/remote-actions/{device_id}")
