@@ -418,6 +418,102 @@ api_router.include_router(central_proxy.router)
 app.include_router(api_router)
 
 
+# ═══════════════════════════════════════════════════════════════
+# v3.11.0: Runtime reconfigure — called after device registration
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/internal/reconfigure-sync")
+async def reconfigure_sync_services():
+    """
+    Re-read license_sync_config from DB and reconfigure all sync services.
+    Called internally after device registration completes.
+    """
+    from backend.models import Settings as _SM
+    from backend.database import AsyncSessionLocal
+    try:
+        async with AsyncSessionLocal() as db:
+            r = await db.execute(select(_SM).where(_SM.key == "license_sync_config"))
+            row = r.scalar_one_or_none()
+            if not row or not isinstance(row.value, dict):
+                return {"reconfigured": False, "reason": "no_config"}
+            cfg = row.value
+    except Exception as e:
+        return {"reconfigured": False, "reason": str(e)}
+
+    central_url = cfg.get("server_url", "")
+    api_key = cfg.get("api_key", "")
+    device_id = cfg.get("device_id")
+
+    if not central_url or not api_key:
+        return {"reconfigured": False, "reason": "incomplete_config"}
+
+    logger.info(f"[RECONFIGURE] Re-reading sync config: url={central_url}, device_id={device_id or 'NONE'}")
+
+    reconfigured = []
+
+    # Telemetry
+    from backend.services.telemetry_sync_client import telemetry_sync
+    try:
+        version = "unknown"
+        vf = Path(__file__).resolve().parent.parent / "VERSION"
+        if vf.exists():
+            version = vf.read_text().strip()
+        telemetry_sync.configure(central_url=central_url, api_key=api_key, version=version)
+        if not telemetry_sync._running:
+            await telemetry_sync.start()
+        reconfigured.append("telemetry_sync")
+    except Exception as e:
+        logger.warning(f"[RECONFIGURE] telemetry_sync failed: {e}")
+
+    # Config sync
+    from backend.services.config_sync_client import config_sync_client
+    try:
+        config_sync_client.configure(central_url=central_url, api_key=api_key, device_id=device_id)
+        if not config_sync_client._running:
+            from backend.services.config_apply import on_config_synced
+            await config_sync_client.start(on_config_synced)
+        reconfigured.append("config_sync")
+    except Exception as e:
+        logger.warning(f"[RECONFIGURE] config_sync failed: {e}")
+
+    # Action poller
+    from backend.services.action_poller import action_poller
+    try:
+        action_poller.configure(central_url=central_url, api_key=api_key, device_id=device_id)
+        if not action_poller._running:
+            await action_poller.start()
+        reconfigured.append("action_poller")
+    except Exception as e:
+        logger.warning(f"[RECONFIGURE] action_poller failed: {e}")
+
+    # Offline queue
+    from backend.services.offline_queue import offline_queue
+    try:
+        offline_queue.configure(central_url=central_url, api_key=api_key)
+        if not offline_queue._running:
+            await offline_queue.start()
+        reconfigured.append("offline_queue")
+    except Exception as e:
+        logger.warning(f"[RECONFIGURE] offline_queue failed: {e}")
+
+    # WS push client
+    from backend.services.ws_push_client import ws_push_client
+    try:
+        ws_push_client.configure(central_url=central_url, api_key=api_key)
+        ws_push_client.set_handlers(
+            on_config_updated=config_sync_client.sync_now,
+            on_action_created=action_poller.trigger_poll,
+        )
+        if not ws_push_client._running:
+            await ws_push_client.start()
+        reconfigured.append("ws_push_client")
+    except Exception as e:
+        logger.warning(f"[RECONFIGURE] ws_push_client failed: {e}")
+
+    logger.info(f"[RECONFIGURE] Done: {reconfigured}")
+    return {"reconfigured": True, "services": reconfigured}
+
+
 # ===== Static Frontend Serving (Production Mode) =====
 # In production, the backend serves the pre-built React frontend.
 # This eliminates the need for Node.js / dev server on the board PC.

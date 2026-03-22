@@ -2866,7 +2866,7 @@ async def get_device_detail(
 
     return {
         "id": dev.id, "device_name": dev.device_name, "hardware_id": getattr(dev, 'hardware_id', None),
-        "status": dev.status,
+        "status": dev.status, "license_id": dev.license_id, "binding_status": dev.binding_status,
         "is_online": is_online,
         "last_heartbeat_at": dev.last_heartbeat_at.isoformat() if dev.last_heartbeat_at else None,
         "reported_version": dev.reported_version,

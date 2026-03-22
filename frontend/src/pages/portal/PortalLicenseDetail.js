@@ -38,9 +38,11 @@ function InfoRow({ label, value, tid }) {
   );
 }
 
-function TokenSection({ token, rawToken, onRegenerate, loading }) {
+function TokenSection({ token, rawToken, onRegenerate, loading, tokenHistory, deviceCount }) {
   const [revealed, setRevealed] = useState(false);
   const displayToken = rawToken || (token ? token.token_preview : null);
+  const hasHistory = tokenHistory && tokenHistory.length > 0;
+  const allUsed = hasHistory && tokenHistory.every(t => t.used_at || t.is_revoked);
 
   const copyToken = () => {
     if (rawToken) {
@@ -51,7 +53,8 @@ function TokenSection({ token, rawToken, onRegenerate, loading }) {
     }
   };
 
-  if (!token && !rawToken) {
+  // State 1: No token ever created
+  if (!token && !rawToken && !hasHistory) {
     return (
       <div data-testid="token-empty-state" className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5">
         <div className="flex items-center gap-3 mb-3">
@@ -66,6 +69,37 @@ function TokenSection({ token, rawToken, onRegenerate, loading }) {
     );
   }
 
+  // State 2: All tokens used/revoked, no active token (device already registered)
+  if (!token && !rawToken && allUsed) {
+    const lastUsed = tokenHistory.find(t => t.used_at);
+    return (
+      <div data-testid="token-used-state" className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <CheckCircle className="w-5 h-5 text-emerald-400" />
+            <h3 className="text-zinc-300 font-medium">Aktivierung abgeschlossen</h3>
+          </div>
+          <Button data-testid="regenerate-token-btn" variant="outline" size="sm" onClick={onRegenerate} disabled={loading}
+            className="border-zinc-700 hover:border-zinc-600 text-zinc-400 hover:text-zinc-200">
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${loading ? 'animate-spin' : ''}`} /> Neuen Token erstellen
+          </Button>
+        </div>
+        <p className="text-zinc-400 text-sm">
+          {deviceCount > 0
+            ? `${deviceCount} Gerät(e) erfolgreich verbunden. Der Token wurde bei der Registrierung verwendet.`
+            : 'Token wurde verwendet. Erstellen Sie bei Bedarf einen neuen Token.'}
+        </p>
+        {lastUsed && (
+          <p className="text-zinc-600 text-xs mt-2">
+            Verwendet am: {new Date(lastUsed.used_at).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            {lastUsed.created_by && ` — Erstellt von: ${lastUsed.created_by}`}
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  // State 3: Active token exists
   return (
     <div data-testid="token-section" className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5">
       <div className="flex items-center justify-between mb-4">
@@ -290,6 +324,8 @@ export default function PortalLicenseDetail() {
           rawToken={rawToken}
           onRegenerate={lic.active_token ? handleRegenerate : handleGetToken}
           loading={actionLoading}
+          tokenHistory={lic.token_history}
+          deviceCount={lic.device_count}
         />
       )}
 

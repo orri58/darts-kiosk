@@ -770,6 +770,16 @@ async def register_device_via_token(data: dict):
                 await db.commit()
         except Exception:
             pass
+
+        # v3.11.0: Trigger runtime reconfigure of sync services
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=5) as hc:
+                await hc.post("http://127.0.0.1:8001/api/internal/reconfigure-sync")
+            logger.info("[REG] Sync services reconfigured after registration")
+        except Exception as re_err:
+            logger.warning(f"[REG] Reconfigure after registration failed (non-fatal): {re_err}")
+
         return result
     else:
         status_code = result.get("status_code", 400)
