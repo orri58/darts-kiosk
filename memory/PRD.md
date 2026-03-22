@@ -5,13 +5,11 @@ Multi-tenant Darts Kiosk SaaS platform with central management portal and local 
 
 ## Core Requirements
 - **Central Portal**: Multi-tenant management with RBAC (superadmin, installer, owner, staff)
-- **Local Kiosk Clients**: Autonomous operation with config sync and remote action polling
 - **License Lifecycle**: Create→Token→Register→Bind→Monitor→Deactivate/Archive
+- **Device Onboarding**: Token-based registration with max_devices enforcement, runtime reconfigure
 - **Configuration Management**: Scoped configs, version history, rollback, export/import
-- **Device Management**: Registration with license binding, max_devices enforcement, health monitoring
-- **Real-time Push**: WebSocket-based push system (polling as fallback)
+- **Real-time Push**: WebSocket push (polling as fallback)
 - **White-Label**: Custom branding, color palettes, logos per customer
-- **i18n**: Full German/English support
 
 ## Architecture
 - **Central Server**: FastAPI — `/app/central_server/server.py` — port 8002
@@ -20,10 +18,11 @@ Multi-tenant Darts Kiosk SaaS platform with central management portal and local 
 - **Database**: SQLite via SQLAlchemy
 
 ## Key Endpoints
-- `/api/licensing/licenses/{id}` — License detail with devices + token
+- `/api/licensing/licenses/{id}` — License detail with devices + token history
 - `/api/licensing/licenses/{id}/token` — Get/create activation token
-- `/api/licensing/licenses/{id}/regenerate-token` — Regenerate token
-- `/api/register-device` — Device registration with max_devices enforcement
+- `/api/register-device` — Device registration with max_devices + license_id binding
+- `/api/internal/reconfigure-sync` — Runtime reconfigure sync services after registration
+- `/api/telemetry/device/{id}` — Device detail with license_id, binding_status
 - `/ws/devices` — WebSocket push for real-time events
 - `/api/config/export|import|rollback` — Config management
 
