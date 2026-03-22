@@ -22,6 +22,7 @@ import PortalDashboard from "./pages/portal/PortalDashboard";
 import PortalDevices from "./pages/portal/PortalDevices";
 import PortalDeviceDetail from "./pages/portal/PortalDeviceDetail";
 import PortalLicenses from "./pages/portal/PortalLicenses";
+import PortalLicenseDetail from "./pages/portal/PortalLicenseDetail";
 import PortalCustomers from "./pages/portal/PortalCustomers";
 import PortalLocations from "./pages/portal/PortalLocations";
 import PortalAudit from "./pages/portal/PortalAudit";
@@ -83,6 +84,7 @@ function App() {
               <Route path="devices" element={<PortalDevices />} />
               <Route path="devices/:deviceId" element={<PortalDeviceDetail />} />
               <Route path="licenses" element={<PortalLicenses />} />
+              <Route path="licenses/:licenseId" element={<PortalLicenseDetail />} />
               <Route path="customers" element={<PortalCustomers />} />
               <Route path="locations" element={<PortalLocations />} />
               <Route path="users" element={<PortalUsers />} />

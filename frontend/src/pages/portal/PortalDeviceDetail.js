@@ -194,6 +194,7 @@ export default function PortalDeviceDetail() {
         <StatusCell label="Letzte Aktion" value={hs?.action_poller?.last_action_at ? timeAgo(hs.action_poller.last_action_at) : null} sub={`${hs?.action_poller?.actions_executed ?? 0} OK, ${hs?.action_poller?.actions_failed ?? 0} Fehler`} />
         <StatusCell label="Offline Queue" value={hs?.offline_queue?.pending > 0 ? `${hs.offline_queue.pending} ausstehend` : 'Leer'} sub={hs?.offline_queue?.last_drain_at ? `Letzter Drain: ${timeAgo(hs.offline_queue.last_drain_at)}` : `${hs?.offline_queue?.drained_total ?? 0} gesendet, ${hs?.offline_queue?.dropped_total ?? 0} verworfen`} />
         <StatusCell label="WS Push" value={hs?.ws_push?.connected ? 'Verbunden' : (hs?.ws_push?.configured ? 'Getrennt' : 'Nicht konfiguriert')} sub={hs?.ws_push?.connected ? `${hs.ws_push.events_received ?? 0} Events` : (hs?.ws_push?.last_error ? `Fehler: ${hs.ws_push.last_error}` : (hs?.ws_push?.reconnect_count > 0 ? `${hs.ws_push.reconnect_count} Reconnects` : null))} />
+        <StatusCell label="Lizenz" value={device.license_id ? 'Gebunden' : 'Keine'} sub={device.license_id ? device.license_id.slice(0, 12) + '...' : null} />
       </div>
 
       {/* Last Error */}

@@ -120,6 +120,7 @@ async def lifespan(app: FastAPI):
         ("devices", "reported_version", "VARCHAR(20)"),
         ("devices", "last_error", "TEXT"),
         ("devices", "last_activity_at", "DATETIME"),
+        ("devices", "license_id", "VARCHAR(36)"),
     ]
     from sqlalchemy import text as _text
     for _tbl, _col, _typ in _migrate_cols:
@@ -275,8 +276,10 @@ def _ser_device(d):
     return {
         "id": d.id, "location_id": d.location_id, "install_id": d.install_id,
         "api_key": d.api_key, "device_name": d.device_name, "status": d.status,
-        "binding_status": d.binding_status,
+        "binding_status": d.binding_status, "license_id": d.license_id,
         "last_sync_at": d.last_sync_at.isoformat() if d.last_sync_at else None,
+        "last_heartbeat_at": d.last_heartbeat_at.isoformat() if d.last_heartbeat_at else None,
+        "reported_version": d.reported_version,
         "sync_count": d.sync_count,
         "created_at": d.created_at.isoformat() if d.created_at else None,
         "ws_connected": ws_info.get("ws_connected", False),
@@ -290,6 +293,10 @@ def _ser_license(lic):
         "ends_at": lic.ends_at.isoformat() if lic.ends_at else None,
         "grace_days": lic.grace_days,
         "grace_until": lic.grace_until.isoformat() if lic.grace_until else None,
+        "notes": lic.notes,
+        "created_by": lic.created_by,
+        "created_at": lic.created_at.isoformat() if lic.created_at else None,
+        "updated_at": lic.updated_at.isoformat() if lic.updated_at else None,
     }
 
 def _ser_user(u):
@@ -888,7 +895,7 @@ async def update_device(device_id: str, data: dict, user: AuthUser = Depends(get
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/licensing/licenses")
-async def list_licenses(customer_id: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+async def list_licenses(customer_id: str = None, status: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     stmt = select(CentralLicense).order_by(CentralLicense.created_at.desc())
     if customer_id:
         if not can_access_customer(user, customer_id):
@@ -896,8 +903,25 @@ async def list_licenses(customer_id: str = None, user: AuthUser = Depends(get_cu
         stmt = stmt.where(CentralLicense.customer_id == customer_id)
     else:
         stmt = apply_customer_scope(stmt, user, CentralLicense.customer_id)
+    if status:
+        stmt = stmt.where(CentralLicense.status == status)
     result = await db.execute(stmt)
-    return [_ser_license(lic) for lic in result.scalars().all()]
+    lics = result.scalars().all()
+    # Enrich with customer/location names and device count
+    cust_ids = set(l.customer_id for l in lics if l.customer_id)
+    cust_map = {}
+    if cust_ids:
+        cr = await db.execute(select(CentralCustomer).where(CentralCustomer.id.in_(cust_ids)))
+        cust_map = {c.id: c.name for c in cr.scalars().all()}
+    items = []
+    for lic in lics:
+        d = _ser_license(lic)
+        d["customer_name"] = cust_map.get(lic.customer_id)
+        # Count bound devices
+        dc = await db.execute(select(func.count()).where(CentralDevice.license_id == lic.id))
+        d["device_count"] = dc.scalar() or 0
+        items.append(d)
+    return items
 
 
 @app.post("/api/licensing/licenses")
@@ -948,6 +972,184 @@ async def update_license(license_id: str, data: dict, user: AuthUser = Depends(g
     await _log_audit(db, "LICENSE_UPDATED", license_id=lic.id, actor=user.username,
                      message=f"License updated: status={lic.status}")
     return _ser_license(lic)
+
+
+@app.get("/api/licensing/licenses/{license_id}")
+async def get_license_detail(license_id: str, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Full license detail with bound devices and activation token."""
+    result = await db.execute(select(CentralLicense).where(CentralLicense.id == license_id))
+    lic = result.scalar_one_or_none()
+    if not lic:
+        raise HTTPException(404, "License not found")
+    if not can_access_customer(user, lic.customer_id):
+        raise HTTPException(403, "Access denied")
+
+    # Get bound devices
+    dev_result = await db.execute(
+        select(CentralDevice).where(CentralDevice.license_id == license_id).order_by(CentralDevice.created_at.desc())
+    )
+    devices = [_ser_device(d) for d in dev_result.scalars().all()]
+
+    # Get activation token (latest unused for this license)
+    tok_result = await db.execute(
+        select(RegistrationToken).where(
+            RegistrationToken.license_id == license_id
+        ).order_by(RegistrationToken.created_at.desc())
+    )
+    tokens = tok_result.scalars().all()
+    active_token = None
+    for t in tokens:
+        if not t.used_at and not t.is_revoked and (_aware(t.expires_at) > _utcnow() if t.expires_at else True):
+            active_token = _ser_reg_token(t)
+            break
+
+    # Customer/location names
+    cust_name = None
+    loc_name = None
+    if lic.customer_id:
+        cr = await db.execute(select(CentralCustomer).where(CentralCustomer.id == lic.customer_id))
+        c = cr.scalar_one_or_none()
+        if c: cust_name = c.name
+    if lic.location_id:
+        lr = await db.execute(select(CentralLocation).where(CentralLocation.id == lic.location_id))
+        l = lr.scalar_one_or_none()
+        if l: loc_name = l.name
+
+    now = _utcnow()
+    computed_status = _compute_status(lic, now)
+
+    detail = _ser_license(lic)
+    detail["computed_status"] = computed_status
+    detail["customer_name"] = cust_name
+    detail["location_name"] = loc_name
+    detail["devices"] = devices
+    detail["device_count"] = len(devices)
+    detail["active_token"] = active_token
+    detail["token_history"] = [_ser_reg_token(t) for t in tokens]
+    return detail
+
+
+@app.get("/api/licensing/licenses/{license_id}/token")
+async def get_or_create_license_token(license_id: str, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Get existing active token or create a new one for this license."""
+    require_installer_or_above(user)
+    result = await db.execute(select(CentralLicense).where(CentralLicense.id == license_id))
+    lic = result.scalar_one_or_none()
+    if not lic:
+        raise HTTPException(404, "License not found")
+    if not can_access_customer(user, lic.customer_id):
+        raise HTTPException(403, "Access denied")
+
+    # Check for existing active token
+    now = _utcnow()
+    tok_result = await db.execute(
+        select(RegistrationToken).where(
+            RegistrationToken.license_id == license_id,
+            RegistrationToken.used_at.is_(None),
+            RegistrationToken.is_revoked == False,
+        ).order_by(RegistrationToken.created_at.desc())
+    )
+    for t in tok_result.scalars().all():
+        if t.expires_at and _aware(t.expires_at) > now:
+            return {"exists": True, "token": _ser_reg_token(t), "message": "Aktiver Token vorhanden"}
+
+    # Create new token
+    raw_token, token_hash, preview = _generate_reg_token()
+    token = RegistrationToken(
+        token_hash=token_hash, token_preview=preview,
+        customer_id=lic.customer_id, location_id=lic.location_id,
+        license_id=lic.id, expires_at=now + timedelta(hours=72),
+        created_by=user.username, note=f"Auto-created for license {lic.plan_type}",
+    )
+    db.add(token)
+    await db.flush()
+    await _log_audit(db, "REG_TOKEN_CREATED", license_id=lic.id, actor=user.username,
+                     message=f"Activation token created for license (auto)")
+    result_data = _ser_reg_token(token)
+    result_data["raw_token"] = raw_token
+    return {"exists": False, "token": result_data, "raw_token": raw_token, "message": "Neuer Token erstellt"}
+
+
+@app.post("/api/licensing/licenses/{license_id}/regenerate-token")
+async def regenerate_license_token(license_id: str, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Revoke all existing tokens and create a fresh one."""
+    require_installer_or_above(user)
+    result = await db.execute(select(CentralLicense).where(CentralLicense.id == license_id))
+    lic = result.scalar_one_or_none()
+    if not lic:
+        raise HTTPException(404, "License not found")
+    if not can_access_customer(user, lic.customer_id):
+        raise HTTPException(403, "Access denied")
+
+    # Revoke all existing unused tokens for this license
+    now = _utcnow()
+    tok_result = await db.execute(
+        select(RegistrationToken).where(
+            RegistrationToken.license_id == license_id,
+            RegistrationToken.used_at.is_(None),
+            RegistrationToken.is_revoked == False,
+        )
+    )
+    revoked_count = 0
+    for t in tok_result.scalars().all():
+        t.is_revoked = True
+        t.revoked_at = now
+        t.revoked_by = user.username
+        revoked_count += 1
+
+    # Create new token
+    raw_token, token_hash, preview = _generate_reg_token()
+    token = RegistrationToken(
+        token_hash=token_hash, token_preview=preview,
+        customer_id=lic.customer_id, location_id=lic.location_id,
+        license_id=lic.id, expires_at=now + timedelta(hours=72),
+        created_by=user.username, note=f"Regenerated (replaced {revoked_count} old tokens)",
+    )
+    db.add(token)
+    await db.flush()
+    await _log_audit(db, "REG_TOKEN_REGENERATED", license_id=lic.id, actor=user.username,
+                     message=f"Token regenerated for license ({revoked_count} old tokens revoked)")
+    result_data = _ser_reg_token(token)
+    result_data["raw_token"] = raw_token
+    return {"token": result_data, "raw_token": raw_token, "revoked_count": revoked_count}
+
+
+@app.delete("/api/licensing/licenses/{license_id}")
+async def delete_license(license_id: str, action: str = "deactivate", user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Soft-delete a license. action=deactivate|archive"""
+    require_installer_or_above(user)
+    result = await db.execute(select(CentralLicense).where(CentralLicense.id == license_id))
+    lic = result.scalar_one_or_none()
+    if not lic:
+        raise HTTPException(404, "License not found")
+    if not can_access_customer(user, lic.customer_id):
+        raise HTTPException(403, "Access denied")
+
+    if action not in ("deactivate", "archive"):
+        raise HTTPException(400, "action must be 'deactivate' or 'archive'")
+
+    old_status = lic.status
+    lic.status = "deactivated" if action == "deactivate" else "archived"
+    await db.flush()
+    await _log_audit(db, f"LICENSE_{action.upper()}D", license_id=lic.id, actor=user.username,
+                     message=f"License {action}d (was: {old_status})")
+    return {"success": True, "status": lic.status, "license": _ser_license(lic)}
+
+
+@app.post("/api/licensing/licenses/{license_id}/unbind-device/{device_id}")
+async def unbind_device_from_license(license_id: str, device_id: str, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Unbind a device from a license."""
+    require_installer_or_above(user)
+    result = await db.execute(select(CentralDevice).where(CentralDevice.id == device_id, CentralDevice.license_id == license_id))
+    dev = result.scalar_one_or_none()
+    if not dev:
+        raise HTTPException(404, "Device not bound to this license")
+    dev.license_id = None
+    dev.binding_status = "unbound"
+    await db.flush()
+    await _log_audit(db, "DEVICE_UNBOUND", device_id=device_id, license_id=license_id, actor=user.username,
+                     message=f"Device {dev.device_name or device_id} unbound from license")
+    return {"success": True, "device": _ser_device(dev)}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1126,12 +1328,43 @@ async def register_device(body: dict, request: Request, db: AsyncSession = Depen
     if not location_id and not customer_id:
         raise HTTPException(400, "Token has no customer/location")
 
+    # v3.11: Resolve + enforce license max_devices BEFORE creating device
+    license_id = token.license_id
+    resolved_license = None
+    if license_id:
+        lic_r = await db.execute(select(CentralLicense).where(CentralLicense.id == license_id))
+        resolved_license = lic_r.scalar_one_or_none()
+    elif customer_id:
+        conditions = [CentralLicense.customer_id == customer_id,
+                      CentralLicense.status.in_(["active", "test"])]
+        if location_id:
+            conditions.append((CentralLicense.location_id == location_id) | (CentralLicense.location_id.is_(None)))
+        lic_r = await db.execute(select(CentralLicense).where(and_(*conditions)))
+        lics = lic_r.scalars().all()
+        if lics:
+            best, _ = _find_best_license(lics, now)
+            if best:
+                resolved_license = best
+                license_id = best.id
+
+    # Enforce max_devices
+    if resolved_license:
+        bound_count_r = await db.execute(
+            select(func.count()).where(CentralDevice.license_id == resolved_license.id, CentralDevice.status == "active")
+        )
+        bound_count = bound_count_r.scalar() or 0
+        if bound_count >= resolved_license.max_devices:
+            await _log_audit(db, "DEVICE_REGISTRATION_REJECTED", install_id=install_id,
+                             license_id=resolved_license.id, message=f"max_devices limit reached ({bound_count}/{resolved_license.max_devices})")
+            raise HTTPException(403, f"Gerätelimit erreicht: {bound_count}/{resolved_license.max_devices} Geräte bereits an diese Lizenz gebunden")
+
     api_key = f"dk_{secrets.token_urlsafe(32)}"
     effective_name = device_name or token.device_name_template or f"Kiosk-{install_id[:8]}"
 
     new_device = CentralDevice(
         location_id=location_id, install_id=install_id, api_key=api_key,
         device_name=effective_name, status="active", binding_status="bound",
+        license_id=license_id,
         last_sync_at=now, last_sync_ip=request.client.host if request.client else None,
         sync_count=0, registered_via_token_id=token.id,
     )
@@ -1143,9 +1376,8 @@ async def register_device(body: dict, request: Request, db: AsyncSession = Depen
     token.used_by_device_id = new_device.id
     await db.flush()
 
-    # Resolve license
+    # Build response
     license_status = "no_license"
-    license_id = token.license_id
     plan_type = None
     expiry = None
     customer_name = None
@@ -1155,26 +1387,10 @@ async def register_device(body: dict, request: Request, db: AsyncSession = Depen
         cust = cust_r.scalar_one_or_none()
         if cust: customer_name = cust.name
 
-    if license_id:
-        lic_r = await db.execute(select(CentralLicense).where(CentralLicense.id == license_id))
-        lic = lic_r.scalar_one_or_none()
-        if lic:
-            license_status = _compute_status(lic, now)
-            plan_type = lic.plan_type
-            expiry = lic.ends_at.isoformat() if lic.ends_at else None
-    elif customer_id:
-        conditions = [CentralLicense.customer_id == customer_id]
-        if location_id:
-            conditions.append((CentralLicense.location_id == location_id) | (CentralLicense.location_id.is_(None)))
-        lic_r = await db.execute(select(CentralLicense).where(and_(*conditions)))
-        lics = lic_r.scalars().all()
-        if lics:
-            best, best_s = _find_best_license(lics, now)
-            if best:
-                license_status = best_s
-                plan_type = best.plan_type
-                license_id = best.id
-                expiry = best.ends_at.isoformat() if best.ends_at else None
+    if resolved_license:
+        license_status = _compute_status(resolved_license, now)
+        plan_type = resolved_license.plan_type
+        expiry = resolved_license.ends_at.isoformat() if resolved_license.ends_at else None
 
     await _log_audit(db, "DEVICE_REGISTERED", device_id=new_device.id, install_id=install_id,
                      license_id=license_id, actor="registration",

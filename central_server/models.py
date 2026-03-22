@@ -24,6 +24,8 @@ class LicenseStatus(str, enum.Enum):
     EXPIRED = "expired"
     BLOCKED = "blocked"
     TEST = "test"
+    DEACTIVATED = "deactivated"
+    ARCHIVED = "archived"
 
 
 class CustomerStatus(str, enum.Enum):
@@ -83,6 +85,7 @@ class CentralDevice(Base):
     last_sync_ip = Column(String(50), nullable=True)
     sync_count = Column(Integer, default=0)
     registered_via_token_id = Column(String(36), nullable=True)
+    license_id = Column(String(36), ForeignKey("licenses.id"), nullable=True, index=True)
     # v3.7.0: Heartbeat / Telemetry fields
     last_heartbeat_at = Column(DateTime, nullable=True)
     reported_version = Column(String(20), nullable=True)
