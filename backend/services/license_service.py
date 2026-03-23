@@ -79,6 +79,10 @@ class LicenseValidationService:
         """
         Compute the effective license status for a device, location, or customer.
 
+        v3.15.0: CRITICAL — Check local cache for centrally-enforced suspended/blocked
+        state FIRST, before any DB queries. This ensures that a central lock
+        (written by central_rejection_handler) cannot be bypassed by local DB state.
+
         v3.4.4: trigger_binding controls auto-bind behaviour:
         - trigger_binding=True (start_game): auto-binds unbound device to install_id
         - trigger_binding=False (unlock_board, license-status): checks only, no auto-bind
@@ -89,6 +93,30 @@ class LicenseValidationService:
         - After grace expired: return mismatch_expired (sessions blocked)
         """
         now = _utcnow()
+
+        # ── v3.15.0: Central lock enforcement ──
+        # If the central server has suspended this device (via 403 rejection),
+        # the cache file contains {status: "suspended", source: "central_rejection"}.
+        # This MUST take absolute priority over any local DB state.
+        try:
+            cached = self.load_from_cache()
+            if cached and isinstance(cached, dict):
+                cached_status = cached.get("status")
+                if cached_status in ("suspended", "blocked", "inactive"):
+                    logger.warning(
+                        f"[LICENSE] Central lock enforced: status={cached_status} "
+                        f"source={cached.get('source', 'cache')} — blocking all operations"
+                    )
+                    return {
+                        "status": cached_status,
+                        "checked_at": now.isoformat(),
+                        "source": cached.get("source", "cache"),
+                        "message": cached.get("message", "Device centrally locked"),
+                        "binding_status": "suspended",
+                    }
+        except Exception as e:
+            logger.error(f"[LICENSE] Cache check for central lock failed (continuing): {e}")
+
         binding_status = None
 
         # v3.4.3: If install_id provided, try to resolve device by install_id first
@@ -502,19 +530,28 @@ class LicenseValidationService:
         Policy: fail-open when no license system is configured.
         - active, grace, test: allowed (if binding OK or no binding check)
         - no_license: allowed (system not configured yet)
-        - expired, blocked: BLOCKED
+        - expired, blocked, suspended, inactive: BLOCKED
         - mismatch_grace: ALLOWED (with warning)
         - mismatch_expired: BLOCKED (device binding grace expired)
         - unbound: ALLOWED (not yet bound)
 
+        v3.15.0: Explicitly blocks suspended/inactive (central lock).
         v3.4.4: mismatch_grace allows sessions, mismatch_expired blocks.
         """
+        # v3.15.0: Central lock — hard block
+        current_status = status.get("status")
+        if current_status in ("suspended", "blocked", "inactive"):
+            logger.warning(f"[LICENSE] Session blocked by central lock: status={current_status}")
+            return False
+
         binding = status.get("binding_status")
         if binding == "mismatch_expired":
             return False
+        if binding == "suspended":
+            return False
 
         allowed = {"active", "grace", "test", "no_license"}
-        return status.get("status") in allowed
+        return current_status in allowed
 
 
 license_service = LicenseValidationService()

@@ -244,12 +244,14 @@ class ConfigProfile(Base):
 class RemoteAction(Base):
     """
     Queued remote actions for devices. Devices poll for pending actions.
+    v3.15.0: Added params JSON column for board control parameters.
     """
     __tablename__ = "remote_actions"
 
     id = Column(String(36), primary_key=True, default=_uuid)
     device_id = Column(String(36), nullable=False, index=True)
-    action_type = Column(String(30), nullable=False)  # force_sync | restart_backend | reload_ui
+    action_type = Column(String(30), nullable=False)
+    params = Column(JSON, nullable=True)
     status = Column(String(20), default="pending")     # pending | acked | failed | expired
     issued_by = Column(String(100), nullable=False)
     issued_at = Column(DateTime, default=_utcnow)

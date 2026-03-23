@@ -431,7 +431,7 @@ async def update_user(user_id: str, data: dict, user: AuthUser = Depends(get_cur
     if "role" in data:
         new_role = data["role"]
         if new_role not in VALID_ROLES:
-            raise HTTPException(400, f"Invalid role")
+            raise HTTPException(400, "Invalid role")
         if not user.is_superadmin and not can_create_role(user, new_role):
             raise HTTPException(403, f"Cannot assign role '{new_role}'")
         old_role = target.role
@@ -1064,7 +1064,7 @@ async def get_or_create_license_token(license_id: str, user: AuthUser = Depends(
     db.add(token)
     await db.flush()
     await _log_audit(db, "REG_TOKEN_CREATED", license_id=lic.id, actor=user.username,
-                     message=f"Activation token created for license (auto)")
+                     message="Activation token created for license (auto)")
     result_data = _ser_reg_token(token)
     result_data["raw_token"] = raw_token
     return {"exists": False, "token": result_data, "raw_token": raw_token, "message": "Neuer Token erstellt"}
@@ -2350,7 +2350,10 @@ async def get_config_diff(
 # v3.9.0: REMOTE ACTIONS
 # ═══════════════════════════════════════════════════════════════
 
-VALID_ACTIONS = {"force_sync", "restart_backend", "reload_ui"}
+VALID_ACTIONS = {
+    "force_sync", "restart_backend", "reload_ui",
+    "unlock_board", "lock_board", "start_session", "stop_session",
+}
 
 
 # ── Config Export / Import — v3.9.8 ──
@@ -2634,13 +2637,16 @@ async def apply_import(
 
 
 def _ser_action(a):
-    return {
+    d = {
         "id": a.id, "device_id": a.device_id, "action_type": a.action_type,
         "status": a.status, "issued_by": a.issued_by,
         "issued_at": a.issued_at.isoformat() if a.issued_at else None,
         "acked_at": a.acked_at.isoformat() if a.acked_at else None,
         "result_message": a.result_message,
     }
+    if a.params:
+        d["params"] = a.params
+    return d
 
 
 
@@ -2661,6 +2667,7 @@ async def bulk_remote_actions(
     body = await request.json()
     device_ids = body.get("device_ids", [])
     action_type = body.get("action_type", "")
+    action_params = body.get("params")
     is_retry = body.get("is_retry", False)
     retry_ref = body.get("retry_ref")  # optional: reference to original run timestamp
 
@@ -2699,7 +2706,7 @@ async def bulk_remote_actions(
             skipped_count += 1
             continue
 
-        action = RemoteAction(id=secrets.token_hex(18), device_id=did, action_type=action_type, issued_by=user.username)
+        action = RemoteAction(id=secrets.token_hex(18), device_id=did, action_type=action_type, params=action_params, issued_by=user.username)
         db.add(action)
         results.append({"device_id": did, "device_name": dev.device_name, "status": "created", "action_id": action.id})
         created_count += 1
@@ -2755,8 +2762,11 @@ async def issue_remote_action(
     if action_type not in VALID_ACTIONS:
         raise HTTPException(400, f"action_type must be one of: {', '.join(sorted(VALID_ACTIONS))}")
 
+    action_params = body.get("params")
+
     action = RemoteAction(
         device_id=device_id, action_type=action_type,
+        params=action_params if action_params else None,
         issued_by=user.username,
     )
     db.add(action)

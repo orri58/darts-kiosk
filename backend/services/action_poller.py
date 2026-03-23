@@ -244,6 +244,7 @@ class ActionPoller:
         """Handle a single action with full lifecycle: check → process → execute → ack."""
         action_id = action.get("id")
         action_type = action.get("action_type")
+        action_params = action.get("params")
 
         if not action_id or not action_type:
             logger.warning(f"[ACTION-POLL] Skipping malformed action: {action}")
@@ -269,7 +270,7 @@ class ActionPoller:
         try:
             # Execute with timeout
             success, message = await asyncio.wait_for(
-                self._execute_action(action_type),
+                self._execute_action(action_type, action_params),
                 timeout=_ACTION_TIMEOUT,
             )
         except asyncio.TimeoutError:
@@ -305,7 +306,7 @@ class ActionPoller:
         # Acknowledge with retry
         await self._ack_with_retry(action_id, success=success, message=message)
 
-    async def _execute_action(self, action_type: str) -> tuple:
+    async def _execute_action(self, action_type: str, params: dict = None) -> tuple:
         """Execute a single action. Returns (success, message)."""
         if action_type == "force_sync":
             return await self._do_force_sync()
@@ -313,6 +314,8 @@ class ActionPoller:
             return await self._do_restart_backend()
         elif action_type == "reload_ui":
             return await self._do_reload_ui()
+        elif action_type in ("unlock_board", "lock_board", "start_session", "stop_session"):
+            return await self._do_board_control(action_type, params or {})
         else:
             return False, f"Unknown action_type: {action_type}"
 
@@ -336,6 +339,167 @@ class ActionPoller:
             return True, f"UI reload signaled (version={ca._config_applied_version})"
         except Exception as e:
             return False, f"reload_ui error: {e}"
+
+    async def _do_board_control(self, action_type: str, params: dict) -> tuple:
+        """Execute board control actions locally using the DB directly."""
+        logger.info(f"[ACTION-POLL] Board control: {action_type} params={params}")
+
+        try:
+            from backend.database.database import AsyncSessionLocal
+            from backend.models import Board, Session, BoardStatus, SessionStatus, PricingMode
+            from backend.dependencies import get_or_create_setting
+            from sqlalchemy import select
+            from datetime import timedelta
+
+            async with AsyncSessionLocal() as db:
+                # Resolve board_id: from params, or discover first board
+                target_board_id = params.get("board_id") if params else None
+                if target_board_id:
+                    result = await db.execute(select(Board).where(Board.board_id == target_board_id))
+                    board = result.scalar_one_or_none()
+                else:
+                    # Auto-discover: pick first board in the local DB
+                    result = await db.execute(select(Board).order_by(Board.created_at))
+                    board = result.scalars().first()
+
+                if not board:
+                    return False, f"No board found (target_board_id={target_board_id})"
+
+                board_id = board.board_id
+                logger.info(f"[ACTION-POLL] Resolved board: {board_id} (db_id={board.id})")
+
+                if action_type in ("unlock_board", "start_session"):
+                    return await self._do_unlock(db, board, params)
+                elif action_type in ("lock_board", "stop_session"):
+                    return await self._do_lock(db, board)
+                else:
+                    return False, f"Unhandled board action: {action_type}"
+
+        except Exception as e:
+            logger.error(f"[ACTION-POLL] Board control error: {e}", exc_info=True)
+            return False, f"Board control error: {e}"
+
+    async def _do_unlock(self, db, board, params: dict) -> tuple:
+        """Unlock a board and create a session."""
+        from backend.models import Session, BoardStatus, SessionStatus, PricingMode
+        from backend.dependencies import get_or_create_setting
+        from backend.services.ws_manager import board_ws
+        from datetime import timedelta
+
+        # Check for existing active session
+        from sqlalchemy import select
+        existing = await db.execute(
+            select(Session).where(
+                Session.board_id == board.id,
+                Session.status == SessionStatus.ACTIVE.value
+            )
+        )
+        if existing.scalar_one_or_none():
+            return False, f"Board {board.board_id} already has an active session"
+
+        # License check
+        try:
+            from backend.services.license_service import license_service
+            from backend.services.device_identity_service import device_identity_service
+            _install_id = device_identity_service.get_install_id()
+            lic_status = await license_service.get_effective_status(
+                db, install_id=_install_id, board_id=board.board_id, trigger_binding=False
+            )
+            if not license_service.is_session_allowed(lic_status):
+                return False, f"License blocked: {lic_status.get('status')} / {lic_status.get('binding_status')}"
+        except Exception as e:
+            logger.error(f"[ACTION-POLL] License check failed (allowing): {e}")
+
+        # Resolve pricing from params or local defaults
+        pricing_mode = (params.get("pricing_mode") or PricingMode.PER_GAME.value) if params else PricingMode.PER_GAME.value
+        game_type = (params.get("game_type") or "501") if params else "501"
+        credits = (params.get("credits") or 3) if params else 3
+        minutes = (params.get("minutes") or 0) if params else 0
+        price_total = (params.get("price_total") or 0) if params else 0
+        players_count = (params.get("players_count") or 2) if params else 2
+
+        # Try to read defaults from local settings
+        try:
+            defaults = await get_or_create_setting(db, "pricing", {})
+            if not params or not params.get("pricing_mode"):
+                pricing_mode = defaults.get("mode", pricing_mode)
+                if pricing_mode == PricingMode.PER_GAME.value:
+                    credits = defaults.get("per_game", {}).get("credits", credits)
+                    price_total = defaults.get("per_game", {}).get("price", price_total)
+                elif pricing_mode == PricingMode.PER_TIME.value:
+                    minutes = defaults.get("per_time", {}).get("minutes", minutes)
+                    price_total = defaults.get("per_time", {}).get("price", price_total)
+        except Exception:
+            pass
+
+        expires_at = None
+        if pricing_mode == PricingMode.PER_TIME.value and minutes:
+            expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+
+        session = Session(
+            board_id=board.id,
+            pricing_mode=pricing_mode,
+            game_type=game_type,
+            credits_total=credits,
+            credits_remaining=credits,
+            minutes_total=minutes,
+            price_total=price_total,
+            players_count=players_count,
+            expires_at=expires_at,
+            status=SessionStatus.ACTIVE.value,
+        )
+        db.add(session)
+        board.status = BoardStatus.UNLOCKED.value
+        await db.commit()
+
+        # WebSocket broadcast
+        try:
+            await board_ws.broadcast("board_status", {"board_id": board.board_id, "status": "unlocked"})
+        except Exception:
+            pass
+
+        logger.info(f"[ACTION-POLL] Board {board.board_id} unlocked: mode={pricing_mode} credits={credits}")
+        return True, f"Board {board.board_id} unlocked (mode={pricing_mode}, credits={credits}, minutes={minutes})"
+
+    async def _do_lock(self, db, board) -> tuple:
+        """Lock a board and end any active session."""
+        from backend.models import Session, BoardStatus, SessionStatus
+        from backend.services.ws_manager import board_ws
+        from sqlalchemy import select
+
+        # End active session if exists
+        result = await db.execute(
+            select(Session).where(
+                Session.board_id == board.id,
+                Session.status == SessionStatus.ACTIVE.value
+            )
+        )
+        session = result.scalar_one_or_none()
+        if session:
+            session.status = SessionStatus.CANCELLED.value
+            session.ended_at = datetime.now(timezone.utc)
+            session.ended_reason = "remote_lock"
+
+        board.status = BoardStatus.LOCKED.value
+        await db.commit()
+
+        # WebSocket broadcast
+        try:
+            await board_ws.broadcast("board_status", {"board_id": board.board_id, "status": "locked"})
+        except Exception:
+            pass
+
+        # Stop Autodarts observer
+        try:
+            from backend.routers.boards import observer_manager, stop_observer_for_board
+            import asyncio
+            observer_manager.set_desired_state(board.board_id, "stopped")
+            asyncio.create_task(stop_observer_for_board(board.board_id, reason="remote_lock"))
+        except Exception:
+            pass
+
+        logger.info(f"[ACTION-POLL] Board {board.board_id} locked")
+        return True, f"Board {board.board_id} locked"
 
     # ── Ack with Retry ──
 

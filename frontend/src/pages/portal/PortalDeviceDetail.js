@@ -7,10 +7,12 @@ import {
   Globe, Clock, Activity, AlertTriangle, CheckCircle,
   XCircle, Wifi, WifiOff, Zap, ScrollText, BarChart3,
   HeartPulse, Database, Terminal, Filter, Shield, ShieldOff, ShieldAlert,
-  Settings2, Save, ChevronDown, ChevronUp, Unlock, Lock, Play, Square
+  Settings2, Save, ChevronDown, ChevronUp, Unlock, Lock, Play, Square, Hash
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 
 const ACTION_META = {
@@ -87,9 +89,14 @@ export default function PortalDeviceDetail() {
   const [statusLoading, setStatusLoading] = useState(false);
   const [logFilter, setLogFilter] = useState('all');
   const [configExpanded, setConfigExpanded] = useState(false);
+  const [configTab, setConfigTab] = useState('branding');
   const [deviceConfig, setDeviceConfig] = useState(null);
   const [configSaving, setConfigSaving] = useState(false);
   const [configDirty, setConfigDirty] = useState(false);
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [unlockParams, setUnlockParams] = useState({
+    pricing_mode: 'per_game', game_type: '501', credits: 3, minutes: 30, price_total: 0, players_count: 2, board_id: '',
+  });
 
   const fetchDevice = useCallback(async () => {
     try {
@@ -110,19 +117,36 @@ export default function PortalDeviceDetail() {
     return () => clearInterval(iv);
   }, [fetchDevice]);
 
-  const issueAction = async (actionType) => {
+  const issueAction = async (actionType, params = null) => {
     setActionLoading(actionType);
     try {
-      await axios.post(`${apiBase}/remote-actions/${deviceId}`, { action_type: actionType }, {
+      const body = { action_type: actionType };
+      if (params) body.params = params;
+      await axios.post(`${apiBase}/remote-actions/${deviceId}`, body, {
         headers: { ...authHeaders, 'Content-Type': 'application/json' },
       });
-      toast.success(`Aktion "${ACTION_META[actionType].label}" gesendet`);
+      toast.success(`Aktion "${ACTION_META[actionType]?.label || actionType}" gesendet`);
       setTimeout(fetchDevice, 1500);
     } catch (err) {
       toast.error(err.response?.data?.detail || 'Aktion fehlgeschlagen');
     } finally {
       setActionLoading(null);
     }
+  };
+
+  const handleBoardAction = (actionType) => {
+    if (actionType === 'unlock_board' || actionType === 'start_session') {
+      setUnlockOpen(true);
+    } else {
+      issueAction(actionType);
+    }
+  };
+
+  const confirmUnlock = () => {
+    const params = { ...unlockParams };
+    if (!params.board_id) delete params.board_id; // let action_poller auto-discover
+    issueAction('unlock_board', params);
+    setUnlockOpen(false);
   };
 
   const changeDeviceStatus = async (newStatus) => {
@@ -325,7 +349,7 @@ export default function PortalDeviceDetail() {
         </CardContent>
       </Card>
 
-      {/* Device Quick Config — v3.13.0 */}
+      {/* Device Config — v3.15.0: Full tabbed config matching local admin */}
       <Card className="bg-zinc-900 border-zinc-800" data-testid="device-quick-config">
         <CardHeader className="pb-2 cursor-pointer" onClick={() => setConfigExpanded(!configExpanded)}>
           <CardTitle className="text-sm text-zinc-400 flex items-center justify-between">
@@ -337,183 +361,330 @@ export default function PortalDeviceDetail() {
           </CardTitle>
         </CardHeader>
         {configExpanded && (
-          <CardContent className="space-y-4">
+          <CardContent>
             {deviceConfig ? (
-              <>
-                {/* Branding */}
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 font-medium uppercase">Branding</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Cafe Name</label>
-                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-cafe-name"
-                        value={deviceConfig?.branding?.cafe_name || ''} onChange={e => updateConfigField('branding', 'cafe_name', e.target.value)} />
+              <div className="space-y-4">
+                {/* Config Tabs */}
+                <Tabs value={configTab} onValueChange={setConfigTab}>
+                  <TabsList className="bg-zinc-800 border border-zinc-700 w-full flex flex-wrap h-auto gap-0.5 p-1">
+                    {[
+                      { id: 'branding', label: 'Branding' },
+                      { id: 'pricing', label: 'Preise' },
+                      { id: 'sound', label: 'Sound' },
+                      { id: 'stammkunde', label: 'Stammkunde' },
+                      { id: 'colors', label: 'Farben' },
+                      { id: 'kiosk', label: 'Kiosk' },
+                      { id: 'sharing', label: 'Sharing' },
+                    ].map(t => (
+                      <TabsTrigger key={t.id} value={t.id} data-testid={`cfg-tab-${t.id}`}
+                        className="text-xs px-2 py-1 data-[state=active]:bg-indigo-600 data-[state=active]:text-white">
+                        {t.label}
+                      </TabsTrigger>
+                    ))}
+                  </TabsList>
+
+                  {/* Branding Tab */}
+                  <TabsContent value="branding" className="space-y-3 mt-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1">Cafe Name</label>
+                        <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white" data-testid="cfg-cafe-name"
+                          value={deviceConfig?.branding?.cafe_name || ''} onChange={e => updateConfigField('branding', 'cafe_name', e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1">Untertitel</label>
+                        <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white" data-testid="cfg-subtitle"
+                          value={deviceConfig?.branding?.subtitle || ''} onChange={e => updateConfigField('branding', 'subtitle', e.target.value)} />
+                      </div>
                     </div>
                     <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Untertitel</label>
-                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-subtitle"
-                        value={deviceConfig?.branding?.subtitle || ''} onChange={e => updateConfigField('branding', 'subtitle', e.target.value)} />
+                      <label className="text-[10px] text-zinc-500 block mb-1">Logo URL</label>
+                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white" data-testid="cfg-logo-url"
+                        placeholder="https://..." value={deviceConfig?.branding?.logo_url || ''} onChange={e => updateConfigField('branding', 'logo_url', e.target.value)} />
                     </div>
-                  </div>
-                </div>
-                {/* Pricing */}
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 font-medium uppercase">Preise</p>
-                  <div className="grid grid-cols-3 gap-2">
+                  </TabsContent>
+
+                  {/* Pricing Tab — v3.15.0: Full parity with local admin */}
+                  <TabsContent value="pricing" className="space-y-3 mt-3">
                     <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Modus</label>
-                      <select className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-pricing-mode"
-                        value={deviceConfig?.pricing?.mode || 'per_game'} onChange={e => updateConfigField('pricing', 'mode', e.target.value)}>
-                        <option value="per_game">Pro Spiel</option>
-                        <option value="per_time">Pro Zeit</option>
-                        <option value="per_player">Pro Spieler</option>
-                      </select>
+                      <label className="text-[10px] text-zinc-500 block mb-1">Standard-Modus</label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[{v:'per_game',l:'Pro Spiel'},{v:'per_time',l:'Pro Zeit'},{v:'per_player',l:'Pro Spieler'}].map(m => (
+                          <button key={m.v} onClick={() => updateConfigField('pricing','mode',m.v)} data-testid={`cfg-mode-${m.v}`}
+                            className={`p-2 rounded border text-xs transition-all ${deviceConfig?.pricing?.mode===m.v ? 'border-indigo-500 bg-indigo-500/20 text-indigo-300' : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'}`}>
+                            {m.l}
+                          </button>
+                        ))}
+                      </div>
                     </div>
+                    {/* Per Game */}
+                    <div className="bg-zinc-800/50 rounded p-3 space-y-2">
+                      <p className="text-[10px] text-zinc-500 uppercase">Pro Spiel</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-zinc-600 block mb-0.5">Preis/Spiel (EUR)</label>
+                          <input type="number" step="0.5" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-per-game-price"
+                            value={deviceConfig?.pricing?.per_game?.price_per_credit ?? 2} onChange={e => {
+                              const pg = { ...(deviceConfig?.pricing?.per_game || {}), price_per_credit: parseFloat(e.target.value) || 0 };
+                              updateConfigField('pricing', 'per_game', pg);
+                            }} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-600 block mb-0.5">Standard Credits</label>
+                          <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-per-game-credits"
+                            value={deviceConfig?.pricing?.per_game?.default_credits ?? 3} onChange={e => {
+                              const pg = { ...(deviceConfig?.pricing?.per_game || {}), default_credits: parseInt(e.target.value) || 1 };
+                              updateConfigField('pricing', 'per_game', pg);
+                            }} />
+                        </div>
+                      </div>
+                    </div>
+                    {/* Per Time */}
+                    <div className="bg-zinc-800/50 rounded p-3 space-y-2">
+                      <p className="text-[10px] text-zinc-500 uppercase">Pro Zeit</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-zinc-600 block mb-0.5">30 Min (EUR)</label>
+                          <input type="number" step="0.5" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-per-time-30"
+                            value={deviceConfig?.pricing?.per_time?.price_per_30_min ?? 5} onChange={e => {
+                              const pt = { ...(deviceConfig?.pricing?.per_time || {}), price_per_30_min: parseFloat(e.target.value) || 0 };
+                              updateConfigField('pricing', 'per_time', pt);
+                            }} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-600 block mb-0.5">60 Min (EUR)</label>
+                          <input type="number" step="0.5" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-per-time-60"
+                            value={deviceConfig?.pricing?.per_time?.price_per_60_min ?? 8} onChange={e => {
+                              const pt = { ...(deviceConfig?.pricing?.per_time || {}), price_per_60_min: parseFloat(e.target.value) || 0 };
+                              updateConfigField('pricing', 'per_time', pt);
+                            }} />
+                        </div>
+                      </div>
+                    </div>
+                    {/* Per Player */}
+                    <div className="bg-zinc-800/50 rounded p-3 space-y-2">
+                      <p className="text-[10px] text-zinc-500 uppercase">Pro Spieler</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-zinc-600 block mb-0.5">Preis/Spieler (EUR)</label>
+                          <input type="number" step="0.5" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-per-player-price"
+                            value={deviceConfig?.pricing?.per_player?.price_per_player ?? 1.5} onChange={e => {
+                              const pp = { ...(deviceConfig?.pricing?.per_player || {}), price_per_player: parseFloat(e.target.value) || 0 };
+                              updateConfigField('pricing', 'per_player', pp);
+                            }} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-600 block mb-0.5">Max. Spieler</label>
+                          <input type="number" min="1" max="8" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-max-players"
+                            value={deviceConfig?.pricing?.max_players ?? 4} onChange={e => updateConfigField('pricing', 'max_players', parseInt(e.target.value) || 4)} />
+                        </div>
+                      </div>
+                    </div>
+                    {/* Game Types */}
                     <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Preis/Credit</label>
-                      <input type="number" step="0.5" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-price"
-                        value={deviceConfig?.pricing?.price_per_credit ?? ''} onChange={e => updateConfigField('pricing', 'price_per_credit', parseFloat(e.target.value) || 0)} />
+                      <label className="text-[10px] text-zinc-500 block mb-1">Erlaubte Spielarten</label>
+                      <div className="flex flex-wrap gap-1">
+                        {['301','501','Cricket','Training','Around the Clock','Shanghai'].map(g => {
+                          const types = deviceConfig?.pricing?.allowed_game_types || ['301','501','Cricket'];
+                          const active = types.includes(g);
+                          return (
+                            <button key={g} data-testid={`cfg-game-${g}`} onClick={() => {
+                              const newTypes = active ? types.filter(t => t !== g) : [...types, g];
+                              updateConfigField('pricing', 'allowed_game_types', newTypes);
+                            }} className={`px-2 py-1 rounded text-[10px] border transition-all ${active ? 'border-indigo-500 bg-indigo-500/20 text-indigo-300' : 'border-zinc-700 text-zinc-500'}`}>
+                              {g}
+                            </button>
+                          );
+                        })}
+                      </div>
                     </div>
-                    <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Max Spieler</label>
-                      <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-max-players"
-                        value={deviceConfig?.pricing?.max_players ?? ''} onChange={e => updateConfigField('pricing', 'max_players', parseInt(e.target.value) || 4)} />
-                    </div>
-                  </div>
-                </div>
-                {/* Kiosk Texts */}
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 font-medium uppercase">Kiosk-Texte</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Willkommenstitel</label>
-                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-welcome-title"
-                        value={deviceConfig?.texts?.welcome_title || ''} onChange={e => updateConfigField('texts', 'welcome_title', e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Untertitel</label>
-                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-welcome-sub"
-                        value={deviceConfig?.texts?.welcome_subtitle || ''} onChange={e => updateConfigField('texts', 'welcome_subtitle', e.target.value)} />
-                    </div>
-                  </div>
-                </div>
-                {/* Board / Autodarts */}
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 font-medium uppercase">Board / Autodarts</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Autodarts URL</label>
-                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-autodarts-url"
-                        placeholder="https://play.autodarts.io" value={deviceConfig?.boards?.autodarts_url || ''} onChange={e => updateConfigField('boards', 'autodarts_url', e.target.value)} />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Board Name</label>
-                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-board-name"
-                        value={deviceConfig?.boards?.board_name || ''} onChange={e => updateConfigField('boards', 'board_name', e.target.value)} />
-                    </div>
-                  </div>
-                </div>
-                {/* Sound / Language */}
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 font-medium uppercase">Sound / Sprache</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="flex items-center gap-2">
+                  </TabsContent>
+
+                  {/* Sound Tab — v3.15.0 */}
+                  <TabsContent value="sound" className="space-y-3 mt-3">
+                    <div className="flex items-center justify-between bg-zinc-800/50 rounded p-3 border border-zinc-700">
+                      <span className="text-xs text-zinc-300">Sound-Effekte</span>
                       <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-sound-enabled"
                         checked={deviceConfig?.sound?.enabled ?? true} onChange={e => updateConfigField('sound', 'enabled', e.target.checked)} />
-                      <label className="text-xs text-zinc-400">Sound aktiv</label>
                     </div>
                     <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Lautstaerke</label>
-                      <input type="range" min="0" max="100" className="w-full" data-testid="cfg-sound-volume"
+                      <label className="text-[10px] text-zinc-500 block mb-1">Lautstaerke: {deviceConfig?.sound?.volume ?? 70}%</label>
+                      <input type="range" min="0" max="100" step="5" className="w-full accent-indigo-500" data-testid="cfg-sound-volume"
                         value={deviceConfig?.sound?.volume ?? 70} onChange={e => updateConfigField('sound', 'volume', parseInt(e.target.value))} />
                     </div>
                     <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Sprache</label>
-                      <select className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-language"
+                      <label className="text-[10px] text-zinc-500 block mb-1">Sound-Pack</label>
+                      <div className="flex gap-1">
+                        {['classic','arcade','minimal'].map(p => (
+                          <button key={p} data-testid={`cfg-spack-${p}`} onClick={() => updateConfigField('sound','sound_pack',p)}
+                            className={`px-2 py-1 rounded text-[10px] border ${deviceConfig?.sound?.sound_pack===p ? 'border-indigo-500 bg-indigo-500/20 text-indigo-300' : 'border-zinc-700 text-zinc-400'}`}>
+                            {p}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500 block mb-1">Rate Limit: {deviceConfig?.sound?.rate_limit_ms ?? 1000}ms</label>
+                      <input type="range" min="500" max="5000" step="250" className="w-full accent-indigo-500" data-testid="cfg-sound-rate"
+                        value={deviceConfig?.sound?.rate_limit_ms ?? 1000} onChange={e => updateConfigField('sound', 'rate_limit_ms', parseInt(e.target.value))} />
+                    </div>
+                    <div className="flex items-center justify-between bg-zinc-800/50 rounded p-3 border border-zinc-700">
+                      <span className="text-xs text-zinc-300">Ruhezeiten</span>
+                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-quiet-hours"
+                        checked={deviceConfig?.sound?.quiet_hours_enabled ?? false} onChange={e => updateConfigField('sound', 'quiet_hours_enabled', e.target.checked)} />
+                    </div>
+                    {deviceConfig?.sound?.quiet_hours_enabled && (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-zinc-600 block mb-0.5">Von</label>
+                          <input type="time" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-quiet-start"
+                            value={deviceConfig?.sound?.quiet_hours_start || '22:00'} onChange={e => updateConfigField('sound', 'quiet_hours_start', e.target.value)} />
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-zinc-600 block mb-0.5">Bis</label>
+                          <input type="time" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-quiet-end"
+                            value={deviceConfig?.sound?.quiet_hours_end || '08:00'} onChange={e => updateConfigField('sound', 'quiet_hours_end', e.target.value)} />
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <label className="text-[10px] text-zinc-500 block mb-1">Sprache</label>
+                      <select className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white" data-testid="cfg-language"
                         value={deviceConfig?.language?.default || 'de'} onChange={e => updateConfigField('language', 'default', e.target.value)}>
                         <option value="de">Deutsch</option>
                         <option value="en">English</option>
                       </select>
                     </div>
-                  </div>
-                </div>
-                {/* Farben */}
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 font-medium uppercase">Farben</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Primaerfarbe</label>
-                      <div className="flex items-center gap-1">
-                        <input type="color" className="w-6 h-6 border border-zinc-700 rounded cursor-pointer" data-testid="cfg-primary-color"
-                          value={deviceConfig?.branding?.primary_color || '#6366f1'} onChange={e => updateConfigField('branding', 'primary_color', e.target.value)} />
-                        <input className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white font-mono"
-                          value={deviceConfig?.branding?.primary_color || ''} onChange={e => updateConfigField('branding', 'primary_color', e.target.value)} />
+                  </TabsContent>
+
+                  {/* Stammkunde Tab — v3.15.0 */}
+                  <TabsContent value="stammkunde" className="space-y-3 mt-3">
+                    <div className="flex items-center justify-between bg-zinc-800/50 rounded p-3 border border-zinc-700">
+                      <div>
+                        <span className="text-xs text-zinc-300">Top Stammkunden auf Lockscreen</span>
+                        <p className="text-[10px] text-zinc-600 mt-0.5">Registrierte Top-Spieler auf dem gesperrten Bildschirm anzeigen</p>
+                      </div>
+                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-stammkunde-enabled"
+                        checked={deviceConfig?.stammkunde_display?.enabled ?? true} onChange={e => updateConfigField('stammkunde_display', 'enabled', e.target.checked)} />
+                    </div>
+                    {deviceConfig?.stammkunde_display?.enabled && (
+                      <>
+                        <div>
+                          <label className="text-[10px] text-zinc-500 block mb-1">Zeitraum</label>
+                          <div className="grid grid-cols-4 gap-1">
+                            {[{v:'today',l:'Heute'},{v:'week',l:'Woche'},{v:'month',l:'Monat'},{v:'all',l:'Gesamt'}].map(p => (
+                              <button key={p.v} data-testid={`cfg-sk-period-${p.v}`} onClick={() => updateConfigField('stammkunde_display','period',p.v)}
+                                className={`px-2 py-1 rounded text-[10px] border ${deviceConfig?.stammkunde_display?.period===p.v ? 'border-indigo-500 bg-indigo-500/20 text-indigo-300' : 'border-zinc-700 text-zinc-400'}`}>
+                                {p.l}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="text-[10px] text-zinc-600 block mb-0.5">Rotation (Sek.)</label>
+                            <input type="number" min="5" max="8" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-sk-interval"
+                              value={deviceConfig?.stammkunde_display?.interval_seconds ?? 6} onChange={e => updateConfigField('stammkunde_display', 'interval_seconds', parseInt(e.target.value) || 6)} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-600 block mb-0.5">Max. Eintraege</label>
+                            <input type="number" min="1" max="3" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-sk-max"
+                              value={deviceConfig?.stammkunde_display?.max_entries ?? 3} onChange={e => updateConfigField('stammkunde_display', 'max_entries', parseInt(e.target.value) || 3)} />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-zinc-600 block mb-0.5">Nick Max Laenge</label>
+                            <input type="number" min="8" max="30" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-sk-nick"
+                              value={deviceConfig?.stammkunde_display?.nickname_max_length ?? 15} onChange={e => updateConfigField('stammkunde_display', 'nickname_max_length', parseInt(e.target.value) || 15)} />
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </TabsContent>
+
+                  {/* Colors Tab */}
+                  <TabsContent value="colors" className="space-y-3 mt-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        {k:'primary_color',l:'Primaerfarbe',d:'#6366f1'},
+                        {k:'secondary_color',l:'Sekundaerfarbe',d:'#1e1b4b'},
+                        {k:'accent_color',l:'Akzentfarbe',d:'#f59e0b'},
+                      ].map(c => (
+                        <div key={c.k}>
+                          <label className="text-[10px] text-zinc-500 block mb-1">{c.l}</label>
+                          <div className="flex items-center gap-1">
+                            <input type="color" className="w-6 h-6 border border-zinc-700 rounded cursor-pointer" data-testid={`cfg-${c.k}`}
+                              value={deviceConfig?.branding?.[c.k] || c.d} onChange={e => updateConfigField('branding', c.k, e.target.value)} />
+                            <input className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white font-mono"
+                              value={deviceConfig?.branding?.[c.k] || ''} onChange={e => updateConfigField('branding', c.k, e.target.value)} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </TabsContent>
+
+                  {/* Kiosk Tab */}
+                  <TabsContent value="kiosk" className="space-y-3 mt-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1">Willkommenstitel</label>
+                        <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white" data-testid="cfg-welcome-title"
+                          value={deviceConfig?.texts?.welcome_title || ''} onChange={e => updateConfigField('texts', 'welcome_title', e.target.value)} />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1">Untertitel</label>
+                        <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white" data-testid="cfg-welcome-sub"
+                          value={deviceConfig?.texts?.welcome_subtitle || ''} onChange={e => updateConfigField('texts', 'welcome_subtitle', e.target.value)} />
                       </div>
                     </div>
                     <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Sekundaerfarbe</label>
-                      <div className="flex items-center gap-1">
-                        <input type="color" className="w-6 h-6 border border-zinc-700 rounded cursor-pointer" data-testid="cfg-secondary-color"
-                          value={deviceConfig?.branding?.secondary_color || '#1e1b4b'} onChange={e => updateConfigField('branding', 'secondary_color', e.target.value)} />
-                        <input className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white font-mono"
-                          value={deviceConfig?.branding?.secondary_color || ''} onChange={e => updateConfigField('branding', 'secondary_color', e.target.value)} />
+                      <label className="text-[10px] text-zinc-500 block mb-1">Autodarts URL</label>
+                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white" data-testid="cfg-autodarts-url"
+                        placeholder="https://play.autodarts.io" value={deviceConfig?.boards?.autodarts_url || ''} onChange={e => updateConfigField('boards', 'autodarts_url', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-500 block mb-1">Board Name</label>
+                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1.5 text-xs text-white" data-testid="cfg-board-name"
+                        value={deviceConfig?.boards?.board_name || ''} onChange={e => updateConfigField('boards', 'board_name', e.target.value)} />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1">Auto-Lock (Min.)</label>
+                        <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-autolock"
+                          value={deviceConfig?.kiosk?.auto_lock_timeout_min ?? 5} onChange={e => updateConfigField('kiosk', 'auto_lock_timeout_min', parseInt(e.target.value) || 5)} />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 block mb-1">Idle-Timeout (Min.)</label>
+                        <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-idle"
+                          value={deviceConfig?.kiosk?.idle_timeout_min ?? 10} onChange={e => updateConfigField('kiosk', 'idle_timeout_min', parseInt(e.target.value) || 10)} />
+                      </div>
+                      <div className="flex items-center gap-2 pt-5">
+                        <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-fullscreen"
+                          checked={deviceConfig?.kiosk?.fullscreen ?? false} onChange={e => updateConfigField('kiosk', 'fullscreen', e.target.checked)} />
+                        <label className="text-xs text-zinc-400">Vollbild</label>
                       </div>
                     </div>
-                    <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Akzentfarbe</label>
-                      <div className="flex items-center gap-1">
-                        <input type="color" className="w-6 h-6 border border-zinc-700 rounded cursor-pointer" data-testid="cfg-accent-color"
-                          value={deviceConfig?.branding?.accent_color || '#f59e0b'} onChange={e => updateConfigField('branding', 'accent_color', e.target.value)} />
-                        <input className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white font-mono"
-                          value={deviceConfig?.branding?.accent_color || ''} onChange={e => updateConfigField('branding', 'accent_color', e.target.value)} />
-                      </div>
+                  </TabsContent>
+
+                  {/* Sharing Tab */}
+                  <TabsContent value="sharing" className="space-y-3 mt-3">
+                    <div className="space-y-2">
+                      {[
+                        {k:'qr_enabled',l:'QR-Code aktiv'},
+                        {k:'public_results',l:'Oeffentliche Ergebnisse'},
+                        {k:'leaderboard_public',l:'Leaderboard oeffentlich'},
+                      ].map(s => (
+                        <div key={s.k} className="flex items-center gap-2">
+                          <input type="checkbox" className="rounded border-zinc-600" data-testid={`cfg-${s.k}`}
+                            checked={deviceConfig?.sharing?.[s.k] ?? true} onChange={e => updateConfigField('sharing', s.k, e.target.checked)} />
+                          <label className="text-xs text-zinc-400">{s.l}</label>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                </div>
-                {/* QR / Sharing */}
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 font-medium uppercase">QR / Sharing</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div className="flex items-center gap-2">
-                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-qr-enabled"
-                        checked={deviceConfig?.sharing?.qr_enabled ?? true} onChange={e => updateConfigField('sharing', 'qr_enabled', e.target.checked)} />
-                      <label className="text-xs text-zinc-400">QR-Code aktiv</label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-public-results"
-                        checked={deviceConfig?.sharing?.public_results ?? true} onChange={e => updateConfigField('sharing', 'public_results', e.target.checked)} />
-                      <label className="text-xs text-zinc-400">Oeffentl. Ergebnisse</label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-leaderboard"
-                        checked={deviceConfig?.sharing?.leaderboard_public ?? true} onChange={e => updateConfigField('sharing', 'leaderboard_public', e.target.checked)} />
-                      <label className="text-xs text-zinc-400">Leaderboard oeffentl.</label>
-                    </div>
-                  </div>
-                </div>
-                {/* Kiosk-Verhalten */}
-                <div className="space-y-2">
-                  <p className="text-xs text-zinc-500 font-medium uppercase">Kiosk-Verhalten</p>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Auto-Lock (Min.)</label>
-                      <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-autolock"
-                        value={deviceConfig?.kiosk?.auto_lock_timeout_min ?? 5} onChange={e => updateConfigField('kiosk', 'auto_lock_timeout_min', parseInt(e.target.value) || 5)} />
-                    </div>
-                    <div>
-                      <label className="text-[10px] text-zinc-600 block mb-0.5">Idle-Timeout (Min.)</label>
-                      <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-idle"
-                        value={deviceConfig?.kiosk?.idle_timeout_min ?? 10} onChange={e => updateConfigField('kiosk', 'idle_timeout_min', parseInt(e.target.value) || 10)} />
-                    </div>
-                    <div className="flex items-center gap-2 pt-4">
-                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-fullscreen"
-                        checked={deviceConfig?.kiosk?.fullscreen ?? false} onChange={e => updateConfigField('kiosk', 'fullscreen', e.target.checked)} />
-                      <label className="text-xs text-zinc-400">Vollbild</label>
-                    </div>
-                  </div>
-                </div>
-                {/* Save */}
-                <div className="flex justify-end">
+                  </TabsContent>
+                </Tabs>
+
+                {/* Save button (always visible) */}
+                <div className="flex justify-end pt-2 border-t border-zinc-800">
                   <Button size="sm" disabled={configSaving || !configDirty}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs h-7"
                     onClick={saveDeviceConfig} data-testid="cfg-save-btn">
@@ -521,7 +692,7 @@ export default function PortalDeviceDetail() {
                     Speichern & Push
                   </Button>
                 </div>
-              </>
+              </div>
             ) : (
               <div className="flex items-center justify-center py-6">
                 <RefreshCw className="w-4 h-4 text-zinc-500 animate-spin mr-2" />
@@ -562,7 +733,7 @@ export default function PortalDeviceDetail() {
                     const Icon = meta.icon;
                     const isUnlock = key === 'unlock_board' || key === 'start_session';
                     return (
-                      <button key={key} onClick={() => issueAction(key)} disabled={!!actionLoading} data-testid={`action-${key}`}
+                      <button key={key} onClick={() => handleBoardAction(key)} disabled={!!actionLoading} data-testid={`action-${key}`}
                         className={`flex items-center gap-2 p-3 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                           isUnlock ? 'border-emerald-500/30 hover:bg-emerald-500/10' : 'border-amber-500/30 hover:bg-amber-500/10'
                         }`}>
@@ -809,6 +980,95 @@ export default function PortalDeviceDetail() {
           </Card>
         </div>
       </div>
+
+      {/* Unlock Board Dialog */}
+      <Dialog open={unlockOpen} onOpenChange={setUnlockOpen}>
+        <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold flex items-center gap-2">
+              <Unlock className="w-5 h-5 text-emerald-400" /> Board Freischalten
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {/* Board ID (optional) */}
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Board-ID (leer = automatisch)</label>
+              <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-board-id"
+                placeholder="z.B. BOARD-1" value={unlockParams.board_id} onChange={e => setUnlockParams(p => ({ ...p, board_id: e.target.value }))} />
+            </div>
+            {/* Pricing Mode */}
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Preismodus</label>
+              <select className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-pricing-mode"
+                value={unlockParams.pricing_mode} onChange={e => setUnlockParams(p => ({ ...p, pricing_mode: e.target.value }))}>
+                <option value="per_game">Pro Spiel</option>
+                <option value="per_time">Pro Zeit</option>
+                <option value="per_player">Pro Spieler</option>
+              </select>
+            </div>
+            {/* Game Type */}
+            <div>
+              <label className="text-xs text-zinc-400 block mb-1">Spielart</label>
+              <select className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-game-type"
+                value={unlockParams.game_type} onChange={e => setUnlockParams(p => ({ ...p, game_type: e.target.value }))}>
+                <option value="301">301</option>
+                <option value="501">501</option>
+                <option value="Cricket">Cricket</option>
+              </select>
+            </div>
+            {/* Mode-specific fields */}
+            {unlockParams.pricing_mode === 'per_game' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Spiele (Credits)</label>
+                  <input type="number" min="1" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-credits"
+                    value={unlockParams.credits} onChange={e => setUnlockParams(p => ({ ...p, credits: parseInt(e.target.value) || 1 }))} />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Preis (EUR)</label>
+                  <input type="number" step="0.5" min="0" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-price"
+                    value={unlockParams.price_total} onChange={e => setUnlockParams(p => ({ ...p, price_total: parseFloat(e.target.value) || 0 }))} />
+                </div>
+              </div>
+            )}
+            {unlockParams.pricing_mode === 'per_time' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Minuten</label>
+                  <input type="number" min="5" step="5" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-minutes"
+                    value={unlockParams.minutes} onChange={e => setUnlockParams(p => ({ ...p, minutes: parseInt(e.target.value) || 5 }))} />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Preis (EUR)</label>
+                  <input type="number" step="0.5" min="0" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-price-time"
+                    value={unlockParams.price_total} onChange={e => setUnlockParams(p => ({ ...p, price_total: parseFloat(e.target.value) || 0 }))} />
+                </div>
+              </div>
+            )}
+            {unlockParams.pricing_mode === 'per_player' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Spieleranzahl</label>
+                  <input type="number" min="1" max="8" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-players"
+                    value={unlockParams.players_count} onChange={e => setUnlockParams(p => ({ ...p, players_count: parseInt(e.target.value) || 2 }))} />
+                </div>
+                <div>
+                  <label className="text-xs text-zinc-400 block mb-1">Preis (EUR)</label>
+                  <input type="number" step="0.5" min="0" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-price-player"
+                    value={unlockParams.price_total} onChange={e => setUnlockParams(p => ({ ...p, price_total: parseFloat(e.target.value) || 0 }))} />
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" className="border-zinc-700 text-zinc-400" onClick={() => setUnlockOpen(false)} data-testid="unlock-cancel-btn">Abbrechen</Button>
+            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={confirmUnlock} disabled={!!actionLoading} data-testid="unlock-confirm-btn">
+              {actionLoading === 'unlock_board' ? <RefreshCw className="w-4 h-4 mr-1 animate-spin" /> : <Unlock className="w-4 h-4 mr-1" />}
+              Freischalten
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
