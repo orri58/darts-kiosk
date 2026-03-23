@@ -85,6 +85,18 @@ class LicenseSyncClient:
                     f"binding={data.get('binding_status')} server={server_url}"
                 )
                 return data
+            elif resp.status_code == 403:
+                # v3.13.0: Device deactivated/blocked centrally
+                self.connected = True  # Server is reachable, but rejecting us
+                self.last_sync_ok = False
+                self.last_error = f"403: Device rejected — {resp.text[:200]}"
+                logger.warning(f"[SYNC] REJECTED (403): {resp.text[:200]}")
+                try:
+                    from backend.services.central_rejection_handler import handle_central_rejection
+                    await handle_central_rejection("license_sync", 403, resp.text[:200])
+                except Exception:
+                    pass
+                return None
             else:
                 self.connected = False
                 self.last_sync_ok = False

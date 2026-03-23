@@ -6,7 +6,8 @@ import {
   Monitor, ArrowLeft, RefreshCw, RotateCcw,
   Globe, Clock, Activity, AlertTriangle, CheckCircle,
   XCircle, Wifi, WifiOff, Zap, ScrollText, BarChart3,
-  HeartPulse, Database, Terminal, Filter, Shield, ShieldOff, ShieldAlert
+  HeartPulse, Database, Terminal, Filter, Shield, ShieldOff, ShieldAlert,
+  Settings2, Save, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -80,7 +81,11 @@ export default function PortalDeviceDetail() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
   const [statusLoading, setStatusLoading] = useState(false);
-  const [logFilter, setLogFilter] = useState('all'); // all, info, warn, error
+  const [logFilter, setLogFilter] = useState('all');
+  const [configExpanded, setConfigExpanded] = useState(false);
+  const [deviceConfig, setDeviceConfig] = useState(null);
+  const [configSaving, setConfigSaving] = useState(false);
+  const [configDirty, setConfigDirty] = useState(false);
 
   const fetchDevice = useCallback(async () => {
     try {
@@ -128,6 +133,50 @@ export default function PortalDeviceDetail() {
       toast.error(err.response?.data?.detail || 'Status-Aenderung fehlgeschlagen');
     } finally {
       setStatusLoading(false);
+    }
+  };
+
+  // Device-specific config
+  const fetchDeviceConfig = useCallback(async () => {
+    try {
+      const res = await axios.get(`${apiBase}/config/effective`, {
+        headers: authHeaders,
+        params: { scope: 'device', scope_id: deviceId },
+      });
+      setDeviceConfig(res.data?.config || res.data);
+    } catch {
+      setDeviceConfig(null);
+    }
+  }, [apiBase, authHeaders, deviceId]);
+
+  useEffect(() => {
+    if (configExpanded && !deviceConfig) fetchDeviceConfig();
+  }, [configExpanded, deviceConfig, fetchDeviceConfig]);
+
+  const updateConfigField = (section, key, value) => {
+    setDeviceConfig(prev => {
+      const updated = { ...prev };
+      if (!updated[section]) updated[section] = {};
+      updated[section] = { ...updated[section], [key]: value };
+      return updated;
+    });
+    setConfigDirty(true);
+  };
+
+  const saveDeviceConfig = async () => {
+    setConfigSaving(true);
+    try {
+      await axios.put(`${apiBase}/config/profile/device/${deviceId}`, {
+        config: deviceConfig,
+      }, {
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      });
+      toast.success('Konfiguration gespeichert und Push ausgeloest');
+      setConfigDirty(false);
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Speichern fehlgeschlagen');
+    } finally {
+      setConfigSaving(false);
     }
   };
 
@@ -270,6 +319,138 @@ export default function PortalDeviceDetail() {
             </div>
           </div>
         </CardContent>
+      </Card>
+
+      {/* Device Quick Config — v3.13.0 */}
+      <Card className="bg-zinc-900 border-zinc-800" data-testid="device-quick-config">
+        <CardHeader className="pb-2 cursor-pointer" onClick={() => setConfigExpanded(!configExpanded)}>
+          <CardTitle className="text-sm text-zinc-400 flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <Settings2 className="w-4 h-4" /> Device-Konfiguration
+              {configDirty && <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">Ungespeichert</span>}
+            </span>
+            {configExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </CardTitle>
+        </CardHeader>
+        {configExpanded && (
+          <CardContent className="space-y-4">
+            {deviceConfig ? (
+              <>
+                {/* Branding */}
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 font-medium uppercase">Branding</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Cafe Name</label>
+                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-cafe-name"
+                        value={deviceConfig?.branding?.cafe_name || ''} onChange={e => updateConfigField('branding', 'cafe_name', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Untertitel</label>
+                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-subtitle"
+                        value={deviceConfig?.branding?.subtitle || ''} onChange={e => updateConfigField('branding', 'subtitle', e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+                {/* Pricing */}
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 font-medium uppercase">Preise</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Modus</label>
+                      <select className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-pricing-mode"
+                        value={deviceConfig?.pricing?.mode || 'per_game'} onChange={e => updateConfigField('pricing', 'mode', e.target.value)}>
+                        <option value="per_game">Pro Spiel</option>
+                        <option value="per_time">Pro Zeit</option>
+                        <option value="per_player">Pro Spieler</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Preis/Credit</label>
+                      <input type="number" step="0.5" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-price"
+                        value={deviceConfig?.pricing?.price_per_credit ?? ''} onChange={e => updateConfigField('pricing', 'price_per_credit', parseFloat(e.target.value) || 0)} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Max Spieler</label>
+                      <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-max-players"
+                        value={deviceConfig?.pricing?.max_players ?? ''} onChange={e => updateConfigField('pricing', 'max_players', parseInt(e.target.value) || 4)} />
+                    </div>
+                  </div>
+                </div>
+                {/* Kiosk Texts */}
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 font-medium uppercase">Kiosk-Texte</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Willkommenstitel</label>
+                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-welcome-title"
+                        value={deviceConfig?.texts?.welcome_title || ''} onChange={e => updateConfigField('texts', 'welcome_title', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Untertitel</label>
+                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-welcome-sub"
+                        value={deviceConfig?.texts?.welcome_subtitle || ''} onChange={e => updateConfigField('texts', 'welcome_subtitle', e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+                {/* Board / Autodarts */}
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 font-medium uppercase">Board / Autodarts</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Autodarts URL</label>
+                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-autodarts-url"
+                        placeholder="https://play.autodarts.io" value={deviceConfig?.boards?.autodarts_url || ''} onChange={e => updateConfigField('boards', 'autodarts_url', e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Board Name</label>
+                      <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-board-name"
+                        value={deviceConfig?.boards?.board_name || ''} onChange={e => updateConfigField('boards', 'board_name', e.target.value)} />
+                    </div>
+                  </div>
+                </div>
+                {/* Sound / Language */}
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 font-medium uppercase">Sound / Sprache</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-sound-enabled"
+                        checked={deviceConfig?.sound?.enabled ?? true} onChange={e => updateConfigField('sound', 'enabled', e.target.checked)} />
+                      <label className="text-xs text-zinc-400">Sound aktiv</label>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Lautstaerke</label>
+                      <input type="range" min="0" max="100" className="w-full" data-testid="cfg-sound-volume"
+                        value={deviceConfig?.sound?.volume ?? 70} onChange={e => updateConfigField('sound', 'volume', parseInt(e.target.value))} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Sprache</label>
+                      <select className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-language"
+                        value={deviceConfig?.language?.default || 'de'} onChange={e => updateConfigField('language', 'default', e.target.value)}>
+                        <option value="de">Deutsch</option>
+                        <option value="en">English</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+                {/* Save */}
+                <div className="flex justify-end">
+                  <Button size="sm" disabled={configSaving || !configDirty}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs h-7"
+                    onClick={saveDeviceConfig} data-testid="cfg-save-btn">
+                    {configSaving ? <RefreshCw className="w-3 h-3 mr-1 animate-spin" /> : <Save className="w-3 h-3 mr-1" />}
+                    Speichern & Push
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div className="flex items-center justify-center py-6">
+                <RefreshCw className="w-4 h-4 text-zinc-500 animate-spin mr-2" />
+                <span className="text-xs text-zinc-500">Lade Konfiguration...</span>
+              </div>
+            )}
+          </CardContent>
+        )}
       </Card>
 
       {/* Last Error */}

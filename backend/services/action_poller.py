@@ -200,12 +200,30 @@ class ActionPoller:
                     f"{self._central_url}/api/remote-actions/{self._device_id}/pending",
                     headers={"X-License-Key": self._api_key},
                 )
+                if resp.status_code == 403:
+                    # v3.13.0: Device deactivated/blocked centrally
+                    self._consecutive_errors += 1
+                    self._last_error = "403: Device rejected"
+                    logger.warning(f"[ACTION-POLL] REJECTED by central (403): {resp.text[:200]}")
+                    try:
+                        from backend.services.central_rejection_handler import handle_central_rejection
+                        import asyncio
+                        await handle_central_rejection("action_poller", 403, resp.text[:200])
+                    except Exception:
+                        pass
+                    return None
                 if resp.status_code != 200:
                     self._consecutive_errors += 1
                     self._last_error = f"HTTP {resp.status_code}"
                     if self._consecutive_errors <= 3 or self._consecutive_errors % 10 == 0:
                         logger.warning(f"[ACTION-POLL] Fetch returned HTTP {resp.status_code} (errors={self._consecutive_errors})")
                     return None
+                # v3.13.0: Success — clear any suspended state
+                try:
+                    from backend.services.central_rejection_handler import handle_central_reactivation
+                    await handle_central_reactivation("action_poller")
+                except Exception:
+                    pass
                 return resp.json()
         except httpx.TimeoutException:
             self._consecutive_errors += 1

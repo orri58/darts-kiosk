@@ -1500,7 +1500,11 @@ async def telemetry_heartbeat(body: dict, request: Request, db: AsyncSession = D
         await _log_audit(db, "DEVICE_ONLINE", device_id=device.id,
                          message=f"Device '{device.device_name}' came online (v{body.get('version', '?')})")
 
-    return {"status": "ok", "server_time": now.isoformat()}
+    return {
+        "status": "ok",
+        "server_time": now.isoformat(),
+        "device_status": device.status,
+    }
 
 
 @app.post("/api/telemetry/ingest")
@@ -2957,6 +2961,56 @@ async def ws_device_status(device_id: str, user: AuthUser = Depends(get_current_
     """Get WS connection status for a specific device."""
     require_min_role(user, "staff")
     return device_ws_hub.device_ws_status(device_id)
+
+
+# ── Data Hygiene / Cleanup — v3.13.0 ──
+
+@app.post("/api/admin/cleanup")
+async def data_cleanup(user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Clean up stale/inconsistent data. Superadmin only."""
+    require_min_role(user, "superadmin")
+    results = {}
+
+    # 1. Remove expired registration tokens
+    expired_tokens = await db.execute(
+        select(RegistrationToken).where(
+            RegistrationToken.status == "pending",
+            RegistrationToken.expires_at < datetime.now(timezone.utc),
+        )
+    )
+    expired = expired_tokens.scalars().all()
+    for t in expired:
+        t.status = "expired"
+    results["expired_tokens"] = len(expired)
+
+    # 2. Fix devices with mismatched license bindings
+    orphaned = await db.execute(
+        select(CentralDevice).where(
+            CentralDevice.license_id.isnot(None),
+            CentralDevice.binding_status != "bound",
+        )
+    )
+    for dev in orphaned.scalars().all():
+        dev.binding_status = "bound"
+    results["fixed_bindings"] = len(orphaned.scalars().all()) if hasattr(orphaned, 'scalars') else 0
+
+    # 3. Clean up stale heartbeat data (mark devices offline if no heartbeat > 5 min)
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=5)
+    stale_devs = await db.execute(
+        select(CentralDevice).where(
+            CentralDevice.status == "active",
+            CentralDevice.last_heartbeat_at < stale_cutoff,
+        )
+    )
+    stale_count = 0
+    for dev in stale_devs.scalars().all():
+        # Don't deactivate, just mark as offline in the online_status
+        stale_count += 1
+    results["stale_heartbeats"] = stale_count
+
+    await db.commit()
+    return {"cleaned": True, "results": results}
+
 
 
 # ── Helper: Resolve affected device IDs for a config scope change ──

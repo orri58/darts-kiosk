@@ -123,10 +123,36 @@ class TelemetrySyncClient:
                 )
                 if resp.status_code == 200:
                     logger.debug("[TELEMETRY] Heartbeat OK")
+                    # v3.13.0: Clear suspended state if central accepts us again
+                    try:
+                        from backend.services.central_rejection_handler import handle_central_reactivation
+                        await handle_central_reactivation("heartbeat")
+                    except Exception:
+                        pass
+                    # v3.13.0: Process device_status from heartbeat response
+                    try:
+                        hb_data = resp.json()
+                        if hb_data.get("device_status") and hb_data["device_status"] != "active":
+                            from backend.services.central_rejection_handler import handle_central_rejection
+                            await handle_central_rejection(
+                                "heartbeat_status",
+                                403,
+                                f"device_status={hb_data['device_status']}"
+                            )
+                    except Exception:
+                        pass
                     # v3.9.7: Notify offline queue that central is reachable
                     try:
                         from backend.services.offline_queue import offline_queue
                         offline_queue.notify_online()
+                    except Exception:
+                        pass
+                elif resp.status_code == 403:
+                    # v3.13.0: Device deactivated/blocked centrally
+                    logger.warning(f"[TELEMETRY] Heartbeat REJECTED (403): {resp.text[:200]}")
+                    try:
+                        from backend.services.central_rejection_handler import handle_central_rejection
+                        await handle_central_rejection("heartbeat", 403, resp.text[:200])
                     except Exception:
                         pass
                 else:

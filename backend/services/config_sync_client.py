@@ -150,8 +150,27 @@ class ConfigSyncClient:
                     params=params,
                     headers={"X-License-Key": self._api_key},
                 )
+                # v3.13.0: Handle 403 — device deactivated/blocked centrally
+                if resp.status_code == 403:
+                    logger.warning(f"[CONFIG-SYNC] REJECTED by central (403): {resp.text[:200]}")
+                    try:
+                        from backend.services.central_rejection_handler import handle_central_rejection
+                        await handle_central_rejection("config_sync", 403, resp.text[:200])
+                    except Exception:
+                        pass
+                    self._sync_errors += 1
+                    self._consecutive_errors += 1
+                    self._last_error = "403: Device rejected"
+                    return False
                 resp.raise_for_status()
                 data = resp.json()
+
+            # v3.13.0: Central accepted us — clear any suspended state
+            try:
+                from backend.services.central_rejection_handler import handle_central_reactivation
+                await handle_central_reactivation("config_sync")
+            except Exception:
+                pass
 
             new_config = data.get("config", {})
             new_version = data.get("version", 0)

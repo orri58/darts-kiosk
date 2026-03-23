@@ -107,6 +107,14 @@ CONFIG_TO_SETTINGS_MAP = {
             "leaderboard_public": "leaderboard_public",
         }
     },
+    "boards": {
+        "settings_key": "board_config",
+        "fields": {
+            "autodarts_url": "autodarts_url",
+            "board_name": "board_name",
+            "auto_start": "auto_start",
+        }
+    },
 }
 
 

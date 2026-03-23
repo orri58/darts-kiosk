@@ -39,6 +39,8 @@ def validate_config(config_data: dict) -> list:
         errors.extend(_validate_sound(config_data["sound"]))
     if "sharing" in config_data:
         errors.extend(_validate_sharing(config_data["sharing"]))
+    if "boards" in config_data:
+        errors.extend(_validate_boards(config_data["boards"]))
 
     return errors
 
@@ -198,5 +200,32 @@ def _validate_sharing(sh):
             v = sh[bool_key]
             if not isinstance(v, bool):
                 errs.append(_err("sharing", bool_key, "muss true oder false sein"))
+
+    return errs
+
+
+
+def _validate_boards(b):
+    """Validate boards configuration section — v3.13.0."""
+    errs = []
+    if not isinstance(b, dict):
+        return [_err("boards", "*", "muss ein Objekt sein")]
+
+    if "autodarts_url" in b:
+        v = b["autodarts_url"]
+        if not isinstance(v, str):
+            errs.append(_err("boards", "autodarts_url", "muss ein String sein"))
+        elif v and not _URL_PATTERN.match(v):
+            errs.append(_err("boards", "autodarts_url", "muss eine gueltige URL sein"))
+
+    if "board_name" in b:
+        v = b["board_name"]
+        if not isinstance(v, str) or len(v) > 100:
+            errs.append(_err("boards", "board_name", "muss ein String <= 100 Zeichen sein"))
+
+    if "auto_start" in b:
+        v = b["auto_start"]
+        if not isinstance(v, bool):
+            errs.append(_err("boards", "auto_start", "muss true oder false sein"))
 
     return errs
