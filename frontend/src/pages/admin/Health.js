@@ -43,7 +43,7 @@ export default function AdminHealth() {
         axios.get(`${API}/health/detailed`, { headers: { Authorization: `Bearer ${token}` } }),
         axios.get(`${API}/backups`, { headers: { Authorization: `Bearer ${token}` } }),
         axios.get(`${API}/health/screenshots`, { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get(`${API}/licensing/config-sync-status`).catch(() => ({ data: null })),
+        axios.get(`${API}/settings/config-sync/status`).catch(() => ({ data: null })),
       ]);
       setHealth(healthRes.data);
       setBackups(backupsRes.data);
@@ -209,14 +209,14 @@ export default function AdminHealth() {
         <Card className="bg-[#0d1117] border-cyan-900/20">
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
-              {configSync?.configured
+              {configSync?.config_sync?.configured
                 ? <Cloud className="w-5 h-5 text-emerald-500" />
                 : <CloudOff className="w-5 h-5 text-zinc-600" />
               }
               <div>
                 <p className="text-[10px] text-cyan-700 uppercase font-mono">Config Sync</p>
-                <p className={`text-lg font-mono font-bold ${configSync?.configured ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                  {configSync?.configured ? `v${configSync.config_version}` : 'Offline'}
+                <p className={`text-lg font-mono font-bold ${configSync?.config_sync?.configured ? (configSync?.versions_in_sync ? 'text-emerald-400' : 'text-amber-400') : 'text-zinc-500'}`}>
+                  {configSync?.config_sync?.configured ? (configSync?.versions_in_sync ? 'Synchron' : 'Pending') : 'Offline'}
                 </p>
               </div>
             </div>
@@ -332,7 +332,7 @@ export default function AdminHealth() {
           </Card>
         </TabsContent>
 
-        {/* Config Sync Tab */}
+        {/* Config Sync Tab — v3.12.0: Shows received vs applied versions */}
         <TabsContent value="config">
           <Card className="bg-[#0d1117] border-cyan-900/20">
             <CardHeader>
@@ -340,7 +340,7 @@ export default function AdminHealth() {
                 <CardTitle className="text-cyan-300 font-mono text-sm">Zentrale Konfiguration</CardTitle>
                 <Button
                   onClick={forceConfigSync}
-                  disabled={syncing || !configSync?.configured}
+                  disabled={syncing || !configSync?.config_sync?.configured}
                   className="bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-900/30 font-mono text-xs"
                   data-testid="force-config-sync-btn"
                 >
@@ -350,33 +350,46 @@ export default function AdminHealth() {
               </div>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
                   <p className="text-[10px] text-cyan-700 uppercase font-mono">Status</p>
-                  <p className={`text-sm font-mono font-bold ${configSync?.configured ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                    {configSync?.configured ? 'Verbunden' : 'Nicht konfiguriert'}
+                  <p className={`text-sm font-mono font-bold ${configSync?.config_sync?.configured ? 'text-emerald-400' : 'text-zinc-500'}`}>
+                    {configSync?.config_sync?.running ? 'Verbunden & Aktiv' : configSync?.config_sync?.configured ? 'Konfiguriert' : 'Nicht konfiguriert'}
                   </p>
                 </div>
                 <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
-                  <p className="text-[10px] text-cyan-700 uppercase font-mono">Config Version</p>
-                  <p className="text-sm font-mono font-bold text-cyan-300">v{configSync?.config_version || 0}</p>
+                  <p className="text-[10px] text-cyan-700 uppercase font-mono">Empfangen (Zentral)</p>
+                  <p className="text-sm font-mono font-bold text-cyan-300">v{configSync?.received_config_version || 0}</p>
+                </div>
+                <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
+                  <p className="text-[10px] text-cyan-700 uppercase font-mono">Angewendet (Lokal)</p>
+                  <p className="text-sm font-mono font-bold text-cyan-300">
+                    v{configSync?.applied_config_version || 0}
+                    <span className="text-[10px] text-cyan-700 ml-1">(zentral: v{configSync?.last_applied_central_version || 0})</span>
+                  </p>
+                </div>
+                <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
+                  <p className="text-[10px] text-cyan-700 uppercase font-mono">Sync-Status</p>
+                  <p className={`text-sm font-mono font-bold ${configSync?.versions_in_sync ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {configSync?.versions_in_sync ? 'Synchron' : 'Nicht synchron'}
+                  </p>
+                </div>
+                <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
+                  <p className="text-[10px] text-cyan-700 uppercase font-mono">Quelle</p>
+                  <p className={`text-sm font-mono font-bold ${configSync?.source === 'central' ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {configSync?.source === 'central' ? 'Zentraler Server' : 'Lokal'}
+                  </p>
                 </div>
                 <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
                   <p className="text-[10px] text-cyan-700 uppercase font-mono">Letzter Sync</p>
                   <p className="text-sm font-mono text-cyan-300">
-                    {configSync?.last_sync_at ? new Date(configSync.last_sync_at).toLocaleString('de-DE') : '—'}
-                  </p>
-                </div>
-                <div className="p-3 bg-cyan-950/20 rounded border border-cyan-900/15">
-                  <p className="text-[10px] text-cyan-700 uppercase font-mono">Sync Loop</p>
-                  <p className={`text-sm font-mono font-bold ${configSync?.running ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                    {configSync?.running ? 'Aktiv' : 'Inaktiv'}
+                    {configSync?.config_sync?.last_sync_at ? new Date(configSync.config_sync.last_sync_at).toLocaleString('de-DE') : '\u2014'}
                   </p>
                 </div>
               </div>
-              {configSync?.last_error && (
+              {configSync?.config_sync?.last_error && (
                 <div className="p-2.5 bg-red-500/5 border border-red-500/20 rounded">
-                  <p className="text-xs font-mono text-red-400">{configSync.last_error}</p>
+                  <p className="text-xs font-mono text-red-400">{configSync.config_sync.last_error}</p>
                 </div>
               )}
               <p className="text-[10px] text-cyan-800 font-mono">

@@ -39,6 +39,10 @@ CONFIG_TO_SETTINGS_MAP = {
             "mode": "mode",
             "per_game.price_per_credit": "per_game.price_per_credit",
             "per_game.default_credits": "per_game.default_credits",
+            "per_time.price_per_30_min": "per_time.price_per_30_min",
+            "per_time.price_per_60_min": "per_time.price_per_60_min",
+            "per_player.price_per_player": "per_player.price_per_player",
+            "max_players": "max_players",
             "min_amount": "min_amount",
         }
     },
@@ -51,6 +55,9 @@ CONFIG_TO_SETTINGS_MAP = {
             "primary_color": "primary_color",
             "secondary_color": "secondary_color",
             "accent_color": "accent_color",
+            "palette_id": "palette_id",
+            "font_preset": "font_preset",
+            "background_style": "background_style",
         }
     },
     "kiosk": {
@@ -69,6 +76,11 @@ CONFIG_TO_SETTINGS_MAP = {
             "welcome_subtitle": "locked_subtitle",
             "locked_message": "game_running",
             "game_over": "game_finished",
+            "pricing_hint": "pricing_hint",
+            "call_staff": "call_staff",
+            "credits_label": "credits_label",
+            "time_label": "time_label",
+            "staff_hint": "staff_hint",
         }
     },
     "language": {
@@ -123,15 +135,17 @@ def _set_nested(obj, path, value):
 # ── Version Persistence ──
 
 _config_applied_version = 0
+_last_applied_central_version = 0
 
 
 def _load_version():
-    global _config_applied_version
+    global _config_applied_version, _last_applied_central_version
     try:
         if _VERSION_FILE.exists():
             data = json.loads(_VERSION_FILE.read_text())
             _config_applied_version = data.get("version", 0)
-            logger.info(f"[CONFIG-APPLY] Loaded persisted version: {_config_applied_version}")
+            _last_applied_central_version = data.get("central_version", 0)
+            logger.info(f"[CONFIG-APPLY] Loaded persisted version: local={_config_applied_version}, central={_last_applied_central_version}")
     except Exception as e:
         logger.warning(f"[CONFIG-APPLY] Failed to load version (starting at 0): {e}")
 
@@ -139,7 +153,10 @@ def _load_version():
 def _save_version():
     try:
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
-        _VERSION_FILE.write_text(json.dumps({"version": _config_applied_version}))
+        _VERSION_FILE.write_text(json.dumps({
+            "version": _config_applied_version,
+            "central_version": _last_applied_central_version,
+        }))
     except Exception as e:
         logger.warning(f"[CONFIG-APPLY] Failed to save version: {e}")
 
@@ -150,6 +167,10 @@ _load_version()
 
 def get_applied_version() -> int:
     return _config_applied_version
+
+
+def get_last_applied_central_version() -> int:
+    return _last_applied_central_version
 
 
 # ── Core Apply ──
@@ -226,9 +247,18 @@ async def apply_config(config: dict) -> dict:
 
 async def on_config_synced(config: dict):
     """Callback invoked by config_sync_client after each successful sync with changes."""
-    global _config_applied_version
+    global _config_applied_version, _last_applied_central_version
     changes = await apply_config(config)
+    # Track the central version that was applied
+    try:
+        from backend.services.config_sync_client import config_sync_client
+        _last_applied_central_version = config_sync_client.version
+    except Exception:
+        pass
     if changes:
         _config_applied_version += 1
         _save_version()
-        logger.info(f"[CONFIG-APPLY] Version bumped to {_config_applied_version} (changed: {list(changes.keys())})")
+        logger.info(f"[CONFIG-APPLY] Version bumped to {_config_applied_version} (central_v={_last_applied_central_version}, changed: {list(changes.keys())})")
+    else:
+        # Even if no changes, track that we processed this central version
+        _save_version()

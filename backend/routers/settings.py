@@ -354,14 +354,21 @@ async def update_autodarts_desktop_settings(data: SettingsUpdate, admin: User = 
 
 @router.get("/settings/config-sync/status")
 async def get_config_sync_status():
-    """Return status of config sync, action poller, and applied config version."""
+    """Return comprehensive status of config sync, including received vs applied versions."""
     from backend.services.config_sync_client import config_sync_client
     from backend.services.action_poller import action_poller
-    from backend.services.config_apply import get_applied_version
+    from backend.services.config_apply import get_applied_version, get_last_applied_central_version
+    cs = config_sync_client.status
+    received_v = cs.get("config_version", 0)
+    applied_central_v = get_last_applied_central_version()
     return {
-        "config_sync": config_sync_client.status,
+        "config_sync": cs,
         "action_poller": action_poller.status,
+        "received_config_version": received_v,
         "applied_config_version": get_applied_version(),
+        "last_applied_central_version": applied_central_v,
+        "versions_in_sync": received_v == applied_central_v or received_v == 0,
+        "source": "central" if cs.get("configured") and cs.get("running") else "local",
     }
 
 

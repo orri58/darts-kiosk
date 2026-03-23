@@ -8,16 +8,20 @@ import {
   Activity,
   KeyRound,
   Terminal,
-  ExternalLink
+  ExternalLink,
+  Settings2,
+  Server
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
 import { useI18n } from '../../context/I18nContext';
 
-// Stripped-down nav: diagnostics + board control only
+// Local service panel: board control + diagnostics + local settings + system
 const NAV_ITEMS = [
   { path: '/admin', icon: LayoutDashboard, label: 'Board-Kontrolle', tid: 'nav-dashboard', exact: true },
-  { path: '/admin/health', icon: Activity, label: 'System & Health', tid: 'nav-health', adminOnly: true },
+  { path: '/admin/settings', icon: Settings2, label: 'Einstellungen', tid: 'nav-settings', adminOnly: true },
+  { path: '/admin/system', icon: Server, label: 'System', tid: 'nav-system', adminOnly: true },
+  { path: '/admin/health', icon: Activity, label: 'Health & Sync', tid: 'nav-health', adminOnly: true },
   { path: '/admin/licensing', icon: KeyRound, label: 'Lizenz-Status', tid: 'nav-licensing', adminOnly: true },
 ];
 

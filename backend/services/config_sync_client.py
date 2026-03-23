@@ -90,7 +90,12 @@ class ConfigSyncClient:
         }
 
     def on_config_change(self, callback):
-        self._callbacks.append(callback)
+        """Register callback for config changes. Prevents duplicate registrations."""
+        if callback not in self._callbacks:
+            self._callbacks.append(callback)
+            logger.debug(f"[CONFIG-SYNC] Callback registered: {callback.__name__}")
+        else:
+            logger.debug(f"[CONFIG-SYNC] Callback already registered (skipped): {callback.__name__}")
 
     # ── Cache ──
 

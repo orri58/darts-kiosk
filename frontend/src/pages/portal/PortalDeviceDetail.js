@@ -6,7 +6,7 @@ import {
   Monitor, ArrowLeft, RefreshCw, RotateCcw,
   Globe, Clock, Activity, AlertTriangle, CheckCircle,
   XCircle, Wifi, WifiOff, Zap, ScrollText, BarChart3,
-  HeartPulse, Database, Terminal, Filter
+  HeartPulse, Database, Terminal, Filter, Shield, ShieldOff, ShieldAlert
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -79,6 +79,7 @@ export default function PortalDeviceDetail() {
   const [device, setDevice] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(null);
+  const [statusLoading, setStatusLoading] = useState(false);
   const [logFilter, setLogFilter] = useState('all'); // all, info, warn, error
 
   const fetchDevice = useCallback(async () => {
@@ -112,6 +113,21 @@ export default function PortalDeviceDetail() {
       toast.error(err.response?.data?.detail || 'Aktion fehlgeschlagen');
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const changeDeviceStatus = async (newStatus) => {
+    setStatusLoading(true);
+    try {
+      await axios.put(`${apiBase}/licensing/devices/${deviceId}`, { status: newStatus }, {
+        headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      });
+      toast.success(`Geraetestatus geaendert: ${newStatus}`);
+      await fetchDevice();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Status-Aenderung fehlgeschlagen');
+    } finally {
+      setStatusLoading(false);
     }
   };
 
@@ -196,6 +212,65 @@ export default function PortalDeviceDetail() {
         <StatusCell label="WS Push" value={hs?.ws_push?.connected ? 'Verbunden' : (hs?.ws_push?.configured ? 'Getrennt' : 'Nicht konfiguriert')} sub={hs?.ws_push?.connected ? `${hs.ws_push.events_received ?? 0} Events` : (hs?.ws_push?.last_error ? `Fehler: ${hs.ws_push.last_error}` : (hs?.ws_push?.reconnect_count > 0 ? `${hs.ws_push.reconnect_count} Reconnects` : null))} />
         <StatusCell label="Lizenz" value={device.license_id ? 'Gebunden' : 'Keine'} sub={device.license_id ? device.license_id.slice(0, 12) + '...' : null} />
       </div>
+
+      {/* Device Trust / Binding Control — v3.12.0 */}
+      <Card className="bg-zinc-900 border-zinc-800" data-testid="device-trust-card">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
+            <Shield className="w-4 h-4" /> Geraete-Vertrauen / Binding
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500">Status:</span>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border ${
+                device.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+                device.status === 'blocked' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
+                'bg-amber-500/10 text-amber-400 border-amber-500/20'
+              }`} data-testid="device-trust-status">
+                {device.status === 'active' ? <CheckCircle className="w-3 h-3" /> :
+                 device.status === 'blocked' ? <ShieldAlert className="w-3 h-3" /> :
+                 <ShieldOff className="w-3 h-3" />}
+                {device.status === 'active' ? 'Aktiv' : device.status === 'blocked' ? 'Gesperrt' : 'Deaktiviert'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500">Binding:</span>
+              <span className={`text-xs font-mono ${device.binding_status === 'bound' ? 'text-emerald-400' : 'text-amber-400'}`} data-testid="device-binding-status">
+                {device.binding_status === 'bound' ? 'Gebunden' : device.binding_status || 'Unbekannt'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500">Install-ID:</span>
+              <span className="text-xs font-mono text-zinc-400" data-testid="device-install-id">{device.install_id?.slice(0, 12) || '\u2014'}...</span>
+            </div>
+            <div className="flex items-center gap-1 ml-auto">
+              {device.status !== 'active' && (
+                <Button size="sm" variant="outline" disabled={statusLoading}
+                  className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 text-xs h-7"
+                  onClick={() => changeDeviceStatus('active')} data-testid="device-activate-btn">
+                  <CheckCircle className="w-3 h-3 mr-1" /> Aktivieren
+                </Button>
+              )}
+              {device.status === 'active' && (
+                <Button size="sm" variant="outline" disabled={statusLoading}
+                  className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-xs h-7"
+                  onClick={() => changeDeviceStatus('inactive')} data-testid="device-deactivate-btn">
+                  <ShieldOff className="w-3 h-3 mr-1" /> Deaktivieren
+                </Button>
+              )}
+              {device.status !== 'blocked' && (
+                <Button size="sm" variant="outline" disabled={statusLoading}
+                  className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs h-7"
+                  onClick={() => changeDeviceStatus('blocked')} data-testid="device-block-btn">
+                  <ShieldAlert className="w-3 h-3 mr-1" /> Sperren
+                </Button>
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Last Error */}
       {device.last_error && (

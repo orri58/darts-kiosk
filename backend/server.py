@@ -503,13 +503,18 @@ async def reconfigure_sync_services():
     except Exception as e:
         logger.warning(f"[RECONFIGURE] telemetry_sync failed: {e}")
 
-    # Config sync
+    # Config sync — v3.12.0: Fixed critical bug where start() was called with wrong args
     from backend.services.config_sync_client import config_sync_client
     try:
         config_sync_client.configure(central_url=central_url, api_key=api_key, device_id=device_id)
+        # Register callback BEFORE starting (with dedup protection)
+        from backend.services.config_apply import on_config_synced
+        config_sync_client.on_config_change(on_config_synced)
         if not config_sync_client._running:
-            from backend.services.config_apply import on_config_synced
-            await config_sync_client.start(on_config_synced)
+            asyncio.create_task(config_sync_client.start())
+        else:
+            # Already running — trigger immediate sync to pick up new config
+            asyncio.create_task(config_sync_client.sync_now())
         reconfigured.append("config_sync")
     except Exception as e:
         logger.warning(f"[RECONFIGURE] config_sync failed: {e}")

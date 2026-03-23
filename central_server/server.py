@@ -1436,7 +1436,8 @@ ONLINE_THRESHOLD_SECONDS = 300  # 5 minutes
 
 
 async def _authenticate_device(request: Request, db: AsyncSession) -> CentralDevice:
-    """Authenticate a device via X-License-Key header."""
+    """Authenticate a device via X-License-Key header.
+    v3.12.0: Also rejects inactive devices (not just blocked)."""
     api_key = request.headers.get("X-License-Key")
     if not api_key:
         raise HTTPException(401, "Missing X-License-Key header")
@@ -1446,6 +1447,8 @@ async def _authenticate_device(request: Request, db: AsyncSession) -> CentralDev
         raise HTTPException(403, "Invalid API key")
     if device.status == "blocked":
         raise HTTPException(403, "Device is blocked")
+    if device.status == "inactive":
+        raise HTTPException(403, "Device is deactivated — contact your administrator")
     return device
 
 

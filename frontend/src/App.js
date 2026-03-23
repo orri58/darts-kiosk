@@ -10,6 +10,8 @@ import AdminLogin from "./pages/admin/Login";
 import AdminDashboard from "./pages/admin/Dashboard";
 import AdminHealth from "./pages/admin/Health";
 import AdminLicensing from "./pages/admin/Licensing";
+import AdminSettings from "./pages/admin/Settings";
+import AdminSystem from "./pages/admin/System";
 import MatchPublicPage from "./pages/MatchPublicPage";
 import PublicLeaderboard from "./pages/PublicLeaderboard";
 import SetupWizard from "./pages/admin/SetupWizard";
@@ -63,15 +65,15 @@ function App() {
             <Route path="/admin/login" element={<AdminLogin />} />
             <Route path="/admin" element={<AdminLayout />}>
               <Route index element={<AdminDashboard />} />
+              <Route path="settings" element={<AdminSettings />} />
+              <Route path="system" element={<AdminSystem />} />
               <Route path="health" element={<AdminHealth />} />
               <Route path="licensing" element={<AdminLicensing />} />
-              {/* All removed routes → redirect to portal */}
-              <Route path="boards" element={<Navigate to="/portal/devices" replace />} />
-              <Route path="settings" element={<Navigate to="/portal" replace />} />
+              {/* Legacy routes → redirect */}
+              <Route path="boards" element={<Navigate to="/admin" replace />} />
               <Route path="users" element={<Navigate to="/portal/users" replace />} />
               <Route path="logs" element={<Navigate to="/portal/audit" replace />} />
               <Route path="revenue" element={<Navigate to="/portal" replace />} />
-              <Route path="system" element={<Navigate to="/portal" replace />} />
               <Route path="discovery" element={<Navigate to="/portal/devices" replace />} />
               <Route path="leaderboard" element={<Navigate to="/portal" replace />} />
               <Route path="reports" element={<Navigate to="/portal" replace />} />
