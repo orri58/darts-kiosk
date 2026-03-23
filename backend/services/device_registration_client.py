@@ -85,7 +85,10 @@ class DeviceRegistrationClient:
                 "customer_name": self._registration_data.get("customer_name"),
                 "customer_id": self._registration_data.get("customer_id"),
                 "location_id": self._registration_data.get("location_id"),
+                "license_id": self._registration_data.get("license_id"),
                 "license_status": self._registration_data.get("license_status"),
+                "plan_type": self._registration_data.get("plan_type"),
+                "binding_status": self._registration_data.get("binding_status"),
                 "registered_at": self._registration_data.get("registered_at"),
             }
         return {"status": "unregistered"}
@@ -146,8 +149,12 @@ class DeviceRegistrationClient:
                     }
                     self._save_local(reg_data)
 
-                    # Also update sync config with the new API key
-                    await self._update_sync_config_api_key(data.get("api_key"), server_url)
+                    # Also update sync config with API key + device_id
+                    await self._update_sync_config(
+                        api_key=data.get("api_key"),
+                        server_url=server_url,
+                        device_id=data.get("device_id"),
+                    )
 
                     logger.info(f"[REG] Device registered successfully: {data.get('device_name')}")
                     return {"success": True, **data}
@@ -171,12 +178,13 @@ class DeviceRegistrationClient:
             logger.error(f"[REG] Unexpected error: {e}")
             return {"success": False, "error": str(e)}
 
-    async def _update_sync_config_api_key(self, api_key: str, server_url: str):
-        """After successful registration, update the local sync config with the new API key."""
+    async def _update_sync_config(self, api_key: str, server_url: str, device_id: str = None):
+        """After successful registration, update the local sync config with API key, server URL, and device_id."""
         try:
             from backend.models import Settings
             from sqlalchemy import select
             from backend.database import AsyncSessionLocal
+            from sqlalchemy.orm.attributes import flag_modified
 
             async with AsyncSessionLocal() as db:
                 stmt = select(Settings).where(Settings.key == "license_sync_config")
@@ -187,13 +195,16 @@ class DeviceRegistrationClient:
                 existing["api_key"] = api_key
                 existing["server_url"] = server_url
                 existing["enabled"] = True
+                if device_id:
+                    existing["device_id"] = device_id
 
                 if s:
                     s.value = existing
+                    flag_modified(s, "value")
                 else:
                     db.add(Settings(key="license_sync_config", value=existing))
                 await db.commit()
-                logger.info("[REG] Sync config updated with registration API key")
+                logger.info(f"[REG] Sync config updated: api_key=set, server_url={server_url}, device_id={device_id or 'N/A'}")
         except Exception as e:
             logger.warning(f"[REG] Failed to update sync config: {e}")
 

@@ -142,12 +142,61 @@ class CyclicLicenseChecker:
                         await db.commit()
 
             # Step 2: Fallback to local check (existing v3.4.5 logic)
+            # v3.11.2: If device is registered, don't overwrite a valid cache with
+            # local no_license (the local DB has no licensing data for SaaS devices).
             logger.info("[LICENSE_CHECK] Running local license check")
             async with AsyncSessionLocal() as db:
                 status = await license_service.get_effective_status(
                     db, install_id=install_id, trigger_binding=False
                 )
                 status["source"] = "local"
+
+                # Fail-safe: if local returns no_license but device is registered
+                # and we already have a valid cache (from registration or prior sync),
+                # preserve the existing cache instead of overwriting it.
+                # Also check registration data as authoritative source.
+                if status.get("status") == "no_license":
+                    from backend.services.device_registration_client import device_registration_client
+                    if device_registration_client.is_registered:
+                        existing_cache = license_service.load_from_cache()
+                        if existing_cache and existing_cache.get("status") not in (None, "no_license"):
+                            logger.info(
+                                f"[LICENSE_CHECK] Local=no_license but device is registered. "
+                                f"Preserving cache: status={existing_cache.get('status')} "
+                                f"(source={existing_cache.get('source')})"
+                            )
+                            self.last_check_at = now
+                            self.last_check_status = existing_cache.get("status")
+                            self.last_check_ok = True
+                            self.last_check_source = "cache_preserved"
+                            self.check_count += 1
+                            return
+
+                        # No valid cache — use registration data as authoritative source
+                        reg_data = device_registration_client.get_status()
+                        reg_license = reg_data.get("license_status")
+                        if reg_license and reg_license != "no_license":
+                            reg_status = {
+                                "status": reg_license,
+                                "license_id": reg_data.get("license_id"),
+                                "customer_name": reg_data.get("customer_name"),
+                                "binding_status": "bound",
+                                "checked_at": now.isoformat(),
+                                "source": "registration_data",
+                                "registration_status": "registered",
+                            }
+                            license_service.save_to_cache(reg_status)
+                            logger.info(
+                                f"[LICENSE_CHECK] Local=no_license, cache stale. "
+                                f"Restored from registration data: status={reg_license}"
+                            )
+                            self.last_check_at = now
+                            self.last_check_status = reg_license
+                            self.last_check_ok = True
+                            self.last_check_source = "registration_data"
+                            self.check_count += 1
+                            return
+
                 license_service.save_to_cache(status)
 
                 self.last_check_at = now

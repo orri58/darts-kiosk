@@ -944,7 +944,8 @@ async def kiosk_license_status(db: AsyncSession = Depends(get_db)):
     Returns the effective license status without requiring auth.
     The kiosk needs this to show overlay/warnings.
     v3.4.3: includes install_id for device binding check.
-    v3.5.1: includes registration_status for unregistered device detection."""
+    v3.5.1: includes registration_status for unregistered device detection.
+    v3.11.2: Prevents overwriting valid cache with local no_license when registered."""
     try:
         from backend.services.license_service import license_service
         from backend.services.device_identity_service import device_identity_service
@@ -956,6 +957,43 @@ async def kiosk_license_status(db: AsyncSession = Depends(get_db)):
         status = await license_service.get_effective_status(db, install_id=_install_id)
         status["install_id"] = _install_id
         status["registration_status"] = reg_status
+
+        # v3.11.2: If local DB returns no_license but device IS registered,
+        # prefer the existing cache (from remote sync or registration) over
+        # overwriting it with a stale local no_license result.
+        if status.get("status") == "no_license" and reg_status == "registered":
+            cached = license_service.load_from_cache()
+            if cached and cached.get("status") not in (None, "no_license"):
+                cached["install_id"] = _install_id
+                cached["registration_status"] = reg_status
+                cached["source"] = cached.get("source", "cache")
+                logger.debug(
+                    f"[LICENSE] Kiosk: local=no_license but registered → using cache: {cached.get('status')}"
+                )
+                return cached
+
+            # No valid cache — use registration data as authoritative source
+            reg_data = device_registration_client.get_status()
+            reg_license = reg_data.get("license_status")
+            if reg_license and reg_license != "no_license":
+                reg_status_dict = {
+                    "status": reg_license,
+                    "license_id": reg_data.get("license_id"),
+                    "customer_name": reg_data.get("customer_name"),
+                    "binding_status": "bound",
+                    "checked_at": datetime.now(timezone.utc).isoformat(),
+                    "source": "registration_data",
+                    "install_id": _install_id,
+                    "registration_status": reg_status,
+                }
+                license_service.save_to_cache(reg_status_dict)
+                return reg_status_dict
+
+            # No valid cache either — save but log the mismatch
+            logger.warning(
+                "[LICENSE] Kiosk: registered but no valid license in local DB or cache"
+            )
+
         license_service.save_to_cache(status)
         return status
     except Exception as e:

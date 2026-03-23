@@ -757,6 +757,26 @@ async def register_device_via_token(data: dict):
     )
 
     if result.get("success"):
+        # v3.11.2: Immediately update local license cache with registration data
+        # This ensures the kiosk UI shows the correct status instantly,
+        # before the cyclic remote sync runs.
+        try:
+            from backend.services.license_service import license_service as _ls
+            _reg_cache_status = {
+                "status": result.get("license_status", "active"),
+                "license_id": result.get("license_id"),
+                "customer_name": result.get("customer_name"),
+                "plan_type": result.get("plan_type"),
+                "binding_status": result.get("binding_status", "bound"),
+                "checked_at": datetime.now(timezone.utc).isoformat(),
+                "source": "registration",
+                "registration_status": "registered",
+            }
+            _ls.save_to_cache(_reg_cache_status)
+            logger.info(f"[REG] License cache updated immediately: status={_reg_cache_status['status']}")
+        except Exception as cache_err:
+            logger.warning(f"[REG] Immediate cache update failed (non-fatal): {cache_err}")
+
         # Log locally
         try:
             from backend.database import AsyncSessionLocal as ASL

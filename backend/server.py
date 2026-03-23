@@ -427,6 +427,7 @@ async def reconfigure_sync_services():
     """
     Re-read license_sync_config from DB and reconfigure all sync services.
     Called internally after device registration completes.
+    v3.11.2: Also resolves device_id if missing and triggers immediate license check.
     """
     from backend.models import Settings as _SM
     from backend.database import AsyncSessionLocal
@@ -446,6 +447,43 @@ async def reconfigure_sync_services():
 
     if not central_url or not api_key:
         return {"reconfigured": False, "reason": "incomplete_config"}
+
+    # v3.11.2: Auto-resolve device_id if missing (like lifespan startup)
+    if not device_id:
+        logger.info("[RECONFIGURE] device_id missing — attempting auto-resolution via API key...")
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10) as _hc:
+                _resolve_resp = await _hc.get(
+                    f"{central_url.rstrip('/')}/api/device/resolve",
+                    headers={"X-License-Key": api_key},
+                )
+                if _resolve_resp.status_code == 200:
+                    _resolved = _resolve_resp.json()
+                    device_id = _resolved.get("device_id")
+                    if device_id:
+                        # Persist device_id into sync config
+                        try:
+                            async with AsyncSessionLocal() as _persist_db:
+                                import copy
+                                _pr = await _persist_db.execute(
+                                    select(_SM).where(_SM.key == "license_sync_config")
+                                )
+                                _persist_row = _pr.scalar_one_or_none()
+                                if _persist_row:
+                                    _new_val = copy.deepcopy(_persist_row.value)
+                                    _new_val["device_id"] = device_id
+                                    _persist_row.value = _new_val
+                                    from sqlalchemy.orm.attributes import flag_modified
+                                    flag_modified(_persist_row, "value")
+                                    await _persist_db.commit()
+                        except Exception:
+                            pass
+                        logger.info(f"[RECONFIGURE] device_id resolved: {device_id}")
+                else:
+                    logger.warning(f"[RECONFIGURE] device_id resolution failed: HTTP {_resolve_resp.status_code}")
+        except Exception as _re:
+            logger.warning(f"[RECONFIGURE] device_id auto-resolution failed (non-fatal): {_re}")
 
     logger.info(f"[RECONFIGURE] Re-reading sync config: url={central_url}, device_id={device_id or 'NONE'}")
 
@@ -510,8 +548,17 @@ async def reconfigure_sync_services():
     except Exception as e:
         logger.warning(f"[RECONFIGURE] ws_push_client failed: {e}")
 
+    # v3.11.2: Trigger immediate license check (remote sync with new credentials)
+    try:
+        from backend.services.cyclic_license_checker import cyclic_license_checker
+        asyncio.create_task(cyclic_license_checker._run_check())
+        reconfigured.append("license_check_triggered")
+        logger.info("[RECONFIGURE] Immediate license check triggered")
+    except Exception as e:
+        logger.warning(f"[RECONFIGURE] License check trigger failed: {e}")
+
     logger.info(f"[RECONFIGURE] Done: {reconfigured}")
-    return {"reconfigured": True, "services": reconfigured}
+    return {"reconfigured": True, "services": reconfigured, "device_id": device_id}
 
 
 # ===== Static Frontend Serving (Production Mode) =====
