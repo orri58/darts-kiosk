@@ -7,13 +7,17 @@ import {
   Globe, Clock, Activity, AlertTriangle, CheckCircle,
   XCircle, Wifi, WifiOff, Zap, ScrollText, BarChart3,
   HeartPulse, Database, Terminal, Filter, Shield, ShieldOff, ShieldAlert,
-  Settings2, Save, ChevronDown, ChevronUp
+  Settings2, Save, ChevronDown, ChevronUp, Unlock, Lock, Play, Square
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 
 const ACTION_META = {
+  unlock_board: { label: 'Freischalten', icon: Unlock, desc: 'Board fuer Spieler freischalten', primary: true },
+  lock_board: { label: 'Sperren', icon: Lock, desc: 'Board sperren / Kiosk-Lockscreen', primary: true },
+  start_session: { label: 'Session Starten', icon: Play, desc: 'Neue Spielsession starten', primary: true },
+  stop_session: { label: 'Session Beenden', icon: Square, desc: 'Aktive Session beenden', primary: true },
   force_sync: { label: 'Config-Sync', icon: RefreshCw, desc: 'Config sofort vom Server ziehen' },
   restart_backend: { label: 'Backend Restart', icon: RotateCcw, desc: 'Kiosk-Backend neu starten' },
   reload_ui: { label: 'UI Reload', icon: Globe, desc: 'Browser-UI neu laden' },
@@ -433,6 +437,81 @@ export default function PortalDeviceDetail() {
                     </div>
                   </div>
                 </div>
+                {/* Farben */}
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 font-medium uppercase">Farben</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Primaerfarbe</label>
+                      <div className="flex items-center gap-1">
+                        <input type="color" className="w-6 h-6 border border-zinc-700 rounded cursor-pointer" data-testid="cfg-primary-color"
+                          value={deviceConfig?.branding?.primary_color || '#6366f1'} onChange={e => updateConfigField('branding', 'primary_color', e.target.value)} />
+                        <input className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white font-mono"
+                          value={deviceConfig?.branding?.primary_color || ''} onChange={e => updateConfigField('branding', 'primary_color', e.target.value)} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Sekundaerfarbe</label>
+                      <div className="flex items-center gap-1">
+                        <input type="color" className="w-6 h-6 border border-zinc-700 rounded cursor-pointer" data-testid="cfg-secondary-color"
+                          value={deviceConfig?.branding?.secondary_color || '#1e1b4b'} onChange={e => updateConfigField('branding', 'secondary_color', e.target.value)} />
+                        <input className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white font-mono"
+                          value={deviceConfig?.branding?.secondary_color || ''} onChange={e => updateConfigField('branding', 'secondary_color', e.target.value)} />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Akzentfarbe</label>
+                      <div className="flex items-center gap-1">
+                        <input type="color" className="w-6 h-6 border border-zinc-700 rounded cursor-pointer" data-testid="cfg-accent-color"
+                          value={deviceConfig?.branding?.accent_color || '#f59e0b'} onChange={e => updateConfigField('branding', 'accent_color', e.target.value)} />
+                        <input className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white font-mono"
+                          value={deviceConfig?.branding?.accent_color || ''} onChange={e => updateConfigField('branding', 'accent_color', e.target.value)} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                {/* QR / Sharing */}
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 font-medium uppercase">QR / Sharing</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-qr-enabled"
+                        checked={deviceConfig?.sharing?.qr_enabled ?? true} onChange={e => updateConfigField('sharing', 'qr_enabled', e.target.checked)} />
+                      <label className="text-xs text-zinc-400">QR-Code aktiv</label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-public-results"
+                        checked={deviceConfig?.sharing?.public_results ?? true} onChange={e => updateConfigField('sharing', 'public_results', e.target.checked)} />
+                      <label className="text-xs text-zinc-400">Oeffentl. Ergebnisse</label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-leaderboard"
+                        checked={deviceConfig?.sharing?.leaderboard_public ?? true} onChange={e => updateConfigField('sharing', 'leaderboard_public', e.target.checked)} />
+                      <label className="text-xs text-zinc-400">Leaderboard oeffentl.</label>
+                    </div>
+                  </div>
+                </div>
+                {/* Kiosk-Verhalten */}
+                <div className="space-y-2">
+                  <p className="text-xs text-zinc-500 font-medium uppercase">Kiosk-Verhalten</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Auto-Lock (Min.)</label>
+                      <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-autolock"
+                        value={deviceConfig?.kiosk?.auto_lock_timeout_min ?? 5} onChange={e => updateConfigField('kiosk', 'auto_lock_timeout_min', parseInt(e.target.value) || 5)} />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-zinc-600 block mb-0.5">Idle-Timeout (Min.)</label>
+                      <input type="number" className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-white" data-testid="cfg-idle"
+                        value={deviceConfig?.kiosk?.idle_timeout_min ?? 10} onChange={e => updateConfigField('kiosk', 'idle_timeout_min', parseInt(e.target.value) || 10)} />
+                    </div>
+                    <div className="flex items-center gap-2 pt-4">
+                      <input type="checkbox" className="rounded border-zinc-600" data-testid="cfg-fullscreen"
+                        checked={deviceConfig?.kiosk?.fullscreen ?? false} onChange={e => updateConfigField('kiosk', 'fullscreen', e.target.checked)} />
+                      <label className="text-xs text-zinc-400">Vollbild</label>
+                    </div>
+                  </div>
+                </div>
                 {/* Save */}
                 <div className="flex justify-end">
                   <Button size="sm" disabled={configSaving || !configDirty}
@@ -475,24 +554,53 @@ export default function PortalDeviceDetail() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-3 gap-2" data-testid="remote-actions-grid">
-                {Object.entries(ACTION_META).map(([key, meta]) => {
-                  const Icon = meta.icon;
-                  return (
-                    <button key={key} onClick={() => issueAction(key)} disabled={!!actionLoading} data-testid={`action-${key}`}
-                      className="flex items-center gap-2 p-3 rounded-lg border border-zinc-700/50 hover:border-zinc-600 hover:bg-zinc-800/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                      {actionLoading === key ? (
-                        <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                      ) : (
-                        <Icon className="w-4 h-4 text-zinc-400" />
-                      )}
-                      <div className="text-left min-w-0">
-                        <span className="text-sm text-white block">{meta.label}</span>
-                        <span className="text-[10px] text-zinc-600 block truncate">{meta.desc}</span>
-                      </div>
-                    </button>
-                  );
-                })}
+              {/* v3.14.0: Primary board controls prominently displayed */}
+              <div className="mb-3">
+                <p className="text-[10px] text-zinc-500 uppercase font-mono mb-2">Board-Kontrolle</p>
+                <div className="grid grid-cols-4 gap-2" data-testid="board-control-grid">
+                  {Object.entries(ACTION_META).filter(([, m]) => m.primary).map(([key, meta]) => {
+                    const Icon = meta.icon;
+                    const isUnlock = key === 'unlock_board' || key === 'start_session';
+                    return (
+                      <button key={key} onClick={() => issueAction(key)} disabled={!!actionLoading} data-testid={`action-${key}`}
+                        className={`flex items-center gap-2 p-3 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                          isUnlock ? 'border-emerald-500/30 hover:bg-emerald-500/10' : 'border-amber-500/30 hover:bg-amber-500/10'
+                        }`}>
+                        {actionLoading === key ? (
+                          <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Icon className={`w-4 h-4 ${isUnlock ? 'text-emerald-400' : 'text-amber-400'}`} />
+                        )}
+                        <div className="text-left min-w-0">
+                          <span className="text-sm text-white block">{meta.label}</span>
+                          <span className="text-[10px] text-zinc-600 block truncate">{meta.desc}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <p className="text-[10px] text-zinc-500 uppercase font-mono mb-2">System</p>
+                <div className="grid grid-cols-3 gap-2" data-testid="remote-actions-grid">
+                  {Object.entries(ACTION_META).filter(([, m]) => !m.primary).map(([key, meta]) => {
+                    const Icon = meta.icon;
+                    return (
+                      <button key={key} onClick={() => issueAction(key)} disabled={!!actionLoading} data-testid={`action-${key}`}
+                        className="flex items-center gap-2 p-3 rounded-lg border border-zinc-700/50 hover:border-zinc-600 hover:bg-zinc-800/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                        {actionLoading === key ? (
+                          <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <Icon className="w-4 h-4 text-zinc-400" />
+                        )}
+                        <div className="text-left min-w-0">
+                          <span className="text-sm text-white block">{meta.label}</span>
+                          <span className="text-[10px] text-zinc-600 block truncate">{meta.desc}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </CardContent>
           </Card>

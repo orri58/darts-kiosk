@@ -1290,15 +1290,16 @@ async def revoke_registration_token(token_id: str, data: dict = None, user: Auth
 
 @app.post("/api/register-device")
 async def register_device(body: dict, request: Request, db: AsyncSession = Depends(get_db)):
-    """Register a new device using a one-time registration token. Public endpoint."""
+    """Register a new device using a one-time registration token. Public endpoint.
+    v3.14.0: Fixed location_id resolution chain + graceful re-registration."""
     raw_token = body.get("token")
     install_id = body.get("install_id")
     device_name = body.get("device_name")
 
     if not raw_token:
-        raise HTTPException(400, "Missing registration token")
+        raise HTTPException(400, "Registrierungs-Token fehlt")
     if not install_id:
-        raise HTTPException(400, "Missing install_id")
+        raise HTTPException(400, "install_id fehlt")
 
     token_hash = _hash_token(raw_token)
     result = await db.execute(select(RegistrationToken).where(RegistrationToken.token_hash == token_hash))
@@ -1306,29 +1307,33 @@ async def register_device(body: dict, request: Request, db: AsyncSession = Depen
 
     if not token:
         await _log_audit(db, "DEVICE_REGISTRATION_FAILED", install_id=install_id, message="Invalid token")
-        raise HTTPException(403, "Invalid registration token")
+        raise HTTPException(403, "Ungueltiger Registrierungs-Token")
     if token.is_revoked:
-        raise HTTPException(403, "Token has been revoked")
+        raise HTTPException(403, "Token wurde widerrufen")
     if token.used_at:
-        raise HTTPException(403, "Token already used")
+        raise HTTPException(403, "Token wurde bereits verwendet")
     now = _utcnow()
     if token.expires_at and _aware(token.expires_at) < now:
-        raise HTTPException(403, "Token expired")
+        raise HTTPException(403, "Token ist abgelaufen")
 
-    existing = await db.execute(select(CentralDevice).where(CentralDevice.install_id == install_id))
-    if existing.scalar_one_or_none():
-        raise HTTPException(409, "install_id already registered")
+    # v3.14.0: Graceful re-registration — update existing device instead of 409
+    existing_r = await db.execute(select(CentralDevice).where(CentralDevice.install_id == install_id))
+    existing_device = existing_r.scalar_one_or_none()
 
+    # ── Resolve location_id: Token → License → Customer default ──
     location_id = token.location_id
     customer_id = token.customer_id
+
     if location_id and not customer_id:
         loc_r = await db.execute(select(CentralLocation).where(CentralLocation.id == location_id))
         loc = loc_r.scalar_one_or_none()
-        if loc: customer_id = loc.customer_id
-    if not location_id and not customer_id:
-        raise HTTPException(400, "Token has no customer/location")
+        if loc:
+            customer_id = loc.customer_id
 
-    # v3.11: Resolve + enforce license max_devices BEFORE creating device
+    if not location_id and not customer_id:
+        raise HTTPException(400, "Token hat keinen Kunden/Standort")
+
+    # v3.11: Resolve license
     license_id = token.license_id
     resolved_license = None
     if license_id:
@@ -1347,33 +1352,84 @@ async def register_device(body: dict, request: Request, db: AsyncSession = Depen
                 resolved_license = best
                 license_id = best.id
 
-    # Enforce max_devices
-    if resolved_license:
-        bound_count_r = await db.execute(
-            select(func.count()).where(CentralDevice.license_id == resolved_license.id, CentralDevice.status == "active")
+    # v3.14.0: Resolve location_id from license if token didn't have one
+    if not location_id and resolved_license and resolved_license.location_id:
+        location_id = resolved_license.location_id
+
+    # v3.14.0: Auto-create default location for customer if still no location
+    if not location_id and customer_id:
+        # Try to find an existing location for this customer
+        loc_r = await db.execute(
+            select(CentralLocation).where(CentralLocation.customer_id == customer_id).limit(1)
         )
+        existing_loc = loc_r.scalar_one_or_none()
+        if existing_loc:
+            location_id = existing_loc.id
+        else:
+            # Create a default location
+            cust_r = await db.execute(select(CentralCustomer).where(CentralCustomer.id == customer_id))
+            cust = cust_r.scalar_one_or_none()
+            cust_name = cust.name if cust else "Kunde"
+            new_loc = CentralLocation(
+                customer_id=customer_id,
+                name=f"{cust_name} - Hauptstandort",
+            )
+            db.add(new_loc)
+            await db.flush()
+            location_id = new_loc.id
+            logger.info(f"[REG] Auto-created default location {location_id} for customer {customer_id}")
+
+    if not location_id:
+        raise HTTPException(400, "Standort konnte nicht aufgeloest werden. Bitte Lizenz-/Token-Konfiguration pruefen.")
+
+    # Enforce max_devices (exclude existing device from count for re-registration)
+    if resolved_license:
+        exclude_clause = CentralDevice.license_id == resolved_license.id
+        count_conditions = [exclude_clause, CentralDevice.status == "active"]
+        if existing_device:
+            count_conditions.append(CentralDevice.id != existing_device.id)
+        bound_count_r = await db.execute(select(func.count()).where(*count_conditions))
         bound_count = bound_count_r.scalar() or 0
         if bound_count >= resolved_license.max_devices:
             await _log_audit(db, "DEVICE_REGISTRATION_REJECTED", install_id=install_id,
-                             license_id=resolved_license.id, message=f"max_devices limit reached ({bound_count}/{resolved_license.max_devices})")
-            raise HTTPException(403, f"Gerätelimit erreicht: {bound_count}/{resolved_license.max_devices} Geräte bereits an diese Lizenz gebunden")
+                             license_id=resolved_license.id,
+                             message=f"max_devices limit reached ({bound_count}/{resolved_license.max_devices})")
+            raise HTTPException(403, f"Geraete-Limit erreicht: {bound_count}/{resolved_license.max_devices} Geraete bereits aktiv")
 
-    api_key = f"dk_{secrets.token_urlsafe(32)}"
     effective_name = device_name or token.device_name_template or f"Kiosk-{install_id[:8]}"
 
-    new_device = CentralDevice(
-        location_id=location_id, install_id=install_id, api_key=api_key,
-        device_name=effective_name, status="active", binding_status="bound",
-        license_id=license_id,
-        last_sync_at=now, last_sync_ip=request.client.host if request.client else None,
-        sync_count=0, registered_via_token_id=token.id,
-    )
-    db.add(new_device)
-    await db.flush()
+    if existing_device:
+        # v3.14.0: Re-registration — update existing device with new binding
+        existing_device.location_id = location_id
+        existing_device.license_id = license_id
+        existing_device.device_name = effective_name
+        existing_device.status = "active"
+        existing_device.binding_status = "bound"
+        existing_device.last_sync_at = now
+        existing_device.last_sync_ip = request.client.host if request.client else None
+        existing_device.registered_via_token_id = token.id
+        # Keep the existing api_key so the device doesn't lose auth
+        api_key = existing_device.api_key
+        device_id = existing_device.id
+        await db.flush()
+        logger.info(f"[REG] Re-registered existing device {device_id} (install_id={install_id})")
+    else:
+        # New registration
+        api_key = f"dk_{secrets.token_urlsafe(32)}"
+        new_device = CentralDevice(
+            location_id=location_id, install_id=install_id, api_key=api_key,
+            device_name=effective_name, status="active", binding_status="bound",
+            license_id=license_id,
+            last_sync_at=now, last_sync_ip=request.client.host if request.client else None,
+            sync_count=0, registered_via_token_id=token.id,
+        )
+        db.add(new_device)
+        await db.flush()
+        device_id = new_device.id
 
     token.used_at = now
     token.used_by_install_id = install_id
-    token.used_by_device_id = new_device.id
+    token.used_by_device_id = device_id
     await db.flush()
 
     # Build response
@@ -1385,22 +1441,25 @@ async def register_device(body: dict, request: Request, db: AsyncSession = Depen
     if customer_id:
         cust_r = await db.execute(select(CentralCustomer).where(CentralCustomer.id == customer_id))
         cust = cust_r.scalar_one_or_none()
-        if cust: customer_name = cust.name
+        if cust:
+            customer_name = cust.name
 
     if resolved_license:
         license_status = _compute_status(resolved_license, now)
         plan_type = resolved_license.plan_type
         expiry = resolved_license.ends_at.isoformat() if resolved_license.ends_at else None
 
-    await _log_audit(db, "DEVICE_REGISTERED", device_id=new_device.id, install_id=install_id,
+    reg_type = "re-registered" if existing_device else "registered"
+    await _log_audit(db, "DEVICE_REGISTERED", device_id=device_id, install_id=install_id,
                      license_id=license_id, actor="registration",
-                     message=f"Device {effective_name} registered via token {token.token_preview}")
+                     message=f"Device {effective_name} {reg_type} via token {token.token_preview}")
 
     return {
-        "success": True, "device_id": new_device.id, "device_name": effective_name,
+        "success": True, "device_id": device_id, "device_name": effective_name,
         "api_key": api_key, "customer_id": customer_id, "customer_name": customer_name,
         "location_id": location_id, "license_id": license_id, "license_status": license_status,
         "plan_type": plan_type, "expiry": expiry, "binding_status": "bound",
+        "re_registered": existing_device is not None,
         "server_timestamp": now.isoformat(),
     }
 
