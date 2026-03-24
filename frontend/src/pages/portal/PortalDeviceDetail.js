@@ -85,6 +85,7 @@ export default function PortalDeviceDetail() {
   const { apiBase, authHeaders } = useCentralAuth();
   const [device, setDevice] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null); // { type, message, retryable }
   const [actionLoading, setActionLoading] = useState(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [logFilter, setLogFilter] = useState('all');
@@ -98,12 +99,33 @@ export default function PortalDeviceDetail() {
     pricing_mode: 'per_game', game_type: '501', credits: 3, minutes: 30, price_total: 0, players_count: 2, board_id: '',
   });
 
+  const classifyError = (err) => {
+    const status = err?.response?.status;
+    const isTimeout = err?.code === 'ECONNABORTED' || err?.message?.includes('timeout');
+    const isNetwork = !err?.response && (err?.code === 'ERR_NETWORK' || err?.message === 'Network Error');
+
+    if (status === 404) return { type: 'not_found', message: 'Geraet existiert nicht in der Datenbank.', retryable: false };
+    if (status === 401) return { type: 'auth', message: 'Sitzung abgelaufen. Bitte erneut einloggen.', retryable: false };
+    if (status === 403) return { type: 'forbidden', message: 'Keine Berechtigung fuer dieses Geraet.', retryable: false };
+    if (status === 502) return { type: 'server_down', message: 'Zentraler Server nicht erreichbar (502).', retryable: true };
+    if (status === 504) return { type: 'server_timeout', message: 'Zentraler Server antwortet nicht (504 Timeout).', retryable: true };
+    if (isTimeout) return { type: 'timeout', message: 'Verbindung zu langsam oder fehlgeschlagen.', retryable: true };
+    if (isNetwork) return { type: 'network', message: 'Netzwerkfehler — keine Verbindung zum Server.', retryable: true };
+    return { type: 'unknown', message: err?.response?.data?.detail || err?.response?.data?.message || `Unbekannter Fehler (HTTP ${status || '?'}).`, retryable: true };
+  };
+
   const fetchDevice = useCallback(async () => {
+    setLoading(true);
+    setFetchError(null);
     try {
-      const res = await axios.get(`${apiBase}/telemetry/device/${deviceId}`, { headers: authHeaders });
+      const res = await axios.get(`${apiBase}/telemetry/device/${deviceId}`, { headers: authHeaders, timeout: 15000 });
       setDevice(res.data);
+      setFetchError(null);
     } catch (err) {
-      if (err.response?.status === 404) toast.error('Geraet nicht gefunden');
+      const classified = classifyError(err);
+      setFetchError(classified);
+      setDevice(null);
+      console.error(`[DeviceDetail] Fetch failed: type=${classified.type} status=${err?.response?.status}`, err);
     } finally {
       setLoading(false);
     }
@@ -210,19 +232,63 @@ export default function PortalDeviceDetail() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
+      <div className="flex items-center justify-center h-64" data-testid="device-detail-loading">
         <div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
+  // ── Error states — each type gets its own clear UI ──
+  if (fetchError) {
+    const iconMap = {
+      not_found: <XCircle className="w-12 h-12 text-red-500" />,
+      auth: <ShieldAlert className="w-12 h-12 text-amber-500" />,
+      forbidden: <Shield className="w-12 h-12 text-amber-500" />,
+      server_down: <WifiOff className="w-12 h-12 text-red-400" />,
+      server_timeout: <Clock className="w-12 h-12 text-orange-400" />,
+      timeout: <Clock className="w-12 h-12 text-orange-400" />,
+      network: <WifiOff className="w-12 h-12 text-red-400" />,
+      unknown: <AlertTriangle className="w-12 h-12 text-zinc-500" />,
+    };
+    const titleMap = {
+      not_found: 'Geraet existiert nicht',
+      auth: 'Authentifizierung fehlgeschlagen',
+      forbidden: 'Zugriff verweigert',
+      server_down: 'Server nicht erreichbar',
+      server_timeout: 'Server-Timeout',
+      timeout: 'Verbindung fehlgeschlagen',
+      network: 'Netzwerkfehler',
+      unknown: 'Unbekannter Fehler',
+    };
+
+    return (
+      <div className="text-center py-16 space-y-4" data-testid={`device-error-${fetchError.type}`}>
+        <div className="mx-auto w-fit">{iconMap[fetchError.type] || iconMap.unknown}</div>
+        <h2 className="text-lg font-semibold text-white">{titleMap[fetchError.type] || 'Fehler'}</h2>
+        <p className="text-sm text-zinc-400 max-w-md mx-auto">{fetchError.message}</p>
+        <p className="text-xs text-zinc-600 font-mono">Device ID: {deviceId}</p>
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <Button onClick={() => navigate('/portal/devices')} variant="outline" className="border-zinc-700 text-zinc-400" data-testid="error-back-btn">
+            <ArrowLeft className="w-4 h-4 mr-2" /> Zurueck zur Liste
+          </Button>
+          {fetchError.retryable && (
+            <Button onClick={fetchDevice} className="bg-indigo-600 hover:bg-indigo-700 text-white" data-testid="error-retry-btn">
+              <RefreshCw className="w-4 h-4 mr-2" /> Erneut versuchen
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Should never happen: no error, no device, not loading
   if (!device) {
     return (
-      <div className="text-center py-16">
-        <Monitor className="w-12 h-12 text-zinc-700 mx-auto mb-3" />
-        <p className="text-zinc-500">Geraet nicht gefunden</p>
-        <Button onClick={() => navigate('/portal/devices')} variant="outline" className="mt-4 border-zinc-700 text-zinc-400">
-          <ArrowLeft className="w-4 h-4 mr-2" /> Zurueck
+      <div className="text-center py-16" data-testid="device-error-unexpected">
+        <AlertTriangle className="w-12 h-12 text-zinc-600 mx-auto mb-3" />
+        <p className="text-zinc-500">Unerwarteter Zustand — kein Geraet geladen.</p>
+        <Button onClick={fetchDevice} className="mt-4 bg-indigo-600 text-white" data-testid="error-reload-btn">
+          <RefreshCw className="w-4 h-4 mr-2" /> Neu laden
         </Button>
       </div>
     );
@@ -355,6 +421,7 @@ export default function PortalDeviceDetail() {
           <CardTitle className="text-sm text-zinc-400 flex items-center justify-between">
             <span className="flex items-center gap-2">
               <Settings2 className="w-4 h-4" /> Device-Konfiguration
+              <span className="text-[9px] text-zinc-600 bg-zinc-800 px-1.5 py-0.5 rounded">Overrides — ueberschreibt globale Defaults</span>
               {configDirty && <span className="text-[10px] text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">Ungespeichert</span>}
             </span>
             {configExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}

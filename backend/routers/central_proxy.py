@@ -20,7 +20,7 @@ logger = logging.getLogger("central_proxy")
 router = APIRouter(prefix="/central", tags=["central-proxy"])
 
 CENTRAL_SERVER_URL = os.environ.get("CENTRAL_SERVER_URL", "http://127.0.0.1:8002")
-PROXY_TIMEOUT = 5.0
+PROXY_TIMEOUT = 12.0
 
 # Local kiosk JWT secret — used to detect admin panel requests
 _LOCAL_JWT_SECRET = os.environ.get("JWT_SECRET", "darts-kiosk-secret-key-change-in-production")

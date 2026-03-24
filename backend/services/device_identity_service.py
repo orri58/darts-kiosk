@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 try:
     from backend.database import DATA_DIR as _DATA_DIR
 except ImportError:
-    _DATA_DIR = Path(os.environ.get("DATA_DIR", "")) or (Path(__file__).resolve().parent.parent.parent / "data")
+    _data_dir_env = os.environ.get("DATA_DIR", "").strip()
+    _DATA_DIR = Path(_data_dir_env) if _data_dir_env else (Path(__file__).resolve().parent.parent.parent / "data")
 
 _IDENTITY_FILE = _DATA_DIR / "device_identity.json"
 

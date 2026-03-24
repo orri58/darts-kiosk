@@ -206,20 +206,40 @@ export default function PortalLicenseDetail() {
   const { apiBase, authHeaders, canManage } = useCentralAuth();
   const [lic, setLic] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(null);
   const [rawToken, setRawToken] = useState(null);
   const [actionLoading, setActionLoading] = useState(false);
 
+  const classifyError = (err) => {
+    const status = err?.response?.status;
+    const isTimeout = err?.code === 'ECONNABORTED' || err?.message?.includes('timeout');
+    const isNetwork = !err?.response && (err?.code === 'ERR_NETWORK' || err?.message === 'Network Error');
+    if (status === 404) return { type: 'not_found', message: 'Lizenz existiert nicht in der Datenbank.', retryable: false };
+    if (status === 401) return { type: 'auth', message: 'Sitzung abgelaufen. Bitte erneut einloggen.', retryable: false };
+    if (status === 403) return { type: 'forbidden', message: 'Keine Berechtigung fuer diese Lizenz.', retryable: false };
+    if (status === 502) return { type: 'server_down', message: 'Zentraler Server nicht erreichbar (502).', retryable: true };
+    if (status === 504) return { type: 'server_timeout', message: 'Zentraler Server antwortet nicht (504 Timeout).', retryable: true };
+    if (isTimeout) return { type: 'timeout', message: 'Verbindung zu langsam oder fehlgeschlagen.', retryable: true };
+    if (isNetwork) return { type: 'network', message: 'Netzwerkfehler — keine Verbindung zum Server.', retryable: true };
+    return { type: 'unknown', message: err?.response?.data?.detail || `Unbekannter Fehler (HTTP ${status || '?'}).`, retryable: true };
+  };
+
   const fetchDetail = useCallback(async () => {
+    setLoading(true);
+    setFetchError(null);
     try {
-      const res = await axios.get(`${apiBase}/licensing/licenses/${licenseId}`, { headers: authHeaders });
+      const res = await axios.get(`${apiBase}/licensing/licenses/${licenseId}`, { headers: authHeaders, timeout: 15000 });
       setLic(res.data);
+      setFetchError(null);
     } catch (err) {
-      toast.error('Lizenz nicht gefunden');
-      navigate('/portal/licenses');
+      const classified = classifyError(err);
+      setFetchError(classified);
+      setLic(null);
+      console.error(`[LicenseDetail] Fetch failed: type=${classified.type}`, err);
     } finally {
       setLoading(false);
     }
-  }, [apiBase, authHeaders, licenseId, navigate]);
+  }, [apiBase, authHeaders, licenseId]);
 
   useEffect(() => { fetchDetail(); }, [fetchDetail]);
 
@@ -281,7 +301,27 @@ export default function PortalLicenseDetail() {
     }
   };
 
-  if (loading) return <div className="p-8 text-zinc-500">Laden...</div>;
+  if (loading) return <div className="flex items-center justify-center h-64" data-testid="license-detail-loading"><div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" /></div>;
+
+  if (fetchError) {
+    return (
+      <div className="text-center py-16 space-y-4" data-testid={`license-error-${fetchError.type}`}>
+        <p className="text-lg font-semibold text-white">
+          {fetchError.type === 'not_found' ? 'Lizenz existiert nicht' :
+           fetchError.type === 'auth' ? 'Authentifizierung fehlgeschlagen' :
+           fetchError.type === 'forbidden' ? 'Zugriff verweigert' :
+           fetchError.type === 'server_down' || fetchError.type === 'server_timeout' ? 'Server nicht erreichbar' :
+           'Fehler beim Laden'}
+        </p>
+        <p className="text-sm text-zinc-400">{fetchError.message}</p>
+        <div className="flex items-center justify-center gap-3">
+          <button onClick={() => navigate('/portal/licenses')} className="px-4 py-2 border border-zinc-700 text-zinc-400 rounded-lg text-sm" data-testid="license-error-back">Zurueck</button>
+          {fetchError.retryable && <button onClick={fetchDetail} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm" data-testid="license-error-retry">Erneut versuchen</button>}
+        </div>
+      </div>
+    );
+  }
+
   if (!lic) return null;
 
   const st = lic.computed_status || lic.status;

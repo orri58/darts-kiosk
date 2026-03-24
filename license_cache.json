@@ -1,0 +1,10 @@
+{
+  "license_status": {
+    "status": "suspended",
+    "source": "central_rejection",
+    "message": "Test lock",
+    "checked_at": "2026-03-23T21:29:58.589696+00:00"
+  },
+  "cached_at": "2026-03-23T21:29:58.589726+00:00",
+  "signature": "c0f4e8c04c150c78d022648858108d775398d7612a641b7ac5a195002730962b"
+}

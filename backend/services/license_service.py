@@ -35,8 +35,9 @@ from backend.models.licensing import (
 
 logger = logging.getLogger(__name__)
 
-# Cache location
-_DATA_DIR = Path(os.environ.get("DATA_DIR", "")) or (Path(__file__).resolve().parent.parent.parent / "data")
+# Cache location — v3.15.1: Fixed path resolution (Path("") is truthy!)
+_data_dir_env = os.environ.get("DATA_DIR", "").strip()
+_DATA_DIR = Path(_data_dir_env) if _data_dir_env else (Path(__file__).resolve().parent.parent.parent / "data")
 _CACHE_FILE = _DATA_DIR / "license_cache.json"
 _CACHE_SECRET = os.environ.get("AGENT_SECRET", "license-cache-key")
 
