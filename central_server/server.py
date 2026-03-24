@@ -285,7 +285,7 @@ def _ser_location(loc):
     }
 
 def _ser_device(d):
-    """Serialize device — v3.15.1: defensiv gegen fehlende Felder/Attribute."""
+    """Serialize device — v3.15.2: consistent online/degraded/offline status."""
     ws_info = {}
     try:
         ws_info = device_ws_hub.device_ws_status(d.id)
@@ -297,6 +297,9 @@ def _ser_device(d):
         if hasattr(val, 'isoformat'): return val.isoformat()
         return str(val)
 
+    hb = getattr(d, 'last_heartbeat_at', None)
+    connectivity = _compute_device_connectivity(hb)
+
     return {
         "id": d.id,
         "location_id": getattr(d, 'location_id', None),
@@ -307,11 +310,13 @@ def _ser_device(d):
         "binding_status": getattr(d, 'binding_status', 'unknown'),
         "license_id": getattr(d, 'license_id', None),
         "last_sync_at": _safe_dt(getattr(d, 'last_sync_at', None)),
-        "last_heartbeat_at": _safe_dt(getattr(d, 'last_heartbeat_at', None)),
+        "last_heartbeat_at": _safe_dt(hb),
         "reported_version": getattr(d, 'reported_version', None),
         "sync_count": getattr(d, 'sync_count', 0) or 0,
         "created_at": _safe_dt(getattr(d, 'created_at', None)),
         "ws_connected": ws_info.get("ws_connected", False),
+        "is_online": connectivity == "online",
+        "connectivity": connectivity,
     }
 
 def _ser_license(lic):
@@ -610,27 +615,23 @@ async def dashboard(customer_id: str = None, location_id: str = None, user: Auth
         dev_stmt = select(CentralDevice)
     dev_stmt = dev_stmt.order_by(CentralDevice.last_sync_at.desc().nullslast()).limit(20)
     recent_devices = []
-    now = _utcnow()
     try:
         dev_result = await db.execute(dev_stmt)
         for d in dev_result.scalars().all():
             try:
-                online = False
-                if d.last_sync_at:
-                    try:
-                        diff = (now - _aware(d.last_sync_at)).total_seconds()
-                        online = diff < 600
-                    except Exception:
-                        pass
+                connectivity = _compute_device_connectivity(d.last_heartbeat_at)
                 recent_devices.append({
                     "id": d.id, "device_name": d.device_name, "status": d.status,
-                    "online": online, "binding_status": d.binding_status,
+                    "online": connectivity == "online",
+                    "connectivity": connectivity,
+                    "binding_status": d.binding_status,
                     "last_sync_at": _safe_raw_dt_static(d.last_sync_at),
+                    "last_heartbeat_at": _safe_raw_dt_static(d.last_heartbeat_at),
                     "sync_count": d.sync_count or 0,
                 })
             except Exception as e:
                 logger.warning(f"[DASHBOARD] Device serialization failed: {e}")
-                recent_devices.append({"id": str(getattr(d, 'id', '?')), "device_name": "?", "status": "error", "online": False})
+                recent_devices.append({"id": str(getattr(d, 'id', '?')), "device_name": "?", "status": "error", "online": False, "connectivity": "offline"})
     except Exception as e:
         logger.warning(f"[DASHBOARD] Device query failed: {type(e).__name__}: {e} — skipping recent_devices")
         try:
@@ -1574,6 +1575,34 @@ async def resolve_device_id(request: Request, db: AsyncSession = Depends(get_db)
 # ═══════════════════════════════════════════════════════════════
 
 ONLINE_THRESHOLD_SECONDS = 300  # 5 minutes
+DEGRADED_THRESHOLD_SECONDS = 900  # 15 minutes — online > degraded > offline
+
+
+def _compute_device_connectivity(last_heartbeat_at) -> str:
+    """Compute device connectivity status from a single rule.
+    Returns: 'online' | 'degraded' | 'offline'
+    Used by ALL endpoints for consistent status display.
+    """
+    if last_heartbeat_at is None:
+        return "offline"
+    now = _utcnow()
+    try:
+        if isinstance(last_heartbeat_at, str):
+            try:
+                last_heartbeat_at = datetime.fromisoformat(last_heartbeat_at.replace("Z", "+00:00"))
+            except Exception:
+                return "offline"
+        if hasattr(last_heartbeat_at, 'tzinfo') and last_heartbeat_at.tzinfo is None:
+            last_heartbeat_at = last_heartbeat_at.replace(tzinfo=timezone.utc)
+        diff = (now - last_heartbeat_at).total_seconds()
+        if diff < ONLINE_THRESHOLD_SECONDS:
+            return "online"
+        elif diff < DEGRADED_THRESHOLD_SECONDS:
+            return "degraded"
+        else:
+            return "offline"
+    except Exception:
+        return "offline"
 
 
 async def _authenticate_device(request: Request, db: AsyncSession) -> CentralDevice:
@@ -1735,10 +1764,11 @@ async def telemetry_dashboard(
             "devices": [], "warnings": [],
         }
 
-    # Device statuses — wrapped defensively against corrupt datetime values
+    # Device statuses — v3.15.2: uses _compute_device_connectivity for single-rule consistency
     device_list = []
     warnings = []
     online_count = 0
+    degraded_count = 0
     offline_count = 0
     try:
         dev_result = await db.execute(
@@ -1749,19 +1779,18 @@ async def telemetry_dashboard(
 
         for d in devices:
             try:
-                is_online = False
-                try:
-                    is_online = d.last_heartbeat_at and (now - _aware(d.last_heartbeat_at)).total_seconds() < ONLINE_THRESHOLD_SECONDS
-                except Exception:
-                    pass
-                if is_online:
+                connectivity = _compute_device_connectivity(d.last_heartbeat_at)
+                if connectivity == "online":
                     online_count += 1
+                elif connectivity == "degraded":
+                    degraded_count += 1
                 else:
                     offline_count += 1
 
                 dev_info = {
                     "id": d.id, "device_name": d.device_name or d.id[:8],
-                    "online": is_online,
+                    "online": connectivity == "online",
+                    "connectivity": connectivity,
                     "last_heartbeat_at": _safe_raw_dt_static(d.last_heartbeat_at),
                     "last_activity_at": _safe_raw_dt_static(d.last_activity_at),
                     "last_sync_at": _safe_raw_dt_static(d.last_sync_at),
@@ -1774,12 +1803,14 @@ async def telemetry_dashboard(
                 # Warnings
                 if d.last_error:
                     warnings.append({"type": "error", "device": d.device_name or d.id[:8], "message": d.last_error})
-                if not is_online and d.last_heartbeat_at:
+                if connectivity == "offline" and d.last_heartbeat_at:
                     try:
-                        mins_ago = int((now - _aware(d.last_heartbeat_at)).total_seconds() / 60)
+                        mins_ago = int((_utcnow() - _aware(d.last_heartbeat_at)).total_seconds() / 60)
                         warnings.append({"type": "offline", "device": d.device_name or d.id[:8], "message": f"Offline seit {mins_ago} Min."})
                     except Exception:
                         warnings.append({"type": "offline", "device": d.device_name or d.id[:8], "message": "Offline"})
+                elif connectivity == "degraded":
+                    warnings.append({"type": "degraded", "device": d.device_name or d.id[:8], "message": "Verbindung instabil"})
                 elif not d.last_heartbeat_at:
                     warnings.append({"type": "no_heartbeat", "device": d.device_name or d.id[:8], "message": "Noch kein Heartbeat empfangen"})
             except Exception as e:
@@ -3091,14 +3122,18 @@ async def _get_device_detail_raw_sql(device_id: str, user: AuthUser) -> dict:
         health_snapshot = _safe_json_parse(dev_raw.get("health_snapshot"))
         device_logs = _safe_json_parse(dev_raw.get("device_logs")) or []
 
+        hb_raw = dev_raw.get("last_heartbeat_at")
+        connectivity = _compute_device_connectivity(hb_raw) if hb_raw else "offline"
+
         return {
             "id": dev_raw.get("id"), "device_name": dev_raw.get("device_name"),
             "hardware_id": dev_raw.get("hardware_id"),
             "status": dev_raw.get("status", "unknown"),
             "license_id": dev_raw.get("license_id"),
             "binding_status": dev_raw.get("binding_status", "unknown"),
-            "is_online": False,
-            "last_heartbeat_at": _safe_raw_dt_static(dev_raw.get("last_heartbeat_at")),
+            "is_online": connectivity == "online",
+            "connectivity": connectivity,
+            "last_heartbeat_at": _safe_raw_dt_static(hb_raw),
             "reported_version": dev_raw.get("reported_version"),
             "last_error": dev_raw.get("last_error"),
             "last_activity_at": _safe_raw_dt_static(dev_raw.get("last_activity_at")),
@@ -3169,24 +3204,9 @@ async def _get_device_detail_inner(device_id: str, db: AsyncSession, user: AuthU
     except Exception as e:
         logger.warning(f"[DEVICE-DETAIL] Access/location check failed for {device_id}: {e}")
 
-    # ── Online status (defensive: handle string/None/naive datetime) ──
-    is_online = False
-    try:
-        hb = dev.last_heartbeat_at
-        if hb:
-            if isinstance(hb, str):
-                try:
-                    hb = datetime.fromisoformat(hb.replace("Z", "+00:00"))
-                except Exception:
-                    hb = None
-            if hb:
-                now = _utcnow()
-                if hasattr(hb, 'tzinfo') and hb.tzinfo is None:
-                    hb = hb.replace(tzinfo=timezone.utc)
-                diff = (now - hb).total_seconds()
-                is_online = diff < 300
-    except Exception as e:
-        logger.warning(f"[DEVICE-DETAIL] Online status calc failed for {device_id}: {e}")
+    # ── Online status — v3.15.2: single rule via _compute_device_connectivity ──
+    connectivity = _compute_device_connectivity(dev.last_heartbeat_at)
+    is_online = connectivity == "online"
 
     # ── Recent telemetry events (defensive) ──
     recent_events = []
@@ -3288,6 +3308,7 @@ async def _get_device_detail_inner(device_id: str, db: AsyncSession, user: AuthU
         "license_id": dev.license_id,
         "binding_status": getattr(dev, 'binding_status', None),
         "is_online": is_online,
+        "connectivity": connectivity,
         "last_heartbeat_at": _safe_dt(dev.last_heartbeat_at),
         "reported_version": dev.reported_version,
         "last_error": dev.last_error,

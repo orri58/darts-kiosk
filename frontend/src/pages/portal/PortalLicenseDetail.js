@@ -168,21 +168,26 @@ function DevicesSection({ devices, maxDevices, onUnbind, licenseStatus }) {
       </div>
       <div className="space-y-2">
         {devices.map(dev => {
-          const online = dev.last_heartbeat_at && (Date.now() - new Date(dev.last_heartbeat_at).getTime() < 300000);
+          // v3.15.2: Use backend-provided connectivity status (single rule)
+          const connectivity = dev.connectivity || (dev.is_online ? 'online' : (dev.last_heartbeat_at && (Date.now() - new Date(dev.last_heartbeat_at).getTime() < 300000) ? 'online' : 'offline'));
+          const online = connectivity === 'online';
+          const degraded = connectivity === 'degraded';
           return (
             <div key={dev.id} data-testid={`device-row-${dev.id}`} className="flex items-center justify-between bg-zinc-950 border border-zinc-800 rounded-md p-3">
               <div className="flex items-center gap-3">
                 {online
                   ? <Wifi className="w-4 h-4 text-emerald-400" />
-                  : <WifiOff className="w-4 h-4 text-zinc-600" />}
+                  : degraded
+                    ? <Wifi className="w-4 h-4 text-amber-400" />
+                    : <WifiOff className="w-4 h-4 text-zinc-600" />}
                 <div>
                   <span className="text-zinc-200 text-sm font-medium">{dev.device_name}</span>
                   <span className="text-zinc-600 text-xs ml-2">{dev.id.slice(0, 8)}...</span>
                 </div>
               </div>
               <div className="flex items-center gap-3">
-                <span className={`text-xs ${online ? 'text-emerald-500' : 'text-zinc-600'}`}>
-                  {online ? 'Online' : (dev.last_heartbeat_at ? `Zuletzt: ${new Date(dev.last_heartbeat_at).toLocaleDateString('de-DE')}` : 'Noch kein Heartbeat')}
+                <span className={`text-xs ${online ? 'text-emerald-500' : degraded ? 'text-amber-400' : 'text-zinc-600'}`}>
+                  {online ? 'Online' : degraded ? 'Instabil' : (dev.last_heartbeat_at ? `Zuletzt: ${new Date(dev.last_heartbeat_at).toLocaleDateString('de-DE')}` : 'Noch kein Heartbeat')}
                   {dev.ws_connected && ' (WS)'}
                 </span>
                 {licenseStatus !== 'archived' && (

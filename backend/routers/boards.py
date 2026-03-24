@@ -173,8 +173,9 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
     except HTTPException:
         raise
     except Exception as e:
-        # License check failure must NOT block operation (fail-open for resilience)
-        logger.error(f"[LICENSE] Check failed (allowing session): {e}")
+        # v3.15.2: FAIL-CLOSED — license check error = BLOCK. No silent allow.
+        logger.error(f"[LICENSE] Check failed — BLOCKING session (fail-closed): {e}")
+        raise HTTPException(status_code=403, detail="license_check_failed")
 
     expires_at = None
     if data.pricing_mode == PricingMode.PER_TIME.value and data.minutes:

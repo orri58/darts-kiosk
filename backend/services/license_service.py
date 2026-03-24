@@ -525,34 +525,53 @@ class LicenseValidationService:
             logger.error(f"[LICENSE] Cache load failed: {e}")
             return None
 
+    # ── v3.15.2: Central BLOCKED_STATES definition ──
+    BLOCKED_STATES = frozenset({"suspended", "blocked", "inactive", "expired"})
+    BLOCKED_BINDING_STATES = frozenset({"suspended", "mismatch_expired"})
+    ALLOWED_STATES = frozenset({"active", "grace", "test", "no_license"})
+
     def is_session_allowed(self, status: dict) -> bool:
         """Check if a new game session should be allowed based on license status.
 
-        Policy: fail-open when no license system is configured.
-        - active, grace, test: allowed (if binding OK or no binding check)
-        - no_license: allowed (system not configured yet)
-        - expired, blocked, suspended, inactive: BLOCKED
+        v3.15.2: FAIL-CLOSED policy.
+        - Only EXPLICITLY allowed states pass.
+        - Everything else (including unknown states) is BLOCKED.
+        - suspended, blocked, inactive, expired: HARD BLOCK
+        - mismatch_expired, binding=suspended: HARD BLOCK
+        - active, grace, test: ALLOWED
+        - no_license: ALLOWED (system not configured yet)
         - mismatch_grace: ALLOWED (with warning)
-        - mismatch_expired: BLOCKED (device binding grace expired)
         - unbound: ALLOWED (not yet bound)
-
-        v3.15.0: Explicitly blocks suspended/inactive (central lock).
-        v3.4.4: mismatch_grace allows sessions, mismatch_expired blocks.
         """
-        # v3.15.0: Central lock — hard block
         current_status = status.get("status")
-        if current_status in ("suspended", "blocked", "inactive"):
-            logger.warning(f"[LICENSE] Session blocked by central lock: status={current_status}")
+
+        # Hard block on known blocked states
+        if current_status in self.BLOCKED_STATES:
+            logger.warning(f"[LICENSE] Session BLOCKED: status={current_status}")
             return False
 
+        # Hard block on known blocked binding states
         binding = status.get("binding_status")
-        if binding == "mismatch_expired":
-            return False
-        if binding == "suspended":
+        if binding in self.BLOCKED_BINDING_STATES:
+            logger.warning(f"[LICENSE] Session BLOCKED: binding={binding}")
             return False
 
-        allowed = {"active", "grace", "test", "no_license"}
-        return current_status in allowed
+        # Only allow EXPLICITLY known good states
+        if current_status in self.ALLOWED_STATES:
+            return True
+
+        # mismatch_grace — allowed with warning
+        if binding == "mismatch_grace":
+            logger.warning(f"[LICENSE] Session allowed under mismatch_grace")
+            return True
+
+        # unbound — allowed (not yet bound)
+        if binding == "unbound":
+            return True
+
+        # UNKNOWN state — FAIL-CLOSED: block
+        logger.warning(f"[LICENSE] Session BLOCKED: unknown status={current_status} binding={binding}")
+        return False
 
 
 license_service = LicenseValidationService()

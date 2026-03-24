@@ -24,7 +24,10 @@ import httpx
 
 logger = logging.getLogger("action_poller")
 
-from backend.services.device_log_buffer import device_logs
+try:
+    from backend.services.device_log_buffer import device_logs
+except ImportError:
+    from services.device_log_buffer import device_logs
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _DATA_DIR = _PROJECT_ROOT / "data"
@@ -321,7 +324,10 @@ class ActionPoller:
 
     async def _do_force_sync(self) -> tuple:
         try:
-            from backend.services.config_sync_client import config_sync_client
+            try:
+                from backend.services.config_sync_client import config_sync_client
+            except ImportError:
+                from services.config_sync_client import config_sync_client
             changed = await config_sync_client.sync_now()
             msg = "Config synced" + (" (changes applied)" if changed else " (no changes)")
             return True, msg
@@ -334,7 +340,10 @@ class ActionPoller:
 
     async def _do_reload_ui(self) -> tuple:
         try:
-            import backend.services.config_apply as ca
+            try:
+                import backend.services.config_apply as ca
+            except ImportError:
+                import services.config_apply as ca
             ca._config_applied_version += 1
             return True, f"UI reload signaled (version={ca._config_applied_version})"
         except Exception as e:
@@ -345,9 +354,19 @@ class ActionPoller:
         logger.info(f"[ACTION-POLL] Board control: {action_type} params={params}")
 
         try:
-            from backend.database.database import AsyncSessionLocal
-            from backend.models import Board, Session, BoardStatus, SessionStatus, PricingMode
-            from backend.dependencies import get_or_create_setting
+            # v3.15.2: Import fix — backend.database (NOT backend.database.database)
+            try:
+                from backend.database import AsyncSessionLocal
+            except ImportError:
+                from database import AsyncSessionLocal
+            try:
+                from backend.models import Board, Session, BoardStatus, SessionStatus, PricingMode
+            except ImportError:
+                from models import Board, Session, BoardStatus, SessionStatus, PricingMode
+            try:
+                from backend.dependencies import get_or_create_setting
+            except ImportError:
+                from dependencies import get_or_create_setting
             from sqlalchemy import select
             from datetime import timedelta
 
@@ -381,9 +400,18 @@ class ActionPoller:
 
     async def _do_unlock(self, db, board, params: dict) -> tuple:
         """Unlock a board and create a session."""
-        from backend.models import Session, BoardStatus, SessionStatus, PricingMode
-        from backend.dependencies import get_or_create_setting
-        from backend.services.ws_manager import board_ws
+        try:
+            from backend.models import Session, BoardStatus, SessionStatus, PricingMode
+        except ImportError:
+            from models import Session, BoardStatus, SessionStatus, PricingMode
+        try:
+            from backend.dependencies import get_or_create_setting
+        except ImportError:
+            from dependencies import get_or_create_setting
+        try:
+            from backend.services.ws_manager import board_ws
+        except ImportError:
+            from services.ws_manager import board_ws
         from datetime import timedelta
 
         # Check for existing active session
@@ -397,10 +425,16 @@ class ActionPoller:
         if existing.scalar_one_or_none():
             return False, f"Board {board.board_id} already has an active session"
 
-        # License check
+        # v3.15.2: License check — FAIL-CLOSED. If check fails → BLOCK.
         try:
-            from backend.services.license_service import license_service
-            from backend.services.device_identity_service import device_identity_service
+            try:
+                from backend.services.license_service import license_service
+            except ImportError:
+                from services.license_service import license_service
+            try:
+                from backend.services.device_identity_service import device_identity_service
+            except ImportError:
+                from services.device_identity_service import device_identity_service
             _install_id = device_identity_service.get_install_id()
             lic_status = await license_service.get_effective_status(
                 db, install_id=_install_id, board_id=board.board_id, trigger_binding=False
@@ -408,7 +442,9 @@ class ActionPoller:
             if not license_service.is_session_allowed(lic_status):
                 return False, f"License blocked: {lic_status.get('status')} / {lic_status.get('binding_status')}"
         except Exception as e:
-            logger.error(f"[ACTION-POLL] License check failed (allowing): {e}")
+            # v3.15.2: FAIL-CLOSED — license check error = BLOCK
+            logger.error(f"[ACTION-POLL] License check failed — BLOCKING unlock: {e}")
+            return False, f"License check failed (fail-closed): {e}"
 
         # Resolve pricing from params or local defaults
         pricing_mode = (params.get("pricing_mode") or PricingMode.PER_GAME.value) if params else PricingMode.PER_GAME.value
@@ -463,8 +499,14 @@ class ActionPoller:
 
     async def _do_lock(self, db, board) -> tuple:
         """Lock a board and end any active session."""
-        from backend.models import Session, BoardStatus, SessionStatus
-        from backend.services.ws_manager import board_ws
+        try:
+            from backend.models import Session, BoardStatus, SessionStatus
+        except ImportError:
+            from models import Session, BoardStatus, SessionStatus
+        try:
+            from backend.services.ws_manager import board_ws
+        except ImportError:
+            from services.ws_manager import board_ws
         from sqlalchemy import select
 
         # End active session if exists
@@ -491,7 +533,10 @@ class ActionPoller:
 
         # Stop Autodarts observer
         try:
-            from backend.routers.boards import observer_manager, stop_observer_for_board
+            try:
+                from backend.routers.boards import observer_manager, stop_observer_for_board
+            except ImportError:
+                from routers.boards import observer_manager, stop_observer_for_board
             import asyncio
             observer_manager.set_desired_state(board.board_id, "stopped")
             asyncio.create_task(stop_observer_for_board(board.board_id, reason="remote_lock"))

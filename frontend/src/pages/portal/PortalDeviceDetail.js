@@ -294,9 +294,11 @@ export default function PortalDeviceDetail() {
     );
   }
 
-  const isOnline = device.is_online;
+  // v3.15.2: Consistent connectivity status from backend (online/degraded/offline)
+  const connectivity = device.connectivity || (device.is_online ? 'online' : 'offline');
+  const isOnline = connectivity === 'online';
   const hs = device.health_snapshot;
-  const healthKey = !isOnline ? 'offline' : (hs?.health_status || 'unknown');
+  const healthKey = connectivity === 'offline' ? 'offline' : connectivity === 'degraded' ? 'degraded' : (hs?.health_status || 'unknown');
   const healthMeta = HEALTH_BADGE[healthKey] || HEALTH_BADGE.unknown;
   const HealthIcon = healthMeta.icon;
   const healthReason = getHealthReason(hs, isOnline);

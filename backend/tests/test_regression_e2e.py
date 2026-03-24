@@ -490,5 +490,164 @@ class TestConfigEndpoints:
         assert resp.status_code in (200, 502, 504)
 
 
+# ═══════════════════════════════════════
+# BLOCK 9: v3.15.2 Stabilization Tests
+# ═══════════════════════════════════════
+
+class TestBoardControlActions:
+    """Test that all 4 remote actions can be created on central server."""
+
+    def test_remote_unlock_board(self, central_client, central_auth_headers):
+        resp = central_client.get("/api/licensing/devices", headers=central_auth_headers)
+        assert resp.status_code == 200
+        devices = resp.json()
+        if not devices:
+            pytest.skip("No devices")
+        device_id = devices[0]["id"]
+        resp = central_client.post(
+            f"/api/remote-actions/{device_id}",
+            headers={**central_auth_headers, "Content-Type": "application/json"},
+            json={"action_type": "unlock_board", "params": {"board_id": "BOARD-1"}},
+        )
+        assert resp.status_code in (200, 201), f"unlock_board failed: {resp.status_code} {resp.text[:200]}"
+        assert resp.json().get("status") == "pending"
+
+    def test_remote_lock_board(self, central_client, central_auth_headers):
+        resp = central_client.get("/api/licensing/devices", headers=central_auth_headers)
+        devices = resp.json()
+        if not devices:
+            pytest.skip("No devices")
+        device_id = devices[0]["id"]
+        resp = central_client.post(
+            f"/api/remote-actions/{device_id}",
+            headers={**central_auth_headers, "Content-Type": "application/json"},
+            json={"action_type": "lock_board", "params": {"board_id": "BOARD-1"}},
+        )
+        assert resp.status_code in (200, 201)
+
+    def test_remote_start_session(self, central_client, central_auth_headers):
+        resp = central_client.get("/api/licensing/devices", headers=central_auth_headers)
+        devices = resp.json()
+        if not devices:
+            pytest.skip("No devices")
+        device_id = devices[0]["id"]
+        resp = central_client.post(
+            f"/api/remote-actions/{device_id}",
+            headers={**central_auth_headers, "Content-Type": "application/json"},
+            json={"action_type": "start_session", "params": {"board_id": "BOARD-1"}},
+        )
+        assert resp.status_code in (200, 201)
+
+    def test_remote_stop_session(self, central_client, central_auth_headers):
+        resp = central_client.get("/api/licensing/devices", headers=central_auth_headers)
+        devices = resp.json()
+        if not devices:
+            pytest.skip("No devices")
+        device_id = devices[0]["id"]
+        resp = central_client.post(
+            f"/api/remote-actions/{device_id}",
+            headers={**central_auth_headers, "Content-Type": "application/json"},
+            json={"action_type": "stop_session", "params": {"board_id": "BOARD-1"}},
+        )
+        assert resp.status_code in (200, 201)
+
+
+class TestLicenseFailClosed:
+    """Verify fail-closed license enforcement."""
+
+    def test_blocked_states_constant_exists(self):
+        """LicenseValidationService must define BLOCKED_STATES."""
+        import sys
+        sys.path.insert(0, '/app')
+        from backend.services.license_service import license_service
+        assert hasattr(license_service, 'BLOCKED_STATES')
+        assert 'suspended' in license_service.BLOCKED_STATES
+        assert 'blocked' in license_service.BLOCKED_STATES
+        assert 'inactive' in license_service.BLOCKED_STATES
+        assert 'expired' in license_service.BLOCKED_STATES
+
+    def test_suspended_blocks(self):
+        import sys
+        sys.path.insert(0, '/app')
+        from backend.services.license_service import license_service
+        assert license_service.is_session_allowed({"status": "suspended"}) == False
+
+    def test_unknown_status_blocks(self):
+        """Unknown states must be blocked (fail-closed)."""
+        import sys
+        sys.path.insert(0, '/app')
+        from backend.services.license_service import license_service
+        assert license_service.is_session_allowed({"status": "unknown"}) == False
+        assert license_service.is_session_allowed({"status": None}) == False
+        assert license_service.is_session_allowed({"status": ""}) == False
+
+    def test_active_allows(self):
+        import sys
+        sys.path.insert(0, '/app')
+        from backend.services.license_service import license_service
+        assert license_service.is_session_allowed({"status": "active"}) == True
+
+
+class TestConsistentConnectivity:
+    """Verify all endpoints return consistent connectivity status."""
+
+    def test_device_list_has_connectivity(self, central_client, central_auth_headers):
+        resp = central_client.get("/api/licensing/devices", headers=central_auth_headers)
+        assert resp.status_code == 200
+        devices = resp.json()
+        for d in devices[:5]:
+            assert "connectivity" in d, f"Device {d.get('id')} missing 'connectivity' field"
+            assert d["connectivity"] in ("online", "degraded", "offline"), f"Invalid connectivity: {d['connectivity']}"
+            assert "is_online" in d, f"Device {d.get('id')} missing 'is_online' field"
+
+    def test_device_detail_has_connectivity(self, central_client, central_auth_headers):
+        resp = central_client.get("/api/licensing/devices", headers=central_auth_headers)
+        devices = resp.json()
+        if not devices:
+            pytest.skip("No devices")
+        device_id = devices[0]["id"]
+        resp = central_client.get(f"/api/telemetry/device/{device_id}", headers=central_auth_headers)
+        assert resp.status_code == 200
+        d = resp.json()
+        assert "connectivity" in d, "Device detail missing 'connectivity'"
+        assert d["connectivity"] in ("online", "degraded", "offline")
+        assert "is_online" in d
+
+    def test_telemetry_dashboard_has_connectivity(self, central_client, central_auth_headers):
+        resp = central_client.get("/api/telemetry/dashboard", headers=central_auth_headers)
+        assert resp.status_code == 200
+        d = resp.json()
+        for dev in d.get("devices", [])[:3]:
+            assert "connectivity" in dev, f"Telemetry device missing 'connectivity'"
+
+    def test_dashboard_has_connectivity(self, central_client, central_auth_headers):
+        resp = central_client.get("/api/dashboard", headers=central_auth_headers)
+        assert resp.status_code == 200
+        d = resp.json()
+        for dev in d.get("recent_devices", [])[:3]:
+            assert "connectivity" in dev, f"Dashboard device missing 'connectivity'"
+
+
+class TestActionPollerImport:
+    """Verify action_poller imports work correctly (Issue #1 root cause)."""
+
+    def test_import_action_poller(self):
+        """action_poller must import without ModuleNotFoundError."""
+        import sys
+        sys.path.insert(0, '/app')
+        from backend.services.action_poller import action_poller
+        assert action_poller is not None
+
+    def test_broken_import_does_not_exist(self):
+        """The old broken import path must NOT work."""
+        import importlib
+        try:
+            importlib.import_module('backend.database.database')
+            assert False, "backend.database.database should NOT be importable"
+        except ImportError:
+            pass  # Expected — confirms the bug was real
+
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

@@ -689,9 +689,10 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
     if AUTODARTS_MODE != 'observer':
         logger.info(f"[Kiosk] AUTODARTS_MODE={AUTODARTS_MODE}, skipping observer")
         return
+    # v3.15.2: Use global default if no URL provided
     if not autodarts_url:
-        logger.warning(f"[Kiosk] No autodarts_url for {board_id}, skipping observer start")
-        return
+        autodarts_url = os.environ.get('AUTODARTS_URL', 'https://play.autodarts.io')
+        logger.info(f"[Kiosk] No autodarts_url for {board_id}, using default: {autodarts_url}")
 
     _finalized.pop(board_id, None)
 
@@ -745,7 +746,9 @@ async def kiosk_start_game(board_id: str, data: StartGameRequest, db: AsyncSessi
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[LICENSE] Check failed (allowing game): {e}")
+        # v3.15.2: FAIL-CLOSED — license check error = BLOCK. No silent allow.
+        logger.error(f"[LICENSE] Check failed — BLOCKING game start (fail-closed): {e}")
+        raise HTTPException(status_code=403, detail="license_check_failed")
 
     result = await db.execute(select(Board).where(Board.board_id == board_id))
     board = result.scalar_one_or_none()
