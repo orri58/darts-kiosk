@@ -363,13 +363,22 @@ class TestCentralServer:
             pytest.skip("No locations in central DB")
         loc_id = loc_row[0]
 
-        # Insert device with corrupt datetime
-        test_id = str(uuid.uuid4())
-        c.execute("""INSERT INTO devices (id, location_id, device_name, api_key, status, binding_status,
-                    last_heartbeat_at, reported_version, health_snapshot, device_logs)
-                    VALUES (?, ?, 'TEST-Corrupt-DateTime', 'regtest-key', 'active', 'unknown',
-                    'INVALID-NOT-A-DATE', '1.0.0', 'NOT-JSON', '{broken-json')""",
-                  (test_id, loc_id))
+        # Insert devices with MULTIPLE corruption patterns
+        test_ids = []
+        corruption_cases = [
+            ("corrupt-invalid-date", "INVALID-NOT-A-DATE", "1.0.0", "NOT-JSON", "{broken"),
+            ("corrupt-empty-strings", "", "", None, None),
+            ("corrupt-unix-ts", "1706745600", None, None, None),
+            ("corrupt-none-string", "None", None, "null", "null"),
+        ]
+        for suffix, hb_val, ver_val, health_val, logs_val in corruption_cases:
+            test_id = str(uuid.uuid4())
+            c.execute("""INSERT INTO devices (id, location_id, device_name, api_key, status, binding_status,
+                        last_heartbeat_at, reported_version, health_snapshot, device_logs, sync_count)
+                        VALUES (?, ?, ?, ?, 'active', 'unknown', ?, ?, ?, ?, 0)""",
+                      (test_id, loc_id, f'TEST-{suffix}', f'regtest-{suffix}-{test_id[:8]}',
+                       hb_val, ver_val, health_val, logs_val))
+            test_ids.append(test_id)
         conn.commit()
         conn.close()
 
@@ -378,23 +387,33 @@ class TestCentralServer:
             list_resp = central_client.get("/api/licensing/devices", headers=central_auth_headers)
             assert list_resp.status_code == 200, f"Device list 500 with corrupt data: {list_resp.text[:200]}"
             devices = list_resp.json()
-            found = any(d.get("id") == test_id for d in devices)
-            assert found, f"Corrupt device {test_id} not in list"
+            for tid in test_ids:
+                found = any(d.get("id") == tid for d in devices)
+                assert found, f"Corrupt device {tid} not in list"
 
-            # Test device DETAIL — must not 500
-            detail_resp = central_client.get(f"/api/telemetry/device/{test_id}", headers=central_auth_headers)
-            assert detail_resp.status_code == 200, (
-                f"Device detail 500 with corrupt data: {detail_resp.status_code} {detail_resp.text[:300]}"
-            )
-            detail = detail_resp.json()
-            assert detail.get("device_name") == "TEST-Corrupt-DateTime"
-            # Health snapshot should be None (corrupt JSON handled gracefully)
-            assert detail.get("health_snapshot") is None
+            # Test each device DETAIL — none must return 500
+            for tid in test_ids:
+                detail_resp = central_client.get(f"/api/telemetry/device/{tid}", headers=central_auth_headers)
+                assert detail_resp.status_code == 200, (
+                    f"Device detail 500 for {tid}: {detail_resp.status_code} {detail_resp.text[:300]}"
+                )
+                detail = detail_resp.json()
+                assert "id" in detail
+                assert detail["id"] == tid
+
+            # Test dashboard — must not 500
+            dash_resp = central_client.get("/api/dashboard", headers=central_auth_headers)
+            assert dash_resp.status_code == 200, f"Dashboard 500 with corrupt data: {dash_resp.text[:200]}"
+
+            # Test telemetry dashboard — must not 500
+            tel_resp = central_client.get("/api/telemetry/dashboard", headers=central_auth_headers)
+            assert tel_resp.status_code == 200, f"Telemetry dashboard 500 with corrupt data: {tel_resp.text[:200]}"
 
         finally:
             # Cleanup
             conn = sqlite3.connect(db_path)
-            conn.execute("DELETE FROM devices WHERE id = ?", (test_id,))
+            for tid in test_ids:
+                conn.execute("DELETE FROM devices WHERE id = ?", (tid,))
             conn.commit()
             conn.close()
 

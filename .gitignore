@@ -193,3 +193,6 @@ release/build/darts-kiosk-v3.15.1-source.zip
 # Environment files
 *.env
 *.env.*
+release/build/darts-kiosk-v3.15.2-source.zip
+release/build/darts-kiosk-v3.15.2-source/release/darts-kiosk-v3.14.0-source.zip
+release/build/darts-kiosk-v3.15.2-source/release/darts-kiosk-v3.13.0-source.zip
