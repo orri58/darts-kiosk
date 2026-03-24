@@ -9,7 +9,7 @@ Production-ready, local-first "Darts Kiosk + Admin Control" system for cafes. MA
 - **Integration:** Playwright (Autodarts), WebSockets, mDNS, Zeroconf
 - **Deployment:** Docker Compose (prod), install.sh (Linux), start.bat (Windows)
 
-## Current Version: v3.15.0
+## Current Version: v3.15.1
 
 ## Core Completed Features
 - Kiosk UI (Locked/Setup/In-Game/Finished states)
