@@ -200,3 +200,7 @@ release/build/darts-kiosk-v3.15.2-source/release/darts-kiosk-v3.13.0-source.zip
 # Environment files
 *.env
 *.env.*
+-e 
+# Environment files
+*.env
+*.env.*
