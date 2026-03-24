@@ -96,10 +96,12 @@ async def get_revenue_summary(
 
     by_date = {}
     for s in sessions:
-        date_str = s.started_at.strftime("%Y-%m-%d")
+        date_str = s.started_at.strftime("%Y-%m-%d") if s.started_at else "unknown"
         if date_str not in by_date:
             by_date[date_str] = {"total": 0.0, "count": 0, "by_board": {}}
-        by_date[date_str]["total"] += s.price_total
+        # v3.15.3: Null-safe revenue — price_total can be None
+        revenue = float(s.price_total or 0)
+        by_date[date_str]["total"] += revenue
         by_date[date_str]["count"] += 1
 
     return {

@@ -699,16 +699,22 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
     headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
     logger.info(f"[Kiosk] === Observer Start === board={board_id} url={autodarts_url} headless={headless}")
 
-    await observer_manager.open(
-        board_id=board_id,
-        autodarts_url=autodarts_url,
-        on_game_started=_on_game_started,
-        on_game_ended=_on_game_ended,
-        headless=headless,
-    )
+    try:
+        await observer_manager.open(
+            board_id=board_id,
+            autodarts_url=autodarts_url,
+            on_game_started=_on_game_started,
+            on_game_ended=_on_game_ended,
+            headless=headless,
+        )
 
-    status = observer_manager.get_status(board_id)
-    logger.info(f"[Kiosk] Observer post-start: state={status['state']} browser_open={status['browser_open']}")
+        status = observer_manager.get_status(board_id)
+        if status['browser_open']:
+            logger.info(f"[Kiosk] AUTODARTS STARTED: board={board_id} state={status['state']} browser_open=True url={autodarts_url}")
+        else:
+            logger.error(f"[Kiosk] AUTODARTS FAILED: board={board_id} state={status['state']} browser_open=False — observer opened but browser not running")
+    except Exception as e:
+        logger.error(f"[Kiosk] AUTODARTS FAILED: board={board_id} error={type(e).__name__}: {e}", exc_info=True)
 
 
 async def stop_observer_for_board(board_id: str, reason: str = "unknown"):

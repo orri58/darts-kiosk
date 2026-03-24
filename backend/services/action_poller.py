@@ -350,11 +350,11 @@ class ActionPoller:
             return False, f"reload_ui error: {e}"
 
     async def _do_board_control(self, action_type: str, params: dict) -> tuple:
-        """Execute board control actions locally using the DB directly."""
+        """Execute board control actions locally using the DB directly.
+        v3.15.3: Each action has its own handler — no conflation."""
         logger.info(f"[ACTION-POLL] Board control: {action_type} params={params}")
 
         try:
-            # v3.15.2: Import fix — backend.database (NOT backend.database.database)
             try:
                 from backend.database import AsyncSessionLocal
             except ImportError:
@@ -387,10 +387,15 @@ class ActionPoller:
                 board_id = board.board_id
                 logger.info(f"[ACTION-POLL] Resolved board: {board_id} (db_id={board.id})")
 
-                if action_type in ("unlock_board", "start_session"):
+                # v3.15.3: Separate handler per action type
+                if action_type == "unlock_board":
                     return await self._do_unlock(db, board, params)
-                elif action_type in ("lock_board", "stop_session"):
+                elif action_type == "lock_board":
                     return await self._do_lock(db, board)
+                elif action_type == "start_session":
+                    return await self._do_start_session(db, board, params)
+                elif action_type == "stop_session":
+                    return await self._do_stop_session(db, board)
                 else:
                     return False, f"Unhandled board action: {action_type}"
 
@@ -545,6 +550,112 @@ class ActionPoller:
 
         logger.info(f"[ACTION-POLL] Board {board.board_id} locked")
         return True, f"Board {board.board_id} locked"
+
+
+    async def _do_start_session(self, db, board, params: dict) -> tuple:
+        """Start a new session on an already-unlocked board.
+        v3.15.3: Distinct from unlock. Board must already be unlocked/in_game."""
+        try:
+            from backend.models import Session, BoardStatus, SessionStatus
+        except ImportError:
+            from models import Session, BoardStatus, SessionStatus
+        from sqlalchemy import select
+
+        logger.info(f"[ACTION-POLL] start_session for board {board.board_id}")
+
+        # Board must be unlocked or in_game
+        if board.status not in (BoardStatus.UNLOCKED.value, BoardStatus.IN_GAME.value):
+            # If board is locked, unlock it first (convenience behavior)
+            logger.info(f"[ACTION-POLL] Board {board.board_id} is {board.status}, unlocking first for start_session")
+            ok, msg = await self._do_unlock(db, board, params)
+            if not ok:
+                return False, f"start_session failed (unlock step): {msg}"
+
+        # Check for existing active session
+        existing = await db.execute(
+            select(Session).where(
+                Session.board_id == board.id,
+                Session.status == SessionStatus.ACTIVE.value
+            )
+        )
+        if existing.scalar_one_or_none():
+            logger.info(f"[ACTION-POLL] Board {board.board_id} already has active session — start_session is a no-op")
+            return True, f"Board {board.board_id} already has an active session"
+
+        # Mark board as in_game
+        board.status = BoardStatus.IN_GAME.value
+        await db.commit()
+
+        # Notify via WebSocket
+        try:
+            try:
+                from backend.services.ws_manager import board_ws
+            except ImportError:
+                from services.ws_manager import board_ws
+            await board_ws.broadcast({"type": "board_update", "board_id": board.board_id, "status": board.status})
+        except Exception:
+            pass
+
+        logger.info(f"[ACTION-POLL] start_session DONE for board {board.board_id}")
+        return True, f"Session started on board {board.board_id}"
+
+    async def _do_stop_session(self, db, board) -> tuple:
+        """Stop the active session on a board WITHOUT locking it.
+        v3.15.3: Distinct from lock. Board stays unlocked after session ends."""
+        try:
+            from backend.models import Session, BoardStatus, SessionStatus
+        except ImportError:
+            from models import Session, BoardStatus, SessionStatus
+        from sqlalchemy import select
+
+        logger.info(f"[ACTION-POLL] stop_session for board {board.board_id}")
+
+        # Find and end active session
+        result = await db.execute(
+            select(Session).where(
+                Session.board_id == board.id,
+                Session.status == SessionStatus.ACTIVE.value
+            )
+        )
+        active_session = result.scalar_one_or_none()
+
+        if not active_session:
+            logger.info(f"[ACTION-POLL] No active session on board {board.board_id} — stop_session is a no-op")
+            return True, f"No active session on board {board.board_id}"
+
+        # End the session
+        active_session.status = SessionStatus.FINISHED.value
+        active_session.ended_at = _utcnow()
+        active_session.ended_reason = "remote_stop_session"
+
+        # Board goes back to unlocked (NOT locked — that's what lock_board is for)
+        board.status = BoardStatus.UNLOCKED.value
+        await db.commit()
+
+        # Notify via WebSocket
+        try:
+            try:
+                from backend.services.ws_manager import board_ws
+            except ImportError:
+                from services.ws_manager import board_ws
+            await board_ws.broadcast({"type": "board_update", "board_id": board.board_id, "status": board.status})
+        except Exception:
+            pass
+
+        # Stop Autodarts observer for the session
+        try:
+            try:
+                from backend.routers.boards import observer_manager, stop_observer_for_board
+            except ImportError:
+                from routers.boards import observer_manager, stop_observer_for_board
+            import asyncio
+            observer_manager.set_desired_state(board.board_id, "stopped")
+            asyncio.create_task(stop_observer_for_board(board.board_id, reason="remote_stop_session"))
+        except Exception:
+            pass
+
+        logger.info(f"[ACTION-POLL] stop_session DONE for board {board.board_id} (board stays unlocked)")
+        return True, f"Session stopped on board {board.board_id} (board remains unlocked)"
 
     # ── Ack with Retry ──
 

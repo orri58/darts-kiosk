@@ -648,6 +648,111 @@ class TestActionPollerImport:
             pass  # Expected — confirms the bug was real
 
 
+# ═══════════════════════════════════════
+# BLOCK 10: v3.15.3 System Stability Tests
+# ═══════════════════════════════════════
+
+class TestLicenseNoAutoRecover:
+    """v3.15.3: Verify that handle_central_reactivation does NOT flip suspended→active."""
+
+    def test_reactivation_does_not_change_cache(self):
+        """After central rejection, reactivation handler must NOT set cache to active."""
+        import sys, asyncio, pathlib
+        sys.path.insert(0, '/app')
+        from backend.services.license_service import license_service, _CACHE_FILE
+        from backend.services.central_rejection_handler import handle_central_reactivation
+
+        # Save suspended state to cache
+        license_service.save_to_cache({
+            "status": "suspended", "source": "central_rejection",
+            "checked_at": "2026-01-01T00:00:00",
+        })
+        # Simulate what config_sync does on 200
+        asyncio.get_event_loop().run_until_complete(handle_central_reactivation("test"))
+        cached = license_service.load_from_cache()
+        assert cached.get("status") == "suspended", (
+            f"Cache was changed to '{cached.get('status')}' — auto-recover is STILL active!"
+        )
+        # Cleanup
+        if _CACHE_FILE.exists():
+            _CACHE_FILE.unlink()
+
+
+class TestActionHandlerSeparation:
+    """v3.15.3: Verify 4 distinct action handlers exist."""
+
+    def test_four_handlers_exist(self):
+        import sys
+        sys.path.insert(0, '/app')
+        from backend.services.action_poller import action_poller
+        for handler in ['_do_unlock', '_do_lock', '_do_start_session', '_do_stop_session']:
+            assert hasattr(action_poller, handler), f"Missing handler: {handler}"
+
+    def test_actions_route_correctly(self, central_client, central_auth_headers):
+        """All 4 action types must be accepted by central server."""
+        resp = central_client.get("/api/licensing/devices", headers=central_auth_headers)
+        devices = resp.json()
+        if not devices:
+            pytest.skip("No devices")
+        did = devices[0]["id"]
+        for action in ["unlock_board", "lock_board", "start_session", "stop_session"]:
+            r = central_client.post(
+                f"/api/remote-actions/{did}",
+                headers={**central_auth_headers, "Content-Type": "application/json"},
+                json={"action_type": action, "params": {"board_id": "BOARD-1"}},
+            )
+            assert r.status_code in (200, 201), f"{action} rejected: {r.status_code}"
+
+
+class TestWebSocketConfig:
+    """v3.15.3: Verify WS reconnect backoff is stable."""
+
+    def test_backoff_values(self):
+        import sys
+        sys.path.insert(0, '/app')
+        from backend.services.ws_push_client import _MIN_BACKOFF, _MAX_BACKOFF, _STABLE_AFTER
+        assert _MIN_BACKOFF >= 10, f"MIN_BACKOFF too low: {_MIN_BACKOFF}"
+        assert _MAX_BACKOFF >= 60, f"MAX_BACKOFF too low: {_MAX_BACKOFF}"
+        assert _STABLE_AFTER >= 3, f"STABLE_AFTER too low: {_STABLE_AFTER}"
+
+
+class TestConfigSyncLogs:
+    """v3.15.3: Verify explicit CONFIG log strings exist."""
+
+    def test_log_strings_in_code(self):
+        import pathlib
+        sync_code = pathlib.Path("/app/backend/services/config_sync_client.py").read_text()
+        assert "CONFIG RECEIVED" in sync_code
+        assert "CONFIG APPLIED" in sync_code
+        assert "CONFIG SKIPPED" in sync_code
+
+        apply_code = pathlib.Path("/app/backend/services/config_apply.py").read_text()
+        assert "CONFIG APPLIED" in apply_code
+        assert "CONFIG SKIPPED" in apply_code
+
+
+class TestAutodartsLogs:
+    """v3.15.3: Verify AUTODARTS STARTED/FAILED log strings exist."""
+
+    def test_log_strings_in_code(self):
+        import pathlib
+        kiosk_code = pathlib.Path("/app/backend/routers/kiosk.py").read_text()
+        assert "AUTODARTS STARTED" in kiosk_code
+        assert "AUTODARTS FAILED" in kiosk_code
+
+
+class TestRevenueNullSafe:
+    """v3.15.3: Revenue endpoint handles None price_total."""
+
+    def test_revenue_endpoint(self, local_client, local_auth_headers):
+        resp = local_client.get("/api/revenue/summary?days=30", headers=local_auth_headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "total_revenue" in data
+        assert isinstance(data["total_revenue"], (int, float))
+
+
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

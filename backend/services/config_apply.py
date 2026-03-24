@@ -254,7 +254,8 @@ async def apply_config(config: dict) -> dict:
 # ── Callback ──
 
 async def on_config_synced(config: dict):
-    """Callback invoked by config_sync_client after each successful sync with changes."""
+    """Callback invoked by config_sync_client after each successful sync with changes.
+    v3.15.3: Explicit CONFIG APPLIED / CONFIG SKIPPED logging."""
     global _config_applied_version, _last_applied_central_version
     changes = await apply_config(config)
     # Track the central version that was applied
@@ -266,7 +267,7 @@ async def on_config_synced(config: dict):
     if changes:
         _config_applied_version += 1
         _save_version()
-        logger.info(f"[CONFIG-APPLY] Version bumped to {_config_applied_version} (central_v={_last_applied_central_version}, changed: {list(changes.keys())})")
+        logger.info(f"[CONFIG-APPLY] CONFIG APPLIED: version={_config_applied_version}, central_v={_last_applied_central_version}, changed={list(changes.keys())}")
     else:
-        # Even if no changes, track that we processed this central version
         _save_version()
+        logger.info(f"[CONFIG-APPLY] CONFIG SKIPPED: no DB changes needed (central_v={_last_applied_central_version})")

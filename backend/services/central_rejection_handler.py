@@ -74,38 +74,36 @@ async def handle_central_rejection(source: str, status_code: int, detail: str = 
 
 async def handle_central_reactivation(source: str):
     """
-    Called when a sync service receives a successful response (200)
-    after previously being in a rejected/suspended state.
-    Only clears 'suspended' status if the cache was set by central_rejection.
+    v3.15.3: REMOVED auto-reactivation.
+    
+    Central server status is AUTHORITATIVE. Only the central server
+    can change a device from suspended → active. No local flow
+    may override a suspended/blocked state.
+    
+    This function now ONLY logs that the central server accepted
+    the device again. The actual status change happens via the
+    next license check that the central server returns.
     """
     try:
         from backend.services.license_service import license_service
 
         cached = license_service.load_from_cache()
         if cached and cached.get("source") == "central_rejection":
-            # Central is accepting us again — trigger a fresh license check
+            # Central is accepting us again — but DO NOT change cache.
+            # Let the next license check (with real status from central) update it.
             logger.info(
                 f"[CENTRAL-REJECTION] Central accepting device again (source={source}). "
-                f"Clearing suspended state, will be refreshed by next license check."
+                f"Cache remains suspended — waiting for authoritative license check."
             )
-            # Set to active temporarily — the cyclic license checker will
-            # verify and set the proper status on its next run
-            reactivated = {
-                "status": "active",
-                "source": "central_reactivation",
-                "checked_at": _utcnow().isoformat(),
-                "registration_status": "registered",
-            }
-            for key in ("customer_name", "license_id", "plan_type"):
-                if cached.get(key):
-                    reactivated[key] = cached[key]
-            license_service.save_to_cache(reactivated)
-
-            from backend.services.device_log_buffer import device_logs
-            device_logs.info(
-                "central_rejection",
-                "device_reactivated",
-                f"Device reactivated by central server ({source})",
-            )
+            # Log for observability, but do NOT write to cache
+            try:
+                from backend.services.device_log_buffer import device_logs
+                device_logs.info(
+                    "central_rejection",
+                    "central_accepting_again",
+                    f"Central accepted ({source}), cache still suspended pending license check",
+                )
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"[CENTRAL-REJECTION] Reactivation handler error: {e}")

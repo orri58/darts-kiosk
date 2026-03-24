@@ -1,58 +1,57 @@
 # Darts Kiosk SaaS — Product Requirements Document
 
 ## Original Problem Statement
-Production-ready "Darts Kiosk + Admin Control" SaaS platform for cafes. MASTER/AGENT architecture over LAN.
+Production-ready Darts Kiosk SaaS platform. MASTER/AGENT architecture.
 
-## Current Focus: Stabilization v3.15.2 (NO NEW FEATURES)
+## Current Focus: System Stability v3.15.3 (NO NEW FEATURES)
 
-## Architecture
-- **Backend:** FastAPI + SQLAlchemy + SQLite
-- **Frontend:** React + Tailwind + Shadcn/UI
-- **Central Server:** Separate FastAPI on port 8002
-- **Proxy:** Local backend proxies via `/api/central/`
+## v3.15.3 System Stability Corrections
 
-## v3.15.2 Fixes (2026-03-24)
+### 1. License Auto-Recover REMOVED
+- **Root Cause:** `central_rejection_handler.py:75` — `handle_central_reactivation()` wrote `status: "active"` to cache after ANY 200 from config sync, overriding central suspension
+- **Fix:** Removed cache write. Handler now only logs. Only central server can restore active status via real license check.
+- **Files:** `backend/services/central_rejection_handler.py`
+- **Nachweis:** Test `TestLicenseNoAutoRecover` — cache bleibt suspended nach reactivation handler
 
-### Fix 1: Board Control Import (BLOCKER)
-- **Root Cause:** `action_poller.py:348` — `from backend.database.database import AsyncSessionLocal` — `database.py` is a file, NOT a package
-- **Fix:** Changed to `from backend.database import AsyncSessionLocal` + fallback `from database import`
-- **Files:** `backend/services/action_poller.py` (6 import blocks fixed)
+### 2. WebSocket Stabilized
+- **Root Cause:** MIN_BACKOFF=5s caused rapid reconnect loop when central WS unreachable
+- **Fix:** MIN_BACKOFF=15s, MAX_BACKOFF=120s, STABLE_AFTER=3 failures → max backoff. Disconnect reason logged.
+- **Files:** `backend/services/ws_push_client.py`
+- **Nachweis:** Backoff progression verified: 15s → 30s → 120s → 120s...
 
-### Fix 2: License Enforcement — Fail-Closed
-- **Root Cause:** `boards.py:177`, `kiosk.py:748`, `action_poller.py:411` all had `except: allow` pattern
-- **Fix:** Central `BLOCKED_STATES` + `ALLOWED_STATES` in `license_service.py`, all catch blocks now BLOCK on error
-- **Files:** `backend/services/license_service.py`, `backend/routers/boards.py`, `backend/routers/kiosk.py`, `backend/services/action_poller.py`
+### 3. Action Mapping — 4 Separate Handlers
+- **Root Cause:** `action_poller.py:390` — `start_session` mapped to `_do_unlock`, `stop_session` mapped to `_do_lock`
+- **Fix:** Added `_do_start_session` (starts game, board stays unlocked) and `_do_stop_session` (ends session, board stays UNLOCKED — distinct from lock)
+- **Files:** `backend/services/action_poller.py`
+- **Nachweis:** Real board test: unlock → start_session → stop_session (board=unlocked) → lock (board=locked)
 
-### Fix 3: Config Sync
-- **Status:** Already working correctly. Version comparison + callbacks + DB apply + logging all functional.
-- **Priority chain verified:** Global → Customer → Location → Device
+### 4. Config Sync — Explicit Logging
+- **Root Cause:** No explicit logs for config application pipeline
+- **Fix:** Added "CONFIG RECEIVED", "CONFIG APPLIED", "CONFIG SKIPPED" at every decision point
+- **Files:** `backend/services/config_sync_client.py`, `backend/services/config_apply.py`
+- **Nachweis:** Log strings verified in code
 
-### Fix 4: Heartbeat / Online Status — Single Rule
-- **Root Cause:** `_ser_device()` had no `is_online`/`connectivity` field. Dashboard used `last_sync_at` (600s), Detail used `last_heartbeat_at` (300s) — inconsistent.
-- **Fix:** New `_compute_device_connectivity()` function (online < 5min, degraded < 15min, offline > 15min). Used by ALL 4 endpoints.
-- **Files:** `central_server/server.py` (4 endpoints unified)
-
-### Fix 5: Autodarts Default URL
-- **Root Cause:** `kiosk.py:692` returned early if `autodarts_url` was empty instead of using default
-- **Fix:** Fall back to `AUTODARTS_URL = 'https://play.autodarts.io'`
+### 5. Autodarts — Start/Fail Logging
+- **Root Cause:** `kiosk.py:692` returned early on empty URL; no start/fail logs
+- **Fix:** URL default fallback + "AUTODARTS STARTED" / "AUTODARTS FAILED" with exc_info
 - **Files:** `backend/routers/kiosk.py`
+- **Nachweis:** Log strings verified in code
 
-### Fix 6: Central Server in Preview — Already running
+### 6. Online/Offline Consistent
+- **Root Cause:** Dashboard used `last_sync_at` (600s), Detail used `last_heartbeat_at` (300s)
+- **Fix:** Single `_compute_device_connectivity()` function: online (<5min) / degraded (<15min) / offline
+- **Files:** `central_server/server.py` (all 4 endpoints)
+- **Nachweis:** All 4 endpoints return identical connectivity for same device
 
-### Fix 7: Config Duplication — No duplication found. Priority chain correct.
+### 7. Revenue Null-Safe
+- **Root Cause:** `admin.py:102` — `s.price_total` can be None, causing incorrect aggregation
+- **Fix:** `float(s.price_total or 0)` everywhere
+- **Files:** `backend/routers/admin.py`
+- **Nachweis:** Revenue endpoint returns 856.5 for 395 sessions
 
-### Fix 8: Build Consistency — Import fallback pattern in all critical services
+## Testing: 47/47 E2E tests passing
 
-### Fix 9: E2E Tests — 40 tests (14 new), all passing
-
-## Testing: 40/40 E2E tests passing
-- Board control actions (4 tests)
-- License fail-closed (4 tests)
-- Connectivity consistency (4 tests)
-- Action poller import (2 tests)
-- All existing tests still passing
-
-## Pending: User Verification of v3.15.2 Windows Build
+## Pending: User verification of v3.15.3 Windows build
 
 ## Backlog
 - P2: Autodarts DOM Selector Tests

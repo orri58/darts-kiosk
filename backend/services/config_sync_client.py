@@ -165,7 +165,7 @@ class ConfigSyncClient:
                 resp.raise_for_status()
                 data = resp.json()
 
-            # v3.13.0: Central accepted us — clear any suspended state
+            # v3.15.3: Central accepted us — log only, NO auto-reactivation
             try:
                 from backend.services.central_rejection_handler import handle_central_reactivation
                 await handle_central_reactivation("config_sync")
@@ -174,6 +174,8 @@ class ConfigSyncClient:
 
             new_config = data.get("config", {})
             new_version = data.get("version", 0)
+
+            logger.info(f"[CONFIG-SYNC] CONFIG RECEIVED: version={new_version}, keys={list(new_config.keys())[:10]}")
 
             changed = new_version != self._config_version or new_config != self._current_config
             self._current_config = new_config
@@ -185,11 +187,11 @@ class ConfigSyncClient:
 
             if changed:
                 layers = data.get("layers_applied", [])
-                logger.info(f"[CONFIG-SYNC] Config updated to v{new_version}, layers={layers}")
-                device_logs.info("config_sync", "config_updated", f"Config v{new_version} applied", {"layers": layers, "version": new_version})
+                logger.info(f"[CONFIG-SYNC] CONFIG APPLIED: v{new_version}, layers={layers}")
+                device_logs.info("config_sync", "config_applied", f"Config v{new_version} applied", {"layers": layers, "version": new_version})
                 await self._run_callbacks(new_config)
             else:
-                logger.debug(f"[CONFIG-SYNC] No changes (v{new_version})")
+                logger.info(f"[CONFIG-SYNC] CONFIG SKIPPED: no changes (v{new_version})")
 
             return changed
 

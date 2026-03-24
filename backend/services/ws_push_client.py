@@ -19,9 +19,10 @@ from typing import Optional
 
 logger = logging.getLogger("ws_push_client")
 
-_MIN_BACKOFF = 5
-_MAX_BACKOFF = 60
-_PING_INTERVAL = 45  # send ping every 45s to keep connection alive
+_MIN_BACKOFF = 15      # v3.15.3: Was 5s, now 15s to prevent thrashing
+_MAX_BACKOFF = 120     # v3.15.3: Was 60s, now 120s
+_PING_INTERVAL = 45    # send ping every 45s to keep connection alive
+_STABLE_AFTER = 3      # After N consecutive failures, use max backoff
 
 
 def _utcnow():
@@ -112,23 +113,42 @@ class WSPushClient:
     # ── Connection Loop ──
 
     async def _connect_loop(self):
-        """Main reconnect loop with exponential backoff."""
+        """Main reconnect loop with exponential backoff.
+        v3.15.3: Higher backoff, disconnect reason logging, stable-after threshold."""
         while self._running:
             try:
                 await self._connect_and_listen()
+                # Clean disconnect (server closed connection gracefully)
+                disconnect_reason = "server_closed"
+            except asyncio.CancelledError:
+                disconnect_reason = "cancelled"
+                break
+            except ConnectionRefusedError as e:
+                disconnect_reason = f"connection_refused: {e}"
+                self._last_error = disconnect_reason
+            except OSError as e:
+                disconnect_reason = f"network_error: {e}"
+                self._last_error = disconnect_reason
             except Exception as e:
-                self._last_error = str(e)
-                logger.debug(f"[WS-PUSH] Connection error: {e}")
+                disconnect_reason = f"{type(e).__name__}: {e}"
+                self._last_error = disconnect_reason
 
             self._connected = False
             self._disconnected_at = _utcnow()
+            logger.warning(f"[WS-PUSH] Disconnected: {disconnect_reason}")
 
             if not self._running:
                 break
 
             self._consecutive_failures += 1
-            backoff = min(_MIN_BACKOFF * (2 ** min(self._consecutive_failures - 1, 4)), _MAX_BACKOFF)
-            logger.info(f"[WS-PUSH] Reconnecting in {backoff}s (attempt #{self._consecutive_failures})")
+
+            # v3.15.3: After _STABLE_AFTER failures, jump to max backoff
+            if self._consecutive_failures >= _STABLE_AFTER:
+                backoff = _MAX_BACKOFF
+            else:
+                backoff = min(_MIN_BACKOFF * (2 ** (self._consecutive_failures - 1)), _MAX_BACKOFF)
+
+            logger.info(f"[WS-PUSH] Reconnecting in {backoff}s (failures={self._consecutive_failures})")
             await asyncio.sleep(backoff)
 
     async def _connect_and_listen(self):
