@@ -218,6 +218,19 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"[MIGRATE] observability columns: {e}")
 
+    # v3.15.0: Add params column to remote_actions
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(_text("SELECT params FROM remote_actions LIMIT 1"))
+    except Exception:
+        async with AsyncSessionLocal() as db:
+            try:
+                await db.execute(_text("ALTER TABLE remote_actions ADD COLUMN params TEXT"))
+                await db.commit()
+                logger.info("[MIGRATE] Added params column to remote_actions")
+            except Exception as e:
+                logger.warning(f"[MIGRATE] remote_actions.params: {e}")
+
     # v3.9.4: Create config_history table
     async with AsyncSessionLocal() as db:
         try:
@@ -272,16 +285,32 @@ def _ser_location(loc):
     }
 
 def _ser_device(d):
-    ws_info = device_ws_hub.device_ws_status(d.id)
+    """Serialize device — v3.15.1: defensiv gegen fehlende Felder/Attribute."""
+    ws_info = {}
+    try:
+        ws_info = device_ws_hub.device_ws_status(d.id)
+    except Exception:
+        pass
+
+    def _safe_dt(val):
+        if val is None: return None
+        if hasattr(val, 'isoformat'): return val.isoformat()
+        return str(val)
+
     return {
-        "id": d.id, "location_id": d.location_id, "install_id": d.install_id,
-        "api_key": d.api_key, "device_name": d.device_name, "status": d.status,
-        "binding_status": d.binding_status, "license_id": d.license_id,
-        "last_sync_at": d.last_sync_at.isoformat() if d.last_sync_at else None,
-        "last_heartbeat_at": d.last_heartbeat_at.isoformat() if d.last_heartbeat_at else None,
-        "reported_version": d.reported_version,
-        "sync_count": d.sync_count,
-        "created_at": d.created_at.isoformat() if d.created_at else None,
+        "id": d.id,
+        "location_id": getattr(d, 'location_id', None),
+        "install_id": getattr(d, 'install_id', None),
+        "api_key": d.api_key,
+        "device_name": getattr(d, 'device_name', None),
+        "status": getattr(d, 'status', 'unknown'),
+        "binding_status": getattr(d, 'binding_status', 'unknown'),
+        "license_id": getattr(d, 'license_id', None),
+        "last_sync_at": _safe_dt(getattr(d, 'last_sync_at', None)),
+        "last_heartbeat_at": _safe_dt(getattr(d, 'last_heartbeat_at', None)),
+        "reported_version": getattr(d, 'reported_version', None),
+        "sync_count": getattr(d, 'sync_count', 0) or 0,
+        "created_at": _safe_dt(getattr(d, 'created_at', None)),
         "ws_connected": ws_info.get("ws_connected", False),
     }
 
@@ -851,8 +880,37 @@ async def list_devices(location_id: str = None, customer_id: str = None, user: A
             stmt = select(CentralDevice).join(CentralLocation, CentralDevice.location_id == CentralLocation.id)
             stmt = apply_customer_scope(stmt, user, CentralLocation.customer_id)
     stmt = stmt.order_by(CentralDevice.created_at.desc())
-    result = await db.execute(stmt)
-    return [_ser_device(d) for d in result.scalars().all()]
+    # v3.15.1: Defensive — handle corrupt rows that crash ORM deserialization
+    # SQLAlchemy async buffers ALL rows during execute(), so the ValueError from
+    # corrupt datetime columns happens HERE, not during .scalars().all().
+    devices = []
+    try:
+        result = await db.execute(stmt)
+        all_devs = result.scalars().all()
+        for d in all_devs:
+            try:
+                devices.append(_ser_device(d))
+            except Exception as e:
+                logger.warning(f"[DEVICES-LIST] Serialization failed for device: {e}")
+                devices.append({"id": str(getattr(d, 'id', '?')), "device_name": str(getattr(d, 'device_name', 'Fehler')), "status": "error", "_error": str(e)})
+    except Exception as e:
+        # ORM deserialization failed (e.g. corrupt datetime in execute()) — raw SQL fallback
+        logger.warning(f"[DEVICES-LIST] ORM execute failed: {type(e).__name__}: {e} — raw SQL fallback")
+        from sqlalchemy import text as _t
+        raw_rows = (await db.execute(_t("SELECT id, location_id, install_id, api_key, device_name, status, binding_status, license_id, reported_version, sync_count FROM devices"))).mappings().all()
+        devices = []
+        for r in raw_rows:
+            devices.append({
+                "id": r["id"], "location_id": r.get("location_id"),
+                "install_id": r.get("install_id"), "api_key": r.get("api_key"),
+                "device_name": r.get("device_name"), "status": r.get("status", "unknown"),
+                "binding_status": r.get("binding_status", "unknown"),
+                "license_id": r.get("license_id"), "reported_version": r.get("reported_version"),
+                "sync_count": r.get("sync_count", 0) or 0,
+                "last_sync_at": None, "last_heartbeat_at": None,
+                "created_at": None, "ws_connected": False,
+            })
+    return devices
 
 
 @app.post("/api/licensing/devices")
@@ -2644,8 +2702,12 @@ def _ser_action(a):
         "acked_at": a.acked_at.isoformat() if a.acked_at else None,
         "result_message": a.result_message,
     }
-    if a.params:
-        d["params"] = a.params
+    # v3.15.1: Defensive — params column may not exist in old DBs
+    try:
+        if getattr(a, 'params', None):
+            d["params"] = a.params
+    except Exception:
+        pass
     return d
 
 
@@ -2857,97 +2919,218 @@ async def get_device_detail(
     db: AsyncSession = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
 ):
-    """Get enriched device detail: status, version, last activity, recent events, daily stats."""
+    """
+    Get enriched device detail.
+    v3.15.1: Hardened — every section wrapped defensively.
+    MUST NOT return 500 for incomplete/legacy/null data.
+    """
     require_min_role(user, "staff")
 
-    dev = await db.get(CentralDevice, device_id)
+    # ── Load device (defensive: handle corrupt datetime values in DB) ──
+    # SQLAlchemy's DateTime processor will raise ValueError if a datetime column
+    # contains an invalid string (e.g. 'not-a-date'). This crashes db.get() BEFORE
+    # we can even access the object. Fallback to raw SQL in that case.
+    dev = None
+    raw_fallback = False
+    try:
+        dev = await db.get(CentralDevice, device_id)
+    except (ValueError, TypeError) as e:
+        logger.warning(f"[DEVICE-DETAIL] ORM load failed for {device_id}: {e} — falling back to raw SQL")
+        raw_fallback = True
+    except Exception as e:
+        logger.error(f"[DEVICE-DETAIL] Unexpected ORM load error for {device_id}: {e}")
+        raw_fallback = True
+
+    if raw_fallback:
+        from sqlalchemy import text as _t
+        row = (await db.execute(_t("SELECT * FROM devices WHERE id = :did"), {"did": device_id})).mappings().first()
+        if not row:
+            raise HTTPException(404, "Device not found")
+        dev_raw = dict(row)
+        loc = None
+        cust = None
+        try:
+            loc_id = dev_raw.get("location_id")
+            if loc_id:
+                loc = await db.get(CentralLocation, loc_id)
+                if loc and not can_access_customer(user, loc.customer_id):
+                    raise HTTPException(403, "No access to this device")
+                if loc and loc.customer_id:
+                    cust = await db.get(CentralCustomer, loc.customer_id)
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+
+        def _safe_raw_dt(val):
+            if val is None: return None
+            if hasattr(val, 'isoformat'): return val.isoformat()
+            try:
+                from datetime import datetime as _dt
+                return _dt.fromisoformat(str(val).replace("Z", "+00:00")).isoformat()
+            except Exception:
+                return None
+
+        return {
+            "id": dev_raw.get("id"), "device_name": dev_raw.get("device_name"),
+            "hardware_id": dev_raw.get("hardware_id"),
+            "status": dev_raw.get("status", "unknown"),
+            "license_id": dev_raw.get("license_id"),
+            "binding_status": dev_raw.get("binding_status", "unknown"),
+            "is_online": False, "last_heartbeat_at": _safe_raw_dt(dev_raw.get("last_heartbeat_at")),
+            "reported_version": dev_raw.get("reported_version"),
+            "last_error": dev_raw.get("last_error"),
+            "last_activity_at": _safe_raw_dt(dev_raw.get("last_activity_at")),
+            "location": {"id": loc.id, "name": loc.name} if loc else None,
+            "customer": {"id": cust.id, "name": cust.name} if cust else None,
+            "health_snapshot": None, "device_logs": [], "recent_events": [],
+            "daily_stats": [], "recent_actions": [],
+            "_data_warning": "Teilweise Daten — einige Felder konnten nicht geladen werden",
+        }
+
     if not dev:
         raise HTTPException(404, "Device not found")
 
-    # Check access
-    if dev.location_id:
-        loc = await db.get(CentralLocation, dev.location_id)
-        if loc and not can_access_customer(user, loc.customer_id):
-            raise HTTPException(403, "No access to this device")
-    else:
-        loc = None
-
-    # Location + customer names
+    # ── Access check (defensive: location_id could be null in legacy data) ──
+    loc = None
     cust = None
-    if loc and loc.customer_id:
-        cust = await db.get(CentralCustomer, loc.customer_id)
+    try:
+        if dev.location_id:
+            loc = await db.get(CentralLocation, dev.location_id)
+            if loc and not can_access_customer(user, loc.customer_id):
+                raise HTTPException(403, "No access to this device")
+            if loc and loc.customer_id:
+                cust = await db.get(CentralCustomer, loc.customer_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"[DEVICE-DETAIL] Access/location check failed for {device_id}: {e}")
 
-    # Online status (handle naive datetimes from SQLite)
+    # ── Online status (defensive: handle string/None/naive datetime) ──
     is_online = False
-    if dev.last_heartbeat_at:
+    try:
         hb = dev.last_heartbeat_at
-        now = _utcnow()
-        # Make both aware or both naive for comparison
-        if hb.tzinfo is None:
-            from datetime import timezone as _tz
-            hb = hb.replace(tzinfo=_tz.utc)
-        diff = (now - hb).total_seconds()
-        is_online = diff < 300  # 5min threshold
+        if hb:
+            if isinstance(hb, str):
+                from datetime import datetime as _dt
+                try:
+                    hb = _dt.fromisoformat(hb.replace("Z", "+00:00"))
+                except Exception:
+                    hb = None
+            if hb:
+                from datetime import timezone as _tz
+                now = _utcnow()
+                if hasattr(hb, 'tzinfo') and hb.tzinfo is None:
+                    hb = hb.replace(tzinfo=_tz.utc)
+                diff = (now - hb).total_seconds()
+                is_online = diff < 300
+    except Exception as e:
+        logger.warning(f"[DEVICE-DETAIL] Online status calc failed for {device_id}: {e}")
 
-    # Last 10 telemetry events
-    events_q = await db.execute(
-        select(TelemetryEvent)
-        .where(TelemetryEvent.device_id == device_id)
-        .order_by(TelemetryEvent.timestamp.desc())
-        .limit(10)
-    )
-    recent_events = [
-        {"event_type": e.event_type, "timestamp": e.timestamp.isoformat() if e.timestamp else None,
-         "data": e.data}
-        for e in events_q.scalars().all()
-    ]
+    # ── Recent telemetry events (defensive) ──
+    recent_events = []
+    try:
+        events_q = await db.execute(
+            select(TelemetryEvent)
+            .where(TelemetryEvent.device_id == device_id)
+            .order_by(TelemetryEvent.timestamp.desc())
+            .limit(10)
+        )
+        for e in events_q.scalars().all():
+            ts = None
+            try:
+                ts = e.timestamp.isoformat() if hasattr(e.timestamp, 'isoformat') else str(e.timestamp) if e.timestamp else None
+            except Exception:
+                ts = str(e.timestamp) if e.timestamp else None
+            recent_events.append({
+                "event_type": e.event_type,
+                "timestamp": ts,
+                "data": e.data if isinstance(e.data, (dict, list, type(None))) else str(e.data),
+            })
+    except Exception as e:
+        logger.warning(f"[DEVICE-DETAIL] Events query failed for {device_id}: {e}")
 
-    # Last 7 days of daily stats
-    stats_q = await db.execute(
-        select(DeviceDailyStats)
-        .where(DeviceDailyStats.device_id == device_id)
-        .order_by(DeviceDailyStats.date.desc())
-        .limit(7)
-    )
-    daily_stats = [
-        {"date": s.date, "revenue_cents": s.revenue_cents, "sessions": s.sessions,
-         "games": s.games, "credits_added": s.credits_added, "errors": s.errors}
-        for s in stats_q.scalars().all()
-    ]
+    # ── Daily stats (defensive) ──
+    daily_stats = []
+    try:
+        stats_q = await db.execute(
+            select(DeviceDailyStats)
+            .where(DeviceDailyStats.device_id == device_id)
+            .order_by(DeviceDailyStats.date.desc())
+            .limit(7)
+        )
+        for s in stats_q.scalars().all():
+            daily_stats.append({
+                "date": str(s.date) if s.date else None,
+                "revenue_cents": s.revenue_cents or 0,
+                "sessions": s.sessions or 0,
+                "games": s.games or 0,
+                "credits_added": s.credits_added or 0,
+                "errors": s.errors or 0,
+            })
+    except Exception as e:
+        logger.warning(f"[DEVICE-DETAIL] Stats query failed for {device_id}: {e}")
 
-    # Pending remote actions
-    actions_q = await db.execute(
-        select(RemoteAction)
-        .where(RemoteAction.device_id == device_id)
-        .order_by(RemoteAction.issued_at.desc())
-        .limit(10)
-    )
-    recent_actions = [_ser_action(a) for a in actions_q.scalars().all()]
+    # ── Recent remote actions (defensive: params column may not exist) ──
+    recent_actions = []
+    try:
+        actions_q = await db.execute(
+            select(RemoteAction)
+            .where(RemoteAction.device_id == device_id)
+            .order_by(RemoteAction.issued_at.desc())
+            .limit(10)
+        )
+        for a in actions_q.scalars().all():
+            try:
+                recent_actions.append(_ser_action(a))
+            except Exception as ae:
+                logger.warning(f"[DEVICE-DETAIL] Action serialization failed: {ae}")
+                recent_actions.append({
+                    "id": str(getattr(a, 'id', '?')),
+                    "action_type": str(getattr(a, 'action_type', '?')),
+                    "status": str(getattr(a, 'status', '?')),
+                    "issued_by": str(getattr(a, 'issued_by', '?')),
+                    "issued_at": None, "acked_at": None, "result_message": None,
+                })
+    except Exception as e:
+        logger.warning(f"[DEVICE-DETAIL] Actions query failed for {device_id}: {e}")
 
-    # Parse stored health snapshot + logs
+    # ── Health snapshot + logs (already defensive) ──
     health_snapshot = None
     stored_logs = []
-    if dev.health_snapshot:
-        try:
+    try:
+        if dev.health_snapshot:
             import json as _json
             health_snapshot = _json.loads(dev.health_snapshot)
-        except Exception:
-            pass
-    if dev.device_logs:
-        try:
+    except Exception:
+        pass
+    try:
+        if dev.device_logs:
             import json as _json
             stored_logs = _json.loads(dev.device_logs)
-        except Exception:
-            pass
+    except Exception:
+        pass
+
+    # ── Safe datetime serialization helper ──
+    def _safe_dt(val):
+        if val is None:
+            return None
+        if hasattr(val, 'isoformat'):
+            return val.isoformat()
+        return str(val)
 
     return {
-        "id": dev.id, "device_name": dev.device_name, "hardware_id": getattr(dev, 'hardware_id', None),
-        "status": dev.status, "license_id": dev.license_id, "binding_status": dev.binding_status,
+        "id": dev.id,
+        "device_name": dev.device_name,
+        "hardware_id": getattr(dev, 'hardware_id', None),
+        "status": dev.status,
+        "license_id": dev.license_id,
+        "binding_status": getattr(dev, 'binding_status', None),
         "is_online": is_online,
-        "last_heartbeat_at": dev.last_heartbeat_at.isoformat() if dev.last_heartbeat_at else None,
+        "last_heartbeat_at": _safe_dt(dev.last_heartbeat_at),
         "reported_version": dev.reported_version,
         "last_error": dev.last_error,
-        "last_activity_at": dev.last_activity_at.isoformat() if dev.last_activity_at else None,
+        "last_activity_at": _safe_dt(dev.last_activity_at),
         "location": {"id": loc.id, "name": loc.name} if loc else None,
         "customer": {"id": cust.id, "name": cust.name} if cust else None,
         "health_snapshot": health_snapshot,

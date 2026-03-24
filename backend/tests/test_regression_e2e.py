@@ -348,6 +348,80 @@ class TestCentralServer:
             )
 
 
+    def test_central_device_detail_with_corrupt_data(self, central_client, central_auth_headers):
+        """Device with corrupt datetime must NOT return 500 — raw SQL fallback."""
+        import sqlite3, uuid
+        db_path = "/app/central_server/data/central_licenses.sqlite"
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+
+        # Get a valid location_id
+        c.execute("SELECT id FROM locations LIMIT 1")
+        loc_row = c.fetchone()
+        if not loc_row:
+            conn.close()
+            pytest.skip("No locations in central DB")
+        loc_id = loc_row[0]
+
+        # Insert device with corrupt datetime
+        test_id = str(uuid.uuid4())
+        c.execute("""INSERT INTO devices (id, location_id, device_name, api_key, status, binding_status,
+                    last_heartbeat_at, reported_version, health_snapshot, device_logs)
+                    VALUES (?, ?, 'TEST-Corrupt-DateTime', 'regtest-key', 'active', 'unknown',
+                    'INVALID-NOT-A-DATE', '1.0.0', 'NOT-JSON', '{broken-json')""",
+                  (test_id, loc_id))
+        conn.commit()
+        conn.close()
+
+        try:
+            # Test device LIST — must not 500
+            list_resp = central_client.get("/api/licensing/devices", headers=central_auth_headers)
+            assert list_resp.status_code == 200, f"Device list 500 with corrupt data: {list_resp.text[:200]}"
+            devices = list_resp.json()
+            found = any(d.get("id") == test_id for d in devices)
+            assert found, f"Corrupt device {test_id} not in list"
+
+            # Test device DETAIL — must not 500
+            detail_resp = central_client.get(f"/api/telemetry/device/{test_id}", headers=central_auth_headers)
+            assert detail_resp.status_code == 200, (
+                f"Device detail 500 with corrupt data: {detail_resp.status_code} {detail_resp.text[:300]}"
+            )
+            detail = detail_resp.json()
+            assert detail.get("device_name") == "TEST-Corrupt-DateTime"
+            # Health snapshot should be None (corrupt JSON handled gracefully)
+            assert detail.get("health_snapshot") is None
+
+        finally:
+            # Cleanup
+            conn = sqlite3.connect(db_path)
+            conn.execute("DELETE FROM devices WHERE id = ?", (test_id,))
+            conn.commit()
+            conn.close()
+
+    def test_central_device_detail_minimal_data(self, central_client, central_auth_headers):
+        """Device with minimal/NULL fields must NOT return 500."""
+        import sqlite3, uuid
+        db_path = "/app/central_server/data/central_licenses.sqlite"
+        conn = sqlite3.connect(db_path)
+        c = conn.cursor()
+        c.execute("SELECT id FROM locations LIMIT 1")
+        loc_id = c.fetchone()[0]
+
+        test_id = str(uuid.uuid4())
+        c.execute("INSERT INTO devices (id, location_id, api_key) VALUES (?, ?, 'regtest-min')", (test_id, loc_id))
+        conn.commit()
+        conn.close()
+
+        try:
+            detail_resp = central_client.get(f"/api/telemetry/device/{test_id}", headers=central_auth_headers)
+            assert detail_resp.status_code == 200, f"Minimal device detail failed: {detail_resp.status_code}"
+        finally:
+            conn = sqlite3.connect(db_path)
+            conn.execute("DELETE FROM devices WHERE id = ?", (test_id,))
+            conn.commit()
+            conn.close()
+
+
 # ═══════════════════════════════════════
 # BLOCK 7: Proxy Behavior
 # ═══════════════════════════════════════
