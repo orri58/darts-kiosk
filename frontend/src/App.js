@@ -23,10 +23,17 @@ import PublicLeaderboard from "./pages/PublicLeaderboard";
 import SetupWizard from "./pages/admin/SetupWizard";
 import CreditsOverlay from "./pages/CreditsOverlay";
 
+// Portal Pages (Layer A — read-only central visibility)
+import PortalLogin from "./pages/portal/PortalLogin";
+import PortalLayout from "./pages/portal/PortalLayout";
+import PortalDashboard from "./pages/portal/PortalDashboard";
+import PortalDevices from "./pages/portal/PortalDevices";
+
 // Context
 import { AuthProvider } from "./context/AuthContext";
 import { SettingsProvider } from "./context/SettingsContext";
 import { I18nProvider } from "./context/I18nContext";
+import { CentralAuthProvider } from "./context/CentralAuthContext";
 
 function App() {
   return (
@@ -67,6 +74,13 @@ function App() {
               <Route path="reports" element={<AdminReports />} />
             </Route>
             
+            {/* Portal Routes (Layer A — read-only) */}
+            <Route path="/portal/login" element={<CentralAuthProvider><PortalLogin /></CentralAuthProvider>} />
+            <Route path="/portal" element={<CentralAuthProvider><PortalLayout /></CentralAuthProvider>}>
+              <Route index element={<PortalDashboard />} />
+              <Route path="devices" element={<PortalDevices />} />
+            </Route>
+
             {/* Default redirect */}
             <Route path="/" element={<Navigate to="/kiosk" replace />} />
             <Route path="*" element={<Navigate to="/kiosk" replace />} />

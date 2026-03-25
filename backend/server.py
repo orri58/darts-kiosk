@@ -205,11 +205,19 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Autodarts Desktop startup check failed (non-critical): {exc}")
 
+    # Layer A: Start central heartbeat (non-blocking, disabled if no CENTRAL_SERVER_URL)
+    from backend.integrations.layer_a import start_layer_a
+    await start_layer_a()
+
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
     logger.info(f"Autodarts mode: {os.environ.get('AUTODARTS_MODE', 'observer')}")
     yield
     # Shutdown: stop watchdog, close all observers
+    # Layer A: Stop heartbeat
+    from backend.integrations.layer_a import stop_layer_a
+    await stop_layer_a()
+
     await stop_watchdog()
     from backend.services.autodarts_observer import observer_manager
     await observer_manager.close_all()
@@ -255,6 +263,10 @@ api_router.include_router(discovery.router)
 api_router.include_router(matches.router)
 api_router.include_router(stats.router)
 api_router.include_router(players.router)
+
+# Layer A: Central read-only visibility proxy
+from backend.routers import central_proxy
+api_router.include_router(central_proxy.router)
 
 app.include_router(api_router)
 

@@ -1,88 +1,58 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import { createContext, useContext, useState, useCallback } from "react";
 
-const CENTRAL_API = `${process.env.REACT_APP_BACKEND_URL}/api/central`;
-const STORAGE_KEY = 'central_token';
-const SCOPE_KEY = 'central_scope';
+const API = process.env.REACT_APP_BACKEND_URL;
 
 const CentralAuthContext = createContext(null);
 
-const ROLE_LABELS = {
-  superadmin: 'Super-Administrator',
-  installer: 'Aufsteller / Installer',
-  owner: 'Geschäftsinhaber',
-  staff: 'Mitarbeiter',
-};
-
 export function CentralAuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [token, setToken] = useState(localStorage.getItem(STORAGE_KEY));
-  const [loading, setLoading] = useState(true);
-  // Scope state: { customerId, locationId, deviceId }
-  const [scope, setScope] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(SCOPE_KEY)) || {}; } catch { return {}; }
-  });
-
-  useEffect(() => {
-    if (!token) { setLoading(false); return; }
-    const verify = async () => {
-      try {
-        const res = await axios.get(`${CENTRAL_API}/auth/me`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        setUser(res.data);
-      } catch {
-        localStorage.removeItem(STORAGE_KEY);
-        setToken(null);
-        setUser(null);
-      } finally {
-        setLoading(false);
-      }
-    };
-    verify();
-  }, [token]);
+  const [token, setToken] = useState(() => localStorage.getItem("central_token"));
 
   const login = useCallback(async (username, password) => {
-    const res = await axios.post(`${CENTRAL_API}/auth/login`, { username, password });
-    const { access_token, user: u } = res.data;
-    localStorage.setItem(STORAGE_KEY, access_token);
-    setToken(access_token);
-    setUser(u);
-    return u;
+    const res = await fetch(`${API}/api/central/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || "Login fehlgeschlagen");
+    }
+    const data = await res.json();
+    setToken(data.access_token);
+    setUser(data.user);
+    localStorage.setItem("central_token", data.access_token);
+    return data;
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY);
-    localStorage.removeItem(SCOPE_KEY);
     setToken(null);
     setUser(null);
-    setScope({});
+    localStorage.removeItem("central_token");
   }, []);
 
-  const updateScope = useCallback((newScope) => {
-    setScope(newScope);
-    localStorage.setItem(SCOPE_KEY, JSON.stringify(newScope));
-  }, []);
-
-  const authHeaders = token ? { Authorization: `Bearer ${token}` } : {};
-
-  const isSuperadmin = user?.role === 'superadmin';
-  const isInstaller = user?.role === 'installer';
-  const isOwner = user?.role === 'owner';
-  const isStaff = user?.role === 'staff';
-  const canManage = isSuperadmin || isInstaller;
-  const canManageStaff = isSuperadmin || isInstaller || isOwner;
-  const roleLabel = ROLE_LABELS[user?.role] || user?.role;
+  const centralFetch = useCallback(
+    async (path, opts = {}) => {
+      const res = await fetch(`${API}/api/central/${path.replace(/^\//, "")}`, {
+        ...opts,
+        headers: {
+          ...(opts.headers || {}),
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (res.status === 401) {
+        logout();
+        throw new Error("Session abgelaufen");
+      }
+      return res;
+    },
+    [token, logout]
+  );
 
   return (
-    <CentralAuthContext.Provider value={{
-      user, token, loading, login, logout,
-      authHeaders, isSuperadmin, isInstaller, isOwner, isStaff,
-      canManage, canManageStaff, roleLabel,
-      isAuthenticated: !!user,
-      apiBase: CENTRAL_API,
-      scope, updateScope,
-    }}>
+    <CentralAuthContext.Provider
+      value={{ user, token, login, logout, centralFetch, isAuthenticated: !!token }}
+    >
       {children}
     </CentralAuthContext.Provider>
   );
@@ -90,6 +60,6 @@ export function CentralAuthProvider({ children }) {
 
 export function useCentralAuth() {
   const ctx = useContext(CentralAuthContext);
-  if (!ctx) throw new Error('useCentralAuth must be used within CentralAuthProvider');
+  if (!ctx) throw new Error("useCentralAuth must be used within CentralAuthProvider");
   return ctx;
 }

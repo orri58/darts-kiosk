@@ -1,149 +1,81 @@
 """
-Central Server Proxy — v3.5.4
+Layer A: Central Server API Proxy (Read-Only)
 
-Unified proxy for all central server communication.
-- Admin Panel: Sends local kiosk JWT → proxy auto-authenticates with central server
-- Operator Portal: Sends central JWT → proxy forwards as-is
-- No separate login needed in the admin UI
-- Timeout: 5s, clean error handling, structured JSON responses
+Proxies portal requests from the frontend to the central server (port 8002).
+Layer A restriction: only read-only endpoints and login are allowed.
+No write operations, no control actions, no config changes.
 """
 import logging
 import os
-import time
 
 import httpx
-from jose import jwt, JWTError
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, Request, Response, HTTPException
 
 logger = logging.getLogger("central_proxy")
 
-router = APIRouter(prefix="/central", tags=["central-proxy"])
+CENTRAL_INTERNAL_URL = os.environ.get(
+    "CENTRAL_SERVER_INTERNAL_URL", "http://localhost:8002"
+)
 
-CENTRAL_SERVER_URL = os.environ.get("CENTRAL_SERVER_URL", "http://127.0.0.1:8002")
-PROXY_TIMEOUT = 12.0
-
-# Local kiosk JWT secret — used to detect admin panel requests
-_LOCAL_JWT_SECRET = os.environ.get("JWT_SECRET", "darts-kiosk-secret-key-change-in-production")
-
-# Cached central admin token
-_cached_token: str | None = None
-_token_expires_at: float = 0
+router = APIRouter(prefix="/central", tags=["Central Portal Proxy"])
 
 
-async def _get_central_admin_token() -> str | None:
-    """Get a cached central server admin token, refreshing if expired."""
-    global _cached_token, _token_expires_at
-
-    if _cached_token and time.time() < _token_expires_at:
-        return _cached_token
-
-    username = os.environ.get("CENTRAL_ADMIN_USERNAME", "superadmin")
-    password = os.environ.get("CENTRAL_ADMIN_PASSWORD", "admin")
-
-    try:
-        async with httpx.AsyncClient(timeout=PROXY_TIMEOUT) as client:
-            resp = await client.post(
-                f"{CENTRAL_SERVER_URL}/api/auth/login",
-                json={"username": username, "password": password},
-            )
-        if resp.status_code == 200:
-            data = resp.json()
-            _cached_token = data.get("access_token")
-            _token_expires_at = time.time() + 23 * 3600  # refresh ~1h before 24h expiry
-            logger.info("[PROXY] Central admin token acquired/refreshed")
-            return _cached_token
-        else:
-            logger.error(f"[PROXY] Central admin login failed: HTTP {resp.status_code}")
-            return None
-    except Exception as e:
-        logger.error(f"[PROXY] Central admin login error: {e}")
-        return None
-
-
-def _is_local_kiosk_jwt(token_str: str) -> bool:
-    """Check if a Bearer token is a local kiosk JWT (not a central server JWT)."""
-    try:
-        jwt.decode(token_str, _LOCAL_JWT_SECRET, algorithms=["HS256"])
+def _is_allowed_layer_a(method: str, path: str) -> bool:
+    """Layer A whitelist: only GET requests + POST /api/auth/login."""
+    if method == "GET":
         return True
-    except JWTError:
-        return False
+    if method == "POST" and path.rstrip("/") == "/api/auth/login":
+        return True
+    return False
 
 
-@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"])
 async def proxy_to_central(path: str, request: Request):
-    """Forward requests to the central license server.
+    method = request.method
+    target_path = f"/api/{path}"
 
-    Auth behavior:
-    - Request with local kiosk JWT → replace with cached central admin token (admin panel flow)
-    - Request with central JWT → forward as-is (operator portal flow)
-    - Request without auth → inject cached central admin token (fallback)
-    """
-    target_url = f"{CENTRAL_SERVER_URL}/api/{path}"
+    if not _is_allowed_layer_a(method, target_path):
+        raise HTTPException(
+            403, f"Layer A: {method} {target_path} not permitted (read-only mode)"
+        )
 
+    url = f"{CENTRAL_INTERNAL_URL}{target_path}"
     if request.url.query:
-        target_url += f"?{request.url.query}"
+        url += f"?{request.url.query}"
 
-    # Determine auth header to forward
-    forward_headers = {}
-    auth_header = request.headers.get("Authorization")
+    fwd_headers = {}
+    for key in ("authorization", "x-license-key", "content-type", "accept"):
+        val = request.headers.get(key)
+        if val:
+            fwd_headers[key] = val
 
-    if auth_header and auth_header.startswith("Bearer "):
-        bearer_token = auth_header.split(" ", 1)[1]
-        if _is_local_kiosk_jwt(bearer_token):
-            # Local kiosk admin token → replace with central admin token
-            central_token = await _get_central_admin_token()
-            if central_token:
-                forward_headers["Authorization"] = f"Bearer {central_token}"
-            # else: forward without auth, central server will reject
-        else:
-            # Not a local token → assume central JWT, forward as-is
-            forward_headers["Authorization"] = auth_header
-    else:
-        # No auth → use cached central admin token
-        central_token = await _get_central_admin_token()
-        if central_token:
-            forward_headers["Authorization"] = f"Bearer {central_token}"
-
-    if ct := request.headers.get("Content-Type"):
-        forward_headers["Content-Type"] = ct
-
-    body = None
-    if request.method != "GET":
-        body = await request.body()
+    body = await request.body() if method == "POST" else None
 
     try:
-        async with httpx.AsyncClient(timeout=PROXY_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.request(
-                method=request.method,
-                url=target_url,
-                headers=forward_headers,
+                method=method,
+                url=url,
+                headers=fwd_headers,
                 content=body,
             )
+
+        resp_headers = {
+            k: v
+            for k, v in resp.headers.items()
+            if k.lower() not in ("transfer-encoding", "content-encoding", "connection")
+        }
 
         return Response(
             content=resp.content,
             status_code=resp.status_code,
-            headers={"Content-Type": resp.headers.get("Content-Type", "application/json")},
+            headers=resp_headers,
+            media_type=resp.headers.get("content-type"),
         )
-
     except httpx.ConnectError:
-        logger.warning(f"[PROXY] Central server unreachable: {target_url}")
-        return Response(
-            content='{"error":"central_server_unreachable","message":"Zentraler Server nicht erreichbar"}',
-            status_code=502,
-            headers={"Content-Type": "application/json"},
-        )
+        raise HTTPException(502, "Central server not reachable")
     except httpx.TimeoutException:
-        logger.warning(f"[PROXY] Central server timeout: {target_url}")
-        return Response(
-            content='{"error":"central_server_timeout","message":"Zentraler Server Timeout"}',
-            status_code=504,
-            headers={"Content-Type": "application/json"},
-        )
+        raise HTTPException(504, "Central server timeout")
     except Exception as e:
-        logger.error(f"[PROXY] Unexpected error: {e}")
-        return Response(
-            content='{"error":"proxy_error","message":"Interner Proxy-Fehler"}',
-            status_code=500,
-            headers={"Content-Type": "application/json"},
-        )
+        logger.error(f"[PROXY] {method} {target_path} -> {type(e).__name__}: {e}")
+        raise HTTPException(500, "Proxy error")
