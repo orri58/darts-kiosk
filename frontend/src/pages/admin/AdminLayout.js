@@ -2,27 +2,36 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { 
   LayoutDashboard, 
+  Target, 
+  Settings, 
+  Users, 
+  FileText, 
+  TrendingUp, 
   LogOut,
   Menu,
   X,
   Activity,
-  KeyRound,
-  Terminal,
-  ExternalLink,
-  Settings2,
-  Server
+  Server,
+  Wifi,
+  Trophy,
+  BarChart3
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
 import { useI18n } from '../../context/I18nContext';
 
-// Local service panel: board control + diagnostics + local settings + system
 const NAV_ITEMS = [
-  { path: '/admin', icon: LayoutDashboard, label: 'Board-Kontrolle', tid: 'nav-dashboard', exact: true },
-  { path: '/admin/settings', icon: Settings2, label: 'Einstellungen', tid: 'nav-settings', adminOnly: true },
-  { path: '/admin/system', icon: Server, label: 'System', tid: 'nav-system', adminOnly: true },
-  { path: '/admin/health', icon: Activity, label: 'Health & Sync', tid: 'nav-health', adminOnly: true },
-  { path: '/admin/licensing', icon: KeyRound, label: 'Lizenz-Status', tid: 'nav-licensing', adminOnly: true },
+  { path: '/admin', icon: LayoutDashboard, labelKey: 'dashboard', tid: 'nav-dashboard', exact: true },
+  { path: '/admin/boards', icon: Target, labelKey: 'boards', tid: 'nav-boards' },
+  { path: '/admin/settings', icon: Settings, labelKey: 'settings', tid: 'nav-settings', adminOnly: true },
+  { path: '/admin/users', icon: Users, labelKey: 'users', tid: 'nav-users', adminOnly: true },
+  { path: '/admin/logs', icon: FileText, labelKey: 'logs', tid: 'nav-logs', adminOnly: true },
+  { path: '/admin/revenue', icon: TrendingUp, labelKey: 'revenue', tid: 'nav-revenue', adminOnly: true },
+  { path: '/admin/health', icon: Activity, labelKey: 'health', tid: 'nav-health', adminOnly: true },
+  { path: '/admin/system', icon: Server, labelKey: 'system', tid: 'nav-system', adminOnly: true },
+  { path: '/admin/discovery', icon: Wifi, labelKey: 'discovery', tid: 'nav-discovery', adminOnly: true },
+  { path: '/admin/leaderboard', icon: Trophy, labelKey: 'leaderboard', tid: 'nav-leaderboard' },
+  { path: '/admin/reports', icon: BarChart3, labelKey: 'reports', tid: 'nav-reports', adminOnly: true },
 ];
 
 export default function AdminLayout() {
@@ -32,58 +41,75 @@ export default function AdminLayout() {
   const { t } = useI18n();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Redirect if not authenticated
   useEffect(() => {
-    if (!loading && !isAuthenticated) navigate('/admin/login');
+    if (!loading && !isAuthenticated) {
+      navigate('/admin/login');
+    }
   }, [loading, isAuthenticated, navigate]);
 
-  const handleLogout = () => { logout(); navigate('/admin/login'); };
+  const handleLogout = () => {
+    logout();
+    navigate('/admin/login');
+  };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#0a0e14] flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-zinc-950 flex items-center justify-center">
+        <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin"></div>
       </div>
     );
   }
-  if (!isAuthenticated) return null;
+
+  if (!isAuthenticated) {
+    return null;
+  }
 
   return (
-    <div className="min-h-screen bg-[#0a0e14]" data-testid="admin-layout">
-      {/* Mobile Header */}
+    <div className="min-h-screen bg-zinc-950" data-testid="admin-layout">
+      {/* Mobile Header — pushed below iOS notch/status bar */}
       <div
-        className="lg:hidden fixed top-0 left-0 right-0 bg-[#0d1117] border-b border-cyan-900/30 flex items-center justify-between px-4 z-50"
-        style={{ paddingTop: 'var(--sat, 0px)', height: 'calc(3.5rem + var(--sat, 0px))' }}
+        className="lg:hidden fixed top-0 left-0 right-0 bg-zinc-900 border-b border-zinc-800 flex items-center justify-between px-4 z-50"
+        style={{
+          paddingTop: 'var(--sat, 0px)',
+          height: 'calc(4rem + var(--sat, 0px))',
+        }}
         data-testid="mobile-header"
       >
-        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 text-cyan-600 hover:text-cyan-400" data-testid="mobile-menu-btn">
-          {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        <button
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="p-2 text-zinc-400 hover:text-white"
+          data-testid="mobile-menu-btn"
+        >
+          {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>
-        <div className="flex items-center gap-2">
-          <Terminal className="w-4 h-4 text-cyan-500" />
-          <span className="text-sm font-mono text-cyan-400 tracking-wider">LOCAL SERVICE</span>
-        </div>
-        <div className="w-10" />
+        <h1 className="font-heading text-lg uppercase tracking-wider text-white">
+          {branding.cafe_name}
+        </h1>
+        <div className="w-10"></div>
       </div>
 
-      {/* Sidebar — technical/debug style */}
-      <aside className={`
-        fixed top-0 left-0 h-full w-56 bg-[#0d1117] border-r border-cyan-900/20 z-40 transform transition-transform duration-200 flex flex-col
-        lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
-      `}>
-        <div className="h-14 flex items-center px-4 border-b border-cyan-900/20 flex-shrink-0 gap-2">
-          <Terminal className="w-4 h-4 text-cyan-500" />
-          <span className="text-sm font-mono text-cyan-400 tracking-wider">LOCAL SERVICE</span>
+      {/* Sidebar */}
+      <aside
+        className={`
+          fixed top-0 left-0 h-full w-64 bg-zinc-900 border-r border-zinc-800 z-40 transform transition-transform duration-200 flex flex-col
+          lg:translate-x-0
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+        `}
+        style={{ paddingTop: 'var(--sat, 0px)' }}
+      >
+        {/* Logo - fixed top */}
+        <div className="h-16 flex items-center px-6 border-b border-zinc-800 flex-shrink-0">
+          <h1 className="font-heading text-xl uppercase tracking-wider text-white truncate">
+            {branding.cafe_name}
+          </h1>
         </div>
 
-        {/* Device info badge */}
-        <div className="mx-3 mt-3 p-2.5 rounded bg-cyan-950/30 border border-cyan-900/20">
-          <p className="text-[10px] font-mono text-cyan-600 uppercase tracking-wider">Geraet</p>
-          <p className="text-xs font-mono text-cyan-300 truncate">{branding.cafe_name || 'Kiosk'}</p>
-        </div>
-
-        <nav className="flex-1 overflow-y-auto p-3 mt-2 space-y-0.5" data-testid="admin-nav">
+        {/* Navigation - scrollable */}
+        <nav className="flex-1 overflow-y-auto p-4 space-y-1" data-testid="admin-nav">
           {NAV_ITEMS.map((item) => {
             if (item.adminOnly && !isAdmin) return null;
+            
             return (
               <NavLink
                 key={item.path}
@@ -92,58 +118,55 @@ export default function AdminLayout() {
                 onClick={() => setSidebarOpen(false)}
                 data-testid={item.tid}
                 className={({ isActive }) => `
-                  flex items-center gap-2.5 px-3 py-2 rounded transition-all text-sm font-mono
+                  flex items-center gap-3 px-4 py-3 rounded-sm transition-all
                   ${isActive
-                    ? 'bg-cyan-500/10 text-cyan-400 border-l-2 border-cyan-500'
-                    : 'text-zinc-500 hover:text-cyan-300 hover:bg-cyan-950/30'
+                    ? 'bg-amber-500/10 text-amber-500 border-l-2 border-amber-500'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
                   }
                 `}
               >
-                <item.icon className="w-4 h-4 flex-shrink-0" />
-                <span className="truncate">{item.label}</span>
+                <item.icon className="w-5 h-5 flex-shrink-0" />
+                <span className="font-medium truncate">{t(item.labelKey)}</span>
               </NavLink>
             );
           })}
         </nav>
 
-        {/* Portal link */}
-        <div className="p-3">
-          <a
-            href="/portal/login"
-            className="flex items-center gap-2 px-3 py-2 rounded text-xs font-mono text-indigo-400/70 hover:text-indigo-400 hover:bg-indigo-500/5 transition-colors"
-            data-testid="portal-link"
-          >
-            <ExternalLink className="w-3.5 h-3.5" />
-            Zentrales Portal
-          </a>
-        </div>
-
-        {/* User & Logout */}
-        <div className="flex-shrink-0 p-3 border-t border-cyan-900/20">
-          <div className="flex items-center gap-2 mb-2 px-1">
-            <div className="w-7 h-7 rounded bg-cyan-950/50 border border-cyan-900/30 flex items-center justify-center flex-shrink-0">
-              <span className="text-cyan-500 font-mono text-xs">{user?.username?.[0]?.toUpperCase() || '?'}</span>
+        {/* User Info & Logout - fixed bottom */}
+        <div className="flex-shrink-0 p-4 border-t border-zinc-800">
+          <div className="flex items-center gap-3 mb-3 px-2">
+            <div className="w-9 h-9 rounded-full bg-zinc-800 flex items-center justify-center flex-shrink-0">
+              <span className="text-amber-500 font-heading text-sm">
+                {user?.username?.[0]?.toUpperCase() || 'U'}
+              </span>
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-cyan-300 text-xs font-mono truncate">{user?.username}</p>
-              <p className="text-[10px] text-cyan-700 font-mono uppercase">{user?.role}</p>
+              <p className="text-white text-sm font-medium truncate">{user?.display_name || user?.username}</p>
+              <p className="text-xs text-zinc-500 uppercase">{user?.role}</p>
             </div>
           </div>
           <button
             onClick={handleLogout}
             data-testid="logout-btn"
-            className="w-full flex items-center justify-center gap-2 px-3 py-1.5 bg-cyan-950/30 hover:bg-red-500/10 hover:text-red-400 text-cyan-700 rounded transition-all text-xs font-mono"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-zinc-800 hover:bg-red-500/20 hover:text-red-400 text-zinc-400 rounded-sm transition-all text-sm"
           >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Abmelden</span>
+            <LogOut className="w-4 h-4" />
+            <span>{t('logout')}</span>
           </button>
         </div>
       </aside>
 
-      {sidebarOpen && <div className="lg:hidden fixed inset-0 bg-black/60 z-30" onClick={() => setSidebarOpen(false)} />}
+      {/* Overlay for mobile */}
+      {sidebarOpen && (
+        <div
+          className="lg:hidden fixed inset-0 bg-black/50 z-30"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
-      <main className="lg:ml-56 min-h-screen pwa-main-content">
-        <div className="p-5">
+      {/* Main Content — on mobile: offset by header + safe-area; on desktop: no offset */}
+      <main className="lg:ml-64 min-h-screen pwa-main-content">
+        <div className="p-6">
           <Outlet />
         </div>
       </main>

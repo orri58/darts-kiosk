@@ -28,18 +28,13 @@ import {
   Monitor,
   Power,
   PlayCircle,
-  Zap,
-  Shield,
-  Lock,
-  Unlock,
-  Settings2
+  Zap
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
-import AgentTab from '../../components/admin/AgentTab';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -119,16 +114,6 @@ export default function AdminSystem() {
   const [rebootingOS, setRebootingOS] = useState(false);
   const [shuttingDownOS, setShuttingDownOS] = useState(false);
   const [ensuringDesktop, setEnsuringDesktop] = useState(false);
-  // v3.3.3: Windows Kiosk Controls
-  const [kioskStatus, setKioskStatus] = useState(null);
-  const [kioskShellPath, setKioskShellPath] = useState('');
-  const [savingKioskSettings, setSavingKioskSettings] = useState(false);
-  const [switchingShell, setSwitchingShell] = useState(false);
-  const [togglingTaskMgr, setTogglingTaskMgr] = useState(false);
-  // v3.4.0: Windows Agent
-  const [agentStatus, setAgentStatus] = useState(null);
-  const [agentLoading, setAgentLoading] = useState(false);
-  const [agentAction, setAgentAction] = useState(null);
   const headers = { Authorization: `Bearer ${token}` };
 
   const fetchAll = useCallback(async () => {
@@ -154,19 +139,6 @@ export default function AdminSystem() {
       const adRes = await axios.get(`${API}/admin/system/autodarts-desktop-status`, { headers });
       setAutodartsDesktop(adRes.data);
     } catch { /* ignore — endpoint may not exist on older builds */ }
-    // v3.3.3: Fetch Windows Kiosk Controls status
-    try {
-      const kioskRes = await axios.get(`${API}/admin/kiosk/status`, { headers });
-      setKioskStatus(kioskRes.data);
-      if (kioskRes.data?.shell?.kiosk_shell_configured) {
-        setKioskShellPath(kioskRes.data.shell.kiosk_shell_configured);
-      }
-    } catch { /* ignore — older builds */ }
-    // v3.4.0: Fetch Windows Agent status
-    try {
-      const agentRes = await axios.get(`${API}/admin/agent/status`, { headers });
-      setAgentStatus(agentRes.data);
-    } catch { /* ignore — older builds */ }
   }, [token]);
 
   useEffect(() => {
@@ -485,67 +457,6 @@ export default function AdminSystem() {
     }
   };
 
-  // v3.3.3: Windows Kiosk Controls handlers
-  const handleSwitchShell = async (mode) => {
-    const confirmMsg = mode === 'explorer' ? t('switch_to_explorer_confirm') : t('switch_to_kiosk_confirm');
-    if (!window.confirm(confirmMsg)) return;
-    setSwitchingShell(true);
-    try {
-      const endpoint = mode === 'explorer' ? 'shell/explorer' : 'shell/kiosk';
-      const res = await axios.post(`${API}/admin/kiosk/${endpoint}`, {}, { headers });
-      if (res.data.success !== false) {
-        toast.success(res.data.message || t('action_scheduled'));
-        if (res.data.reboot_required) {
-          toast.info(t('reboot_required'), { duration: 5000 });
-        }
-      } else if (!res.data.supported) {
-        toast.error(t('windows_only'));
-      } else {
-        toast.error(res.data.error || 'Fehler');
-      }
-      fetchAll();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Shell-Switch fehlgeschlagen');
-    } finally {
-      setSwitchingShell(false);
-    }
-  };
-
-  const handleToggleTaskManager = async (enable) => {
-    const confirmMsg = enable ? t('enable_task_manager_confirm') : t('disable_task_manager_confirm');
-    if (!window.confirm(confirmMsg)) return;
-    setTogglingTaskMgr(true);
-    try {
-      const endpoint = enable ? 'taskmanager/enable' : 'taskmanager/disable';
-      const res = await axios.post(`${API}/admin/kiosk/${endpoint}`, {}, { headers });
-      if (res.data.success !== false) {
-        toast.success(res.data.message || t('action_scheduled'));
-      } else if (!res.data.supported) {
-        toast.error(t('windows_only'));
-      } else {
-        toast.error(res.data.error || 'Fehler');
-      }
-      fetchAll();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Task-Manager Toggle fehlgeschlagen');
-    } finally {
-      setTogglingTaskMgr(false);
-    }
-  };
-
-  const handleSaveKioskSettings = async () => {
-    setSavingKioskSettings(true);
-    try {
-      await axios.post(`${API}/admin/kiosk/settings`, { kiosk_shell_path: kioskShellPath }, { headers });
-      toast.success('Kiosk-Einstellungen gespeichert');
-      fetchAll();
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Speichern fehlgeschlagen');
-    } finally {
-      setSavingKioskSettings(false);
-    }
-  };
-
   const downloadBackup = async (filename) => {
     try {
       const res = await axios.get(`${API}/backups/download/${filename}`, {
@@ -705,12 +616,6 @@ export default function AdminSystem() {
           </TabsTrigger>
           <TabsTrigger value="details" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-details">
             <Server className="w-4 h-4 mr-2" /> Details
-          </TabsTrigger>
-          <TabsTrigger value="kiosk" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-kiosk">
-            <Shield className="w-4 h-4 mr-2" /> Kiosk
-          </TabsTrigger>
-          <TabsTrigger value="agent" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-agent">
-            <Cpu className="w-4 h-4 mr-2" /> {t('agent_tab')}
           </TabsTrigger>
         </TabsList>
 
@@ -1528,254 +1433,6 @@ export default function AdminSystem() {
             </CardContent>
           </Card>
           </div>
-        </TabsContent>
-
-        {/* ===== Kiosk Controls Tab (v3.3.3) ===== */}
-        <TabsContent value="kiosk">
-          <div className="space-y-4">
-            {/* Kiosk Status Card */}
-            <Card className="bg-zinc-900 border-zinc-800" data-testid="kiosk-status-card">
-              <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Shield className="w-5 h-5 text-amber-500" /> {t('kiosk_controls')}
-                </CardTitle>
-                <p className="text-sm text-zinc-400">{t('kiosk_controls_desc')}</p>
-              </CardHeader>
-              <CardContent>
-                {!kioskStatus ? (
-                  <div className="flex items-center gap-2 text-zinc-500 py-4">
-                    <RefreshCw className="w-4 h-4 animate-spin" /> Status wird geladen...
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {/* OS */}
-                    <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid="kiosk-os-status">
-                      <div className="flex items-center gap-2">
-                        <Cpu className="w-4 h-4 text-zinc-500" />
-                        <span className="text-sm text-zinc-400">Betriebssystem</span>
-                      </div>
-                      <span className={`text-sm font-mono ${kioskStatus.is_windows ? 'text-emerald-400' : 'text-zinc-500'}`}>
-                        {kioskStatus.is_windows ? 'Windows' : 'Nicht-Windows'}
-                      </span>
-                    </div>
-
-                    {/* Kiosk Controls Available */}
-                    <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid="kiosk-available-status">
-                      <div className="flex items-center gap-2">
-                        <Settings2 className="w-4 h-4 text-zinc-500" />
-                        <span className="text-sm text-zinc-400">Kiosk-Steuerung</span>
-                      </div>
-                      {kioskStatus.kiosk_controls_available ? (
-                        <span className="text-sm text-emerald-400 flex items-center gap-1">
-                          <CheckCircle className="w-3.5 h-3.5" /> Verfuegbar
-                        </span>
-                      ) : (
-                        <span className="text-sm text-zinc-500 flex items-center gap-1">
-                          <XCircle className="w-3.5 h-3.5" /> {t('windows_only')}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Shell Mode */}
-                    <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid="kiosk-shell-status">
-                      <div className="flex items-center gap-2">
-                        <Terminal className="w-4 h-4 text-zinc-500" />
-                        <span className="text-sm text-zinc-400">{t('shell_mode')}</span>
-                      </div>
-                      <div className="text-right">
-                        <span className={`text-sm font-mono ${
-                          kioskStatus.shell?.shell_mode === 'kiosk' ? 'text-amber-400' :
-                          kioskStatus.shell?.shell_mode === 'explorer' ? 'text-emerald-400' :
-                          'text-zinc-500'
-                        }`}>
-                          {kioskStatus.shell?.shell_mode === 'explorer' ? t('shell_explorer') :
-                           kioskStatus.shell?.shell_mode === 'kiosk' ? t('shell_kiosk') :
-                           kioskStatus.shell?.shell_mode === 'custom' ? t('shell_custom') :
-                           t('shell_unknown')}
-                        </span>
-                        {kioskStatus.shell?.current_shell && (
-                          <p className="text-xs text-zinc-600 font-mono mt-0.5 max-w-[300px] truncate">
-                            {kioskStatus.shell.current_shell}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Task Manager */}
-                    <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid="kiosk-taskmgr-status">
-                      <div className="flex items-center gap-2">
-                        <Shield className="w-4 h-4 text-zinc-500" />
-                        <span className="text-sm text-zinc-400">{t('task_manager')}</span>
-                      </div>
-                      <span className={`text-sm font-medium ${
-                        kioskStatus.task_manager?.task_manager_disabled ? 'text-red-400' : 'text-emerald-400'
-                      }`}>
-                        {kioskStatus.task_manager?.task_manager_disabled
-                          ? t('task_manager_disabled')
-                          : t('task_manager_enabled')
-                        }
-                        {kioskStatus.task_manager?.scope && (
-                          <span className="text-xs text-zinc-600 ml-1">({kioskStatus.task_manager.scope})</span>
-                        )}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Shell Switch Card */}
-            <Card className="bg-zinc-900 border-zinc-800" data-testid="kiosk-shell-card">
-              <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Terminal className="w-5 h-5 text-amber-500" /> Shell Switch
-                </CardTitle>
-                <p className="text-sm text-zinc-400">
-                  Umschalten zwischen Explorer-Shell und Kiosk-Shell. Aenderungen werden nach Neustart/Neuanmeldung wirksam.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Kiosk Shell Path Config */}
-                <div className="p-3 bg-zinc-800/50 rounded-sm space-y-2">
-                  <label className="text-xs text-zinc-500 uppercase tracking-wider">{t('kiosk_shell_path')}</label>
-                  <p className="text-xs text-zinc-600">{t('kiosk_shell_path_desc')}</p>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={kioskShellPath}
-                      onChange={(e) => setKioskShellPath(e.target.value)}
-                      placeholder="C:\darts-kiosk\start_kiosk.bat"
-                      className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-3 py-1.5 text-sm text-white font-mono placeholder:text-zinc-600 focus:border-amber-500/50 focus:outline-none"
-                      data-testid="kiosk-shell-path-input"
-                    />
-                    <Button
-                      onClick={handleSaveKioskSettings}
-                      disabled={savingKioskSettings}
-                      size="sm"
-                      variant="outline"
-                      className="border-zinc-700 text-zinc-400 hover:text-white"
-                      data-testid="kiosk-shell-path-save"
-                    >
-                      {savingKioskSettings ? <RefreshCw className="w-3 h-3 animate-spin" /> : 'Speichern'}
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Shell Switch Buttons */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
-                    <div>
-                      <p className="text-sm text-white font-medium">{t('switch_to_explorer')}</p>
-                      <p className="text-xs text-zinc-500">Shell = explorer.exe</p>
-                    </div>
-                    <Button
-                      onClick={() => handleSwitchShell('explorer')}
-                      disabled={switchingShell || !kioskStatus?.kiosk_controls_available || kioskStatus?.shell?.shell_mode === 'explorer'}
-                      variant="outline"
-                      size="sm"
-                      className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40"
-                      data-testid="shell-switch-explorer-btn"
-                    >
-                      <Monitor className={`w-3.5 h-3.5 mr-1.5 ${switchingShell ? 'animate-spin' : ''}`} />
-                      {kioskStatus?.shell?.shell_mode === 'explorer' ? 'Aktiv' : t('switch_to_explorer')}
-                    </Button>
-                  </div>
-
-                  <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
-                    <div>
-                      <p className="text-sm text-white font-medium">{t('switch_to_kiosk')}</p>
-                      <p className="text-xs text-zinc-500 max-w-[160px] truncate">{kioskShellPath || t('not_configured')}</p>
-                    </div>
-                    <Button
-                      onClick={() => handleSwitchShell('kiosk')}
-                      disabled={switchingShell || !kioskStatus?.kiosk_controls_available || !kioskShellPath || kioskStatus?.shell?.shell_mode === 'kiosk'}
-                      variant="outline"
-                      size="sm"
-                      className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10 disabled:opacity-40"
-                      data-testid="shell-switch-kiosk-btn"
-                    >
-                      <Lock className={`w-3.5 h-3.5 mr-1.5 ${switchingShell ? 'animate-spin' : ''}`} />
-                      {kioskStatus?.shell?.shell_mode === 'kiosk' ? 'Aktiv' : t('switch_to_kiosk')}
-                    </Button>
-                  </div>
-                </div>
-
-                {!kioskStatus?.kiosk_controls_available && (
-                  <div className="p-2 bg-zinc-800/30 rounded-sm flex items-center gap-2 text-xs text-zinc-500">
-                    <Info className="w-3.5 h-3.5" /> {t('windows_only')}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Task Manager Card */}
-            <Card className="bg-zinc-900 border-zinc-800" data-testid="kiosk-taskmgr-card">
-              <CardHeader>
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Shield className="w-5 h-5 text-amber-500" /> {t('task_manager')} Toggle
-                </CardTitle>
-                <p className="text-sm text-zinc-400">
-                  Task-Manager fuer den Kiosk-Betrieb deaktivieren. Verhindert Ctrl+Alt+Del Zugriff.
-                </p>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
-                  <div>
-                    <p className="text-sm text-white font-medium">{t('enable_task_manager')}</p>
-                    <p className="text-xs text-zinc-500">Stellt normalen Zugang wieder her</p>
-                  </div>
-                  <Button
-                    onClick={() => handleToggleTaskManager(true)}
-                    disabled={togglingTaskMgr || !kioskStatus?.kiosk_controls_available || !kioskStatus?.task_manager?.task_manager_disabled}
-                    variant="outline"
-                    size="sm"
-                    className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 disabled:opacity-40"
-                    data-testid="taskmgr-enable-btn"
-                  >
-                    <Unlock className={`w-3.5 h-3.5 mr-1.5 ${togglingTaskMgr ? 'animate-spin' : ''}`} />
-                    {t('enable_task_manager')}
-                  </Button>
-                </div>
-
-                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
-                  <div>
-                    <p className="text-sm text-white font-medium">{t('disable_task_manager')}</p>
-                    <p className="text-xs text-zinc-500">Blockiert Ctrl+Alt+Del / Task-Manager</p>
-                  </div>
-                  <Button
-                    onClick={() => handleToggleTaskManager(false)}
-                    disabled={togglingTaskMgr || !kioskStatus?.kiosk_controls_available || kioskStatus?.task_manager?.task_manager_disabled}
-                    variant="outline"
-                    size="sm"
-                    className="border-red-500/30 text-red-400 hover:bg-red-500/10 disabled:opacity-40"
-                    data-testid="taskmgr-disable-btn"
-                  >
-                    <Lock className={`w-3.5 h-3.5 mr-1.5 ${togglingTaskMgr ? 'animate-spin' : ''}`} />
-                    {t('disable_task_manager')}
-                  </Button>
-                </div>
-
-                {!kioskStatus?.kiosk_controls_available && (
-                  <div className="p-2 bg-zinc-800/30 rounded-sm flex items-center gap-2 text-xs text-zinc-500">
-                    <Info className="w-3.5 h-3.5" /> {t('windows_only')}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
-
-        {/* ===== Windows Agent Tab (v3.4.0) ===== */}
-        <TabsContent value="agent">
-          <AgentTab
-            agentStatus={agentStatus}
-            setAgentStatus={setAgentStatus}
-            agentAction={agentAction}
-            setAgentAction={setAgentAction}
-            headers={headers}
-            t={t}
-            fetchAll={fetchAll}
-          />
         </TabsContent>
       </Tabs>
     </div>

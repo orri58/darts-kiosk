@@ -11,8 +11,6 @@ import ObserverActiveScreen from './ObserverActiveScreen';
 import InGameScreen from './InGameScreen';
 import MatchResultScreen from './MatchResultScreen';
 import ErrorScreen from './ErrorScreen';
-import LicenseOverlay from './LicenseOverlay';
-import RegistrationOverlay from './RegistrationOverlay';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -253,12 +251,6 @@ export default function KioskLayout() {
           onTimeout={handleMatchTimeout}
         />
       )}
-
-      {/* v3.5.1: Registration check overlay (must be ABOVE license overlay) */}
-      <RegistrationOverlay kioskState={kioskState} />
-
-      {/* v3.4.1: License enforcement overlay */}
-      <LicenseOverlay kioskState={kioskState} />
     </div>
   );
 }

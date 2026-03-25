@@ -236,22 +236,6 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                         return {"should_lock": False, "should_teardown": True,
                                 "credits_remaining": 0, "board_status": board.status}
 
-                    # v3.3.2: Read game variant for Gotcha-safe finalization
-                    _game_variant = session.game_type if session else None
-                    _is_gotcha = "gotcha" in (_game_variant or "").lower()
-
-                    # v3.3.2: Defense-in-depth Gotcha guard
-                    # game_shot/matchshot triggers are unreliable for Gotcha
-                    if _is_gotcha and trigger in ("match_end_gameshot_match", "match_finished_matchshot"):
-                        logger.warning(
-                            f"[SESSION] finalize_blocked board={board_id} variant=Gotcha "
-                            f"reason=unconfirmed_finish trigger={trigger} "
-                            f"credits={session.credits_remaining}"
-                        )
-                        return {"should_lock": False, "should_teardown": False,
-                                "credits_remaining": session.credits_remaining,
-                                "board_status": board.status}
-
                     # ── Credit deduction ──
                     credits_before = session.credits_remaining
                     consume_credit = _should_deduct_credit(trigger) and session.pricing_mode == PricingMode.PER_GAME.value
@@ -296,8 +280,7 @@ async def _finalize_match_inner(board_id: str, trigger: str,
 
                     logger.info(
                         f"[SESSION] finalize committed board={board_id} "
-                        f"credits={credit_after} should_lock={should_lock} should_teardown={should_teardown} "
-                        f"variant={_game_variant or 'standard'}"
+                        f"credits={credit_after} should_lock={should_lock} should_teardown={should_teardown}"
                     )
 
                     # ── Match result + player stats ──
@@ -618,33 +601,14 @@ async def _on_game_started(board_id: str):
     _finalized.pop(board_id, None)
     _last_finalized_match.pop(board_id, None)
     try:
-        _game_variant = None
         async with AsyncSessionLocal() as db:
             async with db.begin():
                 result = await db.execute(select(Board).where(Board.board_id == board_id))
                 board = result.scalar_one_or_none()
                 if board:
                     board.status = BoardStatus.IN_GAME.value
-                    # v3.3.2: Read game variant for variant-aware finish detection
-                    _session = await get_active_session_for_board(db, board.id)
-                    if _session and _session.game_type:
-                        _game_variant = _session.game_type
-        # v3.3.2: Pass variant to observer for Gotcha-safe finish detection
-        if _game_variant:
-            obs = observer_manager.get(board_id)
-            if obs:
-                obs._ws_state.variant = _game_variant
-                logger.info(
-                    f"[Observer->Kiosk] VARIANT_SET board={board_id} "
-                    f"variant={_game_variant}")
         await board_ws.broadcast("board_status", {"board_id": board_id, "status": "in_game"})
         await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "start"})
-        # v3.7.0: Telemetry hook
-        try:
-            from backend.services.telemetry_sync_client import telemetry_sync
-            telemetry_sync.queue_event("game_played", {"board_id": board_id, "variant": _game_variant})
-        except Exception:
-            pass
     except Exception as e:
         logger.error(f"[Observer->Kiosk] Error on game start: {e}", exc_info=True)
 
@@ -689,32 +653,25 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
     if AUTODARTS_MODE != 'observer':
         logger.info(f"[Kiosk] AUTODARTS_MODE={AUTODARTS_MODE}, skipping observer")
         return
-    # v3.15.2: Use global default if no URL provided
     if not autodarts_url:
-        autodarts_url = os.environ.get('AUTODARTS_URL', 'https://play.autodarts.io')
-        logger.info(f"[Kiosk] No autodarts_url for {board_id}, using default: {autodarts_url}")
+        logger.warning(f"[Kiosk] No autodarts_url for {board_id}, skipping observer start")
+        return
 
     _finalized.pop(board_id, None)
 
     headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
     logger.info(f"[Kiosk] === Observer Start === board={board_id} url={autodarts_url} headless={headless}")
 
-    try:
-        await observer_manager.open(
-            board_id=board_id,
-            autodarts_url=autodarts_url,
-            on_game_started=_on_game_started,
-            on_game_ended=_on_game_ended,
-            headless=headless,
-        )
+    await observer_manager.open(
+        board_id=board_id,
+        autodarts_url=autodarts_url,
+        on_game_started=_on_game_started,
+        on_game_ended=_on_game_ended,
+        headless=headless,
+    )
 
-        status = observer_manager.get_status(board_id)
-        if status['browser_open']:
-            logger.info(f"[Kiosk] AUTODARTS STARTED: board={board_id} state={status['state']} browser_open=True url={autodarts_url}")
-        else:
-            logger.error(f"[Kiosk] AUTODARTS FAILED: board={board_id} state={status['state']} browser_open=False — observer opened but browser not running")
-    except Exception as e:
-        logger.error(f"[Kiosk] AUTODARTS FAILED: board={board_id} error={type(e).__name__}: {e}", exc_info=True)
+    status = observer_manager.get_status(board_id)
+    logger.info(f"[Kiosk] Observer post-start: state={status['state']} browser_open={status['browser_open']}")
 
 
 async def stop_observer_for_board(board_id: str, reason: str = "unknown"):
@@ -730,32 +687,6 @@ async def stop_observer_for_board(board_id: str, reason: str = "unknown"):
 @router.post("/kiosk/{board_id}/start-game")
 async def kiosk_start_game(board_id: str, data: StartGameRequest, db: AsyncSession = Depends(get_db)):
     logger.info(f"[StartGame] board={board_id}, game_type={data.game_type}, players={data.players}")
-
-    # v3.4.4: License enforcement — secondary check + trigger auto-bind on game start
-    try:
-        from backend.services.license_service import license_service
-        from backend.services.device_identity_service import device_identity_service
-        _install_id = device_identity_service.get_install_id()
-        lic_status = await license_service.get_effective_status(
-            db, install_id=_install_id, board_id=board_id, trigger_binding=True
-        )
-        if not license_service.is_session_allowed(lic_status):
-            _block_reason = lic_status.get('binding_status') or lic_status.get('status')
-            logger.warning(
-                f"[LICENSE] Game start blocked: board={board_id} status={lic_status.get('status')} "
-                f"binding={lic_status.get('binding_status')}"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail=f"license_{_block_reason or 'invalid'}",
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        # v3.15.2: FAIL-CLOSED — license check error = BLOCK. No silent allow.
-        logger.error(f"[LICENSE] Check failed — BLOCKING game start (fail-closed): {e}")
-        raise HTTPException(status_code=403, detail="license_check_failed")
-
     result = await db.execute(select(Board).where(Board.board_id == board_id))
     board = result.scalar_one_or_none()
     if not board:
@@ -944,84 +875,6 @@ async def trigger_sound(board_id: str, data: SoundTrigger):
 
 
 # =====================================================================
-# License status for kiosk frontend (v3.4.1)
-# =====================================================================
-
-@router.get("/kiosk/license-status")
-async def kiosk_license_status(db: AsyncSession = Depends(get_db)):
-    """Public endpoint for the kiosk UI to check license status.
-    Returns the effective license status without requiring auth.
-    The kiosk needs this to show overlay/warnings.
-    v3.4.3: includes install_id for device binding check.
-    v3.5.1: includes registration_status for unregistered device detection.
-    v3.11.2: Prevents overwriting valid cache with local no_license when registered."""
-    try:
-        from backend.services.license_service import license_service
-        from backend.services.device_identity_service import device_identity_service
-        from backend.services.device_registration_client import device_registration_client
-
-        _install_id = device_identity_service.get_install_id()
-        reg_status = device_registration_client.registration_status
-
-        status = await license_service.get_effective_status(db, install_id=_install_id)
-        status["install_id"] = _install_id
-        status["registration_status"] = reg_status
-
-        # v3.11.2: If local DB returns no_license but device IS registered,
-        # prefer the existing cache (from remote sync or registration) over
-        # overwriting it with a stale local no_license result.
-        if status.get("status") == "no_license" and reg_status == "registered":
-            cached = license_service.load_from_cache()
-            if cached and cached.get("status") not in (None, "no_license"):
-                cached["install_id"] = _install_id
-                cached["registration_status"] = reg_status
-                cached["source"] = cached.get("source", "cache")
-                logger.debug(
-                    f"[LICENSE] Kiosk: local=no_license but registered → using cache: {cached.get('status')}"
-                )
-                return cached
-
-            # No valid cache — use registration data as authoritative source
-            reg_data = device_registration_client.get_status()
-            reg_license = reg_data.get("license_status")
-            if reg_license and reg_license != "no_license":
-                reg_status_dict = {
-                    "status": reg_license,
-                    "license_id": reg_data.get("license_id"),
-                    "customer_name": reg_data.get("customer_name"),
-                    "binding_status": "bound",
-                    "checked_at": datetime.now(timezone.utc).isoformat(),
-                    "source": "registration_data",
-                    "install_id": _install_id,
-                    "registration_status": reg_status,
-                }
-                license_service.save_to_cache(reg_status_dict)
-                return reg_status_dict
-
-            # No valid cache either — save but log the mismatch
-            logger.warning(
-                "[LICENSE] Kiosk: registered but no valid license in local DB or cache"
-            )
-
-        license_service.save_to_cache(status)
-        return status
-    except Exception as e:
-        logger.error(f"[LICENSE] Kiosk status check failed: {e}")
-        # Try cache
-        try:
-            from backend.services.license_service import license_service as ls
-            cached = ls.load_from_cache()
-            if cached:
-                cached["source"] = "cache"
-                return cached
-        except Exception:
-            pass
-        # Fail-open: return active to avoid blocking on errors
-        return {"status": "active", "source": "fallback_error", "registration_status": "registered"}
-
-
-
-# =====================================================================
 # Simulation endpoints (testing without real Autodarts)
 # =====================================================================
 
@@ -1032,8 +885,8 @@ async def simulate_game_start(board_id: str, admin: User = Depends(require_admin
 
 
 @router.post("/kiosk/{board_id}/simulate-game-end")
-async def simulate_game_end(board_id: str, trigger: str = "finished", admin: User = Depends(require_admin)):
-    result = await _on_game_ended(board_id, trigger)
+async def simulate_game_end(board_id: str, admin: User = Depends(require_admin)):
+    result = await _on_game_ended(board_id, "finished")
     return {"message": f"Simulated game end on {board_id}", **result}
 
 

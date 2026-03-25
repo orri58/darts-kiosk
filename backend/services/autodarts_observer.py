@@ -173,7 +173,6 @@ class WSEventState:
     frames_received: int = 0
     match_relevant_frames: int = 0
     finish_trigger: Optional[str] = None  # What triggered the finish detection
-    variant: Optional[str] = None  # v3.3.2: Game variant (e.g., "Gotcha", "501")
 
     def reset(self):
         self.match_active = False
@@ -183,7 +182,6 @@ class WSEventState:
         self.last_game_event = None
         self.last_match_id = None
         self.finish_trigger = None
-        # variant NOT reset — persists for the session
 
 
 @dataclass
@@ -1191,28 +1189,6 @@ class AutodartsObserver:
             return True
         return False
 
-    def _extract_variant(self, payload) -> Optional[str]:
-        """Extract game variant from WS payload (e.g., 'gotcha', 'x01', 'cricket')."""
-        if not isinstance(payload, dict):
-            return None
-        for key in ('variant', 'gameMode', 'mode', 'gameType'):
-            val = payload.get(key)
-            if isinstance(val, str) and val:
-                return val
-        for container in ('data', 'body', 'match'):
-            nested = payload.get(container)
-            if isinstance(nested, dict):
-                for key in ('variant', 'gameMode', 'mode', 'gameType'):
-                    val = nested.get(key)
-                    if isinstance(val, str) and val:
-                        return val
-        return None
-
-    def _is_gotcha(self) -> bool:
-        """Check if current match is a Gotcha variant."""
-        variant = (self._ws_state.variant or "").lower()
-        return "gotcha" in variant
-
     def _classify_frame(self, raw: str, channel: str, payload) -> str:
         """
         Classify a WS frame based on Autodarts lifecycle signals.
@@ -1345,15 +1321,6 @@ class AutodartsObserver:
         # ═══ MATCH END (authoritative) ═══
         elif interpretation in ("match_end_gameshot_match", "match_end_state_finished",
                                 "match_end_game_finished", "match_finished_matchshot"):
-            # v3.3.2: Extract variant from payload if available
-            if payload:
-                _ev = self._extract_variant(payload)
-                if _ev and not ws.variant:
-                    ws.variant = _ev
-                    logger.info(
-                        f"[Observer:{self.board_id}] VARIANT_DETECTED "
-                        f"variant={_ev} source={interpretation}")
-
             # Duplicate match-ID guard: ignore repeat finish signals for already-finalized match
             current_mid = ws.last_match_id
             if current_mid and current_mid == self._last_finalized_match_id:
@@ -1364,21 +1331,6 @@ class AutodartsObserver:
 
             # v3.3.1: Separate confirmed (state frame) from pending (gameshot) signals
             is_confirmed = interpretation in ("match_end_state_finished", "match_end_game_finished")
-            is_gameshot_trigger = interpretation in ("match_end_gameshot_match", "match_finished_matchshot")
-
-            # v3.3.2: Gotcha variant guard — game_shot/matchshot are NOT reliable for Gotcha
-            # In Gotcha, opponent score resets and intermediate states can trigger game_shot
-            # with body.type=match, which is NOT a real match end.
-            if self._is_gotcha() and is_gameshot_trigger:
-                logger.info(
-                    f"[Observer:{self.board_id}] MATCH_FINISH_CANDIDATE variant=Gotcha "
-                    f"trigger={interpretation} confirmed=False "
-                    f"match_id={current_mid}")
-                logger.info(
-                    f"[Observer:{self.board_id}] MATCH_FINISH_REJECTED variant=Gotcha "
-                    f"reason=game_shot_without_confirmed_finished_state "
-                    f"trigger={interpretation} match_id={current_mid}")
-                return  # Do NOT set match_finished, do NOT schedule finalize
 
             if ws.match_finished:
                 if is_confirmed and ws.finish_trigger not in ("match_end_state_finished", "match_end_game_finished"):
@@ -1386,7 +1338,6 @@ class AutodartsObserver:
                     logger.info(
                         f"[Observer:{self.board_id}] MATCH_FINISH_CONFIRMED "
                         f"trigger={interpretation} match_id={current_mid} "
-                        f"variant={ws.variant or 'standard'} "
                         f"(upgrades pending trigger={ws.finish_trigger})")
                     ws.finish_trigger = interpretation
                     self._schedule_immediate_finalize(interpretation, ws.last_match_id)
@@ -1404,20 +1355,12 @@ class AutodartsObserver:
             logger.info(
                 f"[Observer:{self.board_id}] *** MATCH FINISH DETECTED *** "
                 f"trigger={interpretation} | match_id={ws.last_match_id} | "
-                f"confirmed={is_confirmed} | variant={ws.variant or 'unknown'}"
+                f"confirmed={is_confirmed}"
             )
-
-            # v3.3.2: Log ACCEPTED with variant and confirmation details
-            if self._is_gotcha():
-                logger.info(
-                    f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED variant=Gotcha "
-                    f"trigger={interpretation} confirmed={is_confirmed} "
-                    f"match_id={ws.last_match_id}")
-            else:
-                logger.info(
-                    f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED "
-                    f"trigger={interpretation} match_id={ws.last_match_id} "
-                    f"variant={ws.variant or 'standard'}")
+            logger.info(
+                f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED "
+                f"trigger={interpretation} match_id={ws.last_match_id}"
+            )
 
             if is_confirmed:
                 # State frame (finished=true) = authoritative → immediate finalize
@@ -1428,7 +1371,6 @@ class AutodartsObserver:
                 logger.info(
                     f"[Observer:{self.board_id}] MATCH_FINISH_PENDING "
                     f"trigger={interpretation} match_id={ws.last_match_id} "
-                    f"variant={ws.variant or 'standard'} "
                     f"(awaiting state frame confirmation or debounce)")
 
             # Always schedule safety net as backup
@@ -2046,46 +1988,68 @@ class AutodartsObserver:
     # ═══════════════════════════════════════════════════════════════
 
     async def _detect_state_dom(self) -> ObserverState:
-        """DOM-based state detection with prioritized fallback resolution. v3.3.5"""
+        """DOM-based state detection (fallback). Three-tier detection."""
         if not self._page_alive():
             return ObserverState.UNKNOWN
         try:
-            from backend.autodarts_selectors import build_detect_state_js
-            js = build_detect_state_js()
-            signals = await self._page.evaluate(js)
+            signals = await self._page.evaluate("""() => {
+                var inGame = !!(
+                    document.querySelector('[class*="scoreboard"]') ||
+                    document.querySelector('[class*="dart-input"]') ||
+                    document.querySelector('[class*="throw"]') ||
+                    document.querySelector('[class*="scoring"]') ||
+                    document.querySelector('[class*="game-view"]') ||
+                    document.querySelector('[class*="match-view"]') ||
+                    document.querySelector('[class*="player-score"]') ||
+                    document.querySelector('[class*="turn"]') ||
+                    document.querySelector('[class*="match"][class*="running"]') ||
+                    document.querySelector('[data-testid*="match"]') ||
+                    document.querySelector('#match')
+                );
+
+                var allButtons = Array.from(document.querySelectorAll('button, a[role="button"], [class*="btn"]'));
+                var buttonTexts = allButtons.map(function(b) { return (b.textContent || '').trim().toLowerCase(); });
+
+                var hasRematchBtn = buttonTexts.some(function(t) {
+                    return /rematch|nochmal spielen|play again|erneut spielen/i.test(t);
+                });
+                var hasShareBtn = buttonTexts.some(function(t) {
+                    return /share|teilen|share result|ergebnis teilen/i.test(t);
+                });
+                var hasNewGameBtn = buttonTexts.some(function(t) {
+                    return /new game|neues spiel|new match|neues match/i.test(t);
+                });
+                var hasPostMatchUI = !!(
+                    document.querySelector('[class*="post-match"]') ||
+                    document.querySelector('[class*="match-summary"]') ||
+                    document.querySelector('[class*="match-end"]') ||
+                    document.querySelector('[class*="game-over"]')
+                );
+                var strongMatchEnd = hasRematchBtn || hasShareBtn || hasNewGameBtn || hasPostMatchUI;
+
+                var hasGenericResult = !!(
+                    document.querySelector('[class*="result"]') ||
+                    document.querySelector('[class*="winner"]') ||
+                    document.querySelector('[class*="finished"]') ||
+                    document.querySelector('[class*="match-result"]') ||
+                    document.querySelector('[class*="leg-result"]')
+                );
+
+                return {
+                    inGame: inGame,
+                    strongMatchEnd: strongMatchEnd,
+                    hasGenericResult: hasGenericResult,
+                    hasRematchBtn: hasRematchBtn,
+                    hasShareBtn: hasShareBtn,
+                    hasNewGameBtn: hasNewGameBtn,
+                    hasPostMatchUI: hasPostMatchUI
+                };
+            }""")
 
             in_game = signals.get('inGame', False)
             strong_match_end = signals.get('strongMatchEnd', False)
             has_generic_result = signals.get('hasGenericResult', False)
 
-            # v3.3.5: Diagnostic logging for fallback usage
-            groups = signals.get('_groups', {})
-            for group_name, info in groups.items():
-                if info and info.get('found'):
-                    if info.get('priority') == 'fallback':
-                        logger.info(
-                            f"[SELECTOR] fallback_used group={group_name} "
-                            f"selector={info.get('css')} name={info.get('name')}")
-                    elif info.get('priority') == 'primary':
-                        logger.debug(
-                            f"[SELECTOR] primary_hit group={group_name} "
-                            f"selector={info.get('css')}")
-
-            evidence = signals.get('_evidence', [])
-            if in_game and evidence:
-                logger.debug(
-                    f"[SELECTOR] heuristic_state state=in_game "
-                    f"evidence={','.join(evidence)} count={len(evidence)}")
-
-            # Check for missing groups (soft-fail warning)
-            all_groups_empty = all(
-                not (info and info.get('found'))
-                for info in groups.values()
-            )
-            if all_groups_empty and not signals.get('hasRematchBtn') and not signals.get('hasShareBtn') and not signals.get('hasNewGameBtn'):
-                logger.debug(f"[SELECTOR] no_dom_signals board={self.board_id} (WS/console may still be active)")
-
-            # Decision logic (unchanged from v3.3.4)
             if strong_match_end:
                 return ObserverState.FINISHED
             if in_game:

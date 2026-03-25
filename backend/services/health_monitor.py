@@ -71,10 +71,6 @@ class SystemHealth:
     backup_service_running: bool = False
     observer_metrics: ObserverMetrics = field(default_factory=ObserverMetrics)
     agent_status: Dict[str, AgentHealth] = field(default_factory=dict)
-    config_sync: Dict = field(default_factory=dict)
-    action_poller: Dict = field(default_factory=dict)
-    offline_queue: Dict = field(default_factory=dict)
-    ws_push: Dict = field(default_factory=dict)
     recent_errors: List[dict] = field(default_factory=list)
     last_check: str = ""
 
@@ -205,58 +201,15 @@ class HealthMonitor:
         uptime = int((now - self._start_time).total_seconds())
 
         status = "healthy"
-
-        # Observer health
         if self._observer_metrics.total_events > 0:
             if self._observer_metrics.success_rate < 50:
                 status = "unhealthy"
             elif self._observer_metrics.success_rate < 80:
                 status = "degraded"
 
-        # Agent health
         offline_agents = sum(1 for a in self._agent_health.values() if not a.is_online)
         if offline_agents > 0 and status == "healthy":
             status = "degraded"
-
-        # Config sync health — degraded if 3+ consecutive errors
-        sync_status = {}
-        try:
-            from backend.services.config_sync_client import config_sync_client
-            sync_status = config_sync_client.status
-            if config_sync_client.is_configured and config_sync_client._consecutive_errors >= 3:
-                if status == "healthy":
-                    status = "degraded"
-        except Exception:
-            sync_status = {"configured": False, "error": "import_failed"}
-
-        # Action poller health
-        poller_status = {}
-        try:
-            from backend.services.action_poller import action_poller
-            poller_status = action_poller.status
-            if action_poller.is_configured and action_poller._consecutive_errors >= 5:
-                if status == "healthy":
-                    status = "degraded"
-        except Exception:
-            poller_status = {"configured": False, "error": "import_failed"}
-
-        # v3.9.7: Offline queue health
-        oq_status = {}
-        try:
-            from backend.services.offline_queue import offline_queue
-            oq_status = offline_queue.status
-            if offline_queue.pending_count > 0 and status == "healthy":
-                status = "degraded"
-        except Exception:
-            oq_status = {"configured": False, "error": "import_failed"}
-
-        # v3.10.0: WS push client health
-        ws_push_status = {}
-        try:
-            from backend.services.ws_push_client import ws_push_client
-            ws_push_status = ws_push_client.status
-        except Exception:
-            ws_push_status = {"configured": False, "error": "import_failed"}
 
         return SystemHealth(
             status=status,
@@ -267,10 +220,6 @@ class HealthMonitor:
             backup_service_running=self._backup_running,
             observer_metrics=self._observer_metrics,
             agent_status={k: asdict(v) for k, v in self._agent_health.items()},
-            config_sync=sync_status,
-            action_poller=poller_status,
-            offline_queue=oq_status,
-            ws_push=ws_push_status,
             recent_errors=list(self._recent_errors),
             last_check=now.isoformat(),
         )

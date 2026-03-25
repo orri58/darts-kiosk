@@ -1,6 +1,5 @@
 """Board CRUD & Session Control Routes"""
 import asyncio
-import logging
 import os
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -22,8 +21,6 @@ from backend.dependencies import (
 from backend.services.ws_manager import board_ws
 from backend.routers.kiosk import start_observer_for_board, stop_observer_for_board
 from backend.services.autodarts_observer import observer_manager
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -147,36 +144,6 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
     if existing:
         raise HTTPException(status_code=400, detail="Board already has an active session")
 
-    # v3.4.4: License enforcement — check before creating session (NO auto-bind)
-    try:
-        from backend.services.license_service import license_service
-        from backend.services.device_identity_service import device_identity_service
-        _install_id = device_identity_service.get_install_id()
-        lic_status = await license_service.get_effective_status(
-            db, install_id=_install_id, board_id=board_id, trigger_binding=False
-        )
-        if not license_service.is_session_allowed(lic_status):
-            _block_reason = lic_status.get('binding_status') or lic_status.get('status')
-            logger.warning(
-                f"[LICENSE] Session blocked: board={board_id} status={lic_status.get('status')} "
-                f"binding={lic_status.get('binding_status')} customer={lic_status.get('customer_name')}"
-            )
-            raise HTTPException(
-                status_code=403,
-                detail=f"license_{_block_reason or 'invalid'}",
-            )
-        if lic_status.get("status") == "grace":
-            logger.info(
-                f"[LICENSE] Grace period active: board={board_id} "
-                f"grace_days_remaining={lic_status.get('grace_days_remaining')}"
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        # v3.15.2: FAIL-CLOSED — license check error = BLOCK. No silent allow.
-        logger.error(f"[LICENSE] Check failed — BLOCKING session (fail-closed): {e}")
-        raise HTTPException(status_code=403, detail="license_check_failed")
-
     expires_at = None
     if data.pricing_mode == PricingMode.PER_TIME.value and data.minutes:
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=data.minutes)
@@ -206,23 +173,6 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
     })
 
     await board_ws.broadcast("board_status", {"board_id": board_id, "status": "unlocked"})
-
-    # v3.7.0: Telemetry hook — session started
-    try:
-        from backend.services.telemetry_sync_client import telemetry_sync
-        telemetry_sync.queue_event("session_started", {
-            "board_id": board_id,
-            "pricing_mode": data.pricing_mode,
-            "credits": data.credits or 0,
-            "price_total": data.price_total,
-        })
-        if data.price_total and data.price_total > 0:
-            telemetry_sync.queue_event("credits_added", {
-                "amount": data.credits or 0,
-                "revenue_cents": int(data.price_total * 100),
-            })
-    except Exception:
-        pass  # fail-open
 
     # Start Autodarts observer if board has a configured URL
     if board.autodarts_target_url:
