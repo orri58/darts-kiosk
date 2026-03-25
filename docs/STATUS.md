@@ -1,6 +1,6 @@
 # Component Status Matrix
 
-Current version: **v4.0.0-recovery**
+Current version: **v4.0.0-recovery + Layer A**
 
 ## Local Core (Frozen — Stable)
 
@@ -22,6 +22,17 @@ Current version: **v4.0.0-recovery**
 | mDNS Discovery | **Stable** | `services/mdns_service.py` | Network device discovery |
 | Backup/Restore | **Stable** | `services/backup_service.py` | SQLite database backup |
 | i18n (DE/EN) | **Stable** | `i18n/translations.js` | Full German + English support |
+
+## Layer A — Central Read-Only Visibility (Active)
+
+| Component | Status | Module | Notes |
+|-----------|--------|--------|-------|
+| Heartbeat Client | **Active** | `services/central_heartbeat_client.py` | 60s interval, exponential backoff |
+| Central Proxy | **Active** | `routers/central_proxy.py` | Read-only proxy to central server |
+| Portal Login | **Active** | `pages/portal/PortalLogin.js` | Central server auth |
+| Portal Dashboard | **Active** | `pages/portal/PortalDashboard.js` | Device table with status |
+| Portal Devices | **Active** | `pages/portal/PortalDevices.js` | Device cards with health details |
+| Layer A Security | **Active** | `routers/central_proxy.py` | Blocks all write operations |
 
 ## Central / Portal (Disabled — Deferred)
 
