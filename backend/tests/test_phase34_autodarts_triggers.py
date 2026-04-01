@@ -1,7 +1,12 @@
 import pytest
 
 from backend.services.autodarts_observer import AutodartsObserver, ObserverState
-from backend.services.autodarts_triggers import TriggerAuthority, build_trigger_policy
+from backend.services.autodarts_triggers import (
+    TriggerAuthority,
+    build_trigger_policy,
+    export_trigger_policy_metadata,
+    sanitize_trigger_policy_config,
+)
 
 
 @pytest.fixture
@@ -91,3 +96,40 @@ def test_console_and_dom_finish_hints_stay_non_authoritative(observer):
     assert merged == ObserverState.IDLE
     assert observer.export_trigger_policy()["allow_console_finish_authority"] is False
     assert observer.export_trigger_policy()["allow_dom_finish_authority"] is False
+
+
+def test_sanitize_trigger_policy_locks_delete_channels_and_keeps_known_groups():
+    sanitized = sanitize_trigger_policy_config(
+        {
+            "authoritative_start": ["match_start_throw"],
+            "authoritative_finish": ["match_end_state_finished"],
+            "authoritative_abort": ["match_abort_delete"],
+            "assistive_finish": ["match_end_gameshot_match"],
+            "diagnostic_interpretations": ["match_other", "match_reset_delete"],
+            "delete_channel_prefixes": ["unsafe.channel."],
+            "delete_channel_suffixes": [".raw"],
+            "allow_console_finish_authority": True,
+        }
+    )
+
+    assert sanitized["delete_channel_prefixes"] == ["autodarts.matches.", "autodarts.boards."]
+    assert sanitized["delete_channel_suffixes"] == [".state", ".matches", ".game-events"]
+    assert sanitized["allow_console_finish_authority"] is True
+    assert sanitized["authoritative_abort"] == ["match_abort_delete"]
+
+
+def test_sanitize_trigger_policy_rejects_unknown_interpretations():
+    with pytest.raises(ValueError, match="Unknown trigger interpretations"):
+        sanitize_trigger_policy_config(
+            {
+                "authoritative_start": ["match_start_throw", "totally_new_signal"],
+            }
+        )
+
+
+def test_trigger_policy_metadata_exposes_presets_and_catalog():
+    metadata = export_trigger_policy_metadata()
+
+    assert {preset["id"] for preset in metadata["presets"]} == {"strict_ws", "console_recovery", "dom_last_resort"}
+    assert any(item["interpretation"] == "match_start_throw" for item in metadata["signal_catalog"])
+    assert metadata["locked_fields"]["delete_channel_prefixes"] == ["autodarts.matches.", "autodarts.boards."]

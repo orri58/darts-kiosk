@@ -12,6 +12,7 @@ from backend.schemas import SettingsUpdate
 from backend.dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
 from backend.runtime_features import sanitize_pricing_settings
 from backend.services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
+from backend.services.autodarts_triggers import sanitize_trigger_policy_config, export_trigger_policy_metadata
 
 router = APIRouter()
 
@@ -335,17 +336,28 @@ async def update_post_match_delay(data: SettingsUpdate, admin: User = Depends(re
 
 @router.get("/settings/autodarts-triggers")
 async def get_autodarts_triggers(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "autodarts_triggers", DEFAULT_AUTODARTS_TRIGGERS)
+    current = await get_or_create_setting(db, "autodarts_triggers", DEFAULT_AUTODARTS_TRIGGERS)
+    return sanitize_trigger_policy_config(current)
+
+
+@router.get("/settings/autodarts-triggers/metadata")
+async def get_autodarts_triggers_metadata(admin: User = Depends(require_admin)):
+    return export_trigger_policy_metadata()
 
 
 @router.put("/settings/autodarts-triggers")
 async def update_autodarts_triggers(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    try:
+        sanitized = sanitize_trigger_policy_config(data.value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     result = await db.execute(select(Settings).where(Settings.key == "autodarts_triggers"))
     setting = result.scalar_one_or_none()
     if setting:
-        setting.value = data.value
+        setting.value = sanitized
     else:
-        setting = Settings(key="autodarts_triggers", value=data.value)
+        setting = Settings(key="autodarts_triggers", value=sanitized)
         db.add(setting)
     await db.flush()
     await log_audit(db, admin, "update_autodarts_triggers", "settings", "autodarts_triggers")

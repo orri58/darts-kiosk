@@ -18,7 +18,8 @@ import {
   Volume2,
   Globe,
   QrCode,
-  Timer
+  Timer,
+  RadioTower
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
@@ -26,6 +27,8 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Switch } from '../../components/ui/switch';
+import TriggerPolicyPanel from '../../components/admin/TriggerPolicyPanel';
+import { AdminPage, AdminStatsGrid, AdminStatCard } from '../../components/admin/AdminShell';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
@@ -211,6 +214,12 @@ export default function AdminSettings() {
   const [matchSharing, setMatchSharing] = useState({ enabled: false, qr_timeout: 60 });
   const [matchSharingLoading, setMatchSharingLoading] = useState(true);
 
+  // Trigger policy state
+  const [triggerPolicy, setTriggerPolicy] = useState(null);
+  const [triggerMetadata, setTriggerMetadata] = useState(null);
+  const [triggerLoading, setTriggerLoading] = useState(true);
+  const [savingTriggers, setSavingTriggers] = useState(false);
+
   useEffect(() => {
     const fetchStammkunde = async () => {
       try {
@@ -254,6 +263,24 @@ export default function AdminSettings() {
       finally { setMatchSharingLoading(false); }
     };
     fetchMatchSharing();
+
+    // Fetch trigger policy + metadata
+    const fetchTriggerPolicy = async () => {
+      try {
+        const headers = { Authorization: `Bearer ${token}` };
+        const [policyRes, metadataRes] = await Promise.all([
+          axios.get(`${API}/settings/autodarts-triggers`, { headers }),
+          axios.get(`${API}/settings/autodarts-triggers/metadata`, { headers }),
+        ]);
+        setTriggerPolicy(policyRes.data);
+        setTriggerMetadata(metadataRes.data);
+      } catch {
+        toast.error('Trigger-Policy konnte nicht geladen werden');
+      } finally {
+        setTriggerLoading(false);
+      }
+    };
+    fetchTriggerPolicy();
   }, [token]);
 
   // Sync local kiosk texts & PWA config when context updates
@@ -289,7 +316,7 @@ export default function AdminSettings() {
       } catch { /* use defaults */ }
     };
     fetchKioskControl();
-  }, []);
+  }, [token]);
 
   const handleSaveKioskTexts = async () => {
     setSaving(true);
@@ -315,6 +342,21 @@ export default function AdminSettings() {
       toast.success('PWA-Konfiguration gespeichert');
     } catch { toast.error('Fehler beim Speichern'); }
     finally { setSaving(false); }
+  };
+
+  const handleSaveTriggers = async () => {
+    if (!triggerPolicy) return;
+    setSavingTriggers(true);
+    try {
+      const headers = { Authorization: `Bearer ${token}` };
+      const res = await axios.put(`${API}/settings/autodarts-triggers`, { value: triggerPolicy }, { headers });
+      setTriggerPolicy(res.data);
+      toast.success('Trigger-Policy gespeichert');
+    } catch (error) {
+      toast.error(error.response?.data?.detail || 'Fehler beim Speichern der Trigger-Policy');
+    } finally {
+      setSavingTriggers(false);
+    }
   };
 
   const handleSaveStammkundeDisplay = async () => {
@@ -432,14 +474,41 @@ export default function AdminSettings() {
     setLocalPricing({ ...localPricing, allowed_game_types: updated });
   };
 
-  return (
-    <div data-testid="admin-settings">
-      <div className="mb-6">
-        <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('settings')}</h1>
-        <p className="text-zinc-500">{t('branding_pricing_config')}</p>
-      </div>
+  const activePalette = palettes.find((palette) => palette.id === localBranding.palette_id);
+  const recommendedTriggerPreset = triggerMetadata?.presets?.find((preset) => preset.recommended)?.label || 'WS strict';
 
-      <Tabs defaultValue="branding" className="space-y-6">
+  return (
+    <AdminPage
+      eyebrow="Operator configuration"
+      title={t('settings')}
+      description="Branding, Abrechnung, Kiosk-Erlebnis und Observer-Verhalten an einem Ort. Fokus bleibt lokal: venue-taugliche Defaults, klare Recovery-Guards, keine freien Risiko-Settings."
+    >
+      <div data-testid="admin-settings" className="space-y-6">
+        <AdminStatsGrid className="xl:grid-cols-3">
+          <AdminStatCard
+            icon={Palette}
+            label="Aktives Theme"
+            value={activePalette?.name || localBranding.palette_id || 'Standard'}
+            hint={`${palettes.length} Paletten verfügbar`}
+            tone="amber"
+          />
+          <AdminStatCard
+            icon={Euro}
+            label="Primärer Tarif"
+            value={localPricing.mode === 'per_time' ? 'Zeitbasiert' : 'Spielbasiert'}
+            hint={`${(localPricing.allowed_game_types || []).length || 0} Spieltypen freigegeben`}
+            tone="emerald"
+          />
+          <AdminStatCard
+            icon={RadioTower}
+            label="Trigger-Guard"
+            value={recommendedTriggerPreset}
+            hint="Observer-Authority mit lokalen Sicherheitsleitplanken"
+            tone="blue"
+          />
+        </AdminStatsGrid>
+
+        <Tabs defaultValue="branding" className="space-y-6">
         <TabsList className="bg-zinc-900 border border-zinc-800 p-1 flex flex-wrap h-auto gap-1">
           <TabsTrigger value="branding" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Palette className="w-4 h-4 mr-2" />
@@ -480,6 +549,10 @@ export default function AdminSettings() {
           <TabsTrigger value="kiosk-control" data-testid="tab-kiosk-control" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Timer className="w-4 h-4 mr-2" />
             Kiosk
+          </TabsTrigger>
+          <TabsTrigger value="triggers" data-testid="tab-trigger-policy" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
+            <RadioTower className="w-4 h-4 mr-2" />
+            Trigger Policy
           </TabsTrigger>
         </TabsList>
 
@@ -1438,6 +1511,17 @@ export default function AdminSettings() {
           </Card>
         </TabsContent>
 
+        <TabsContent value="triggers" className="space-y-6">
+          <TriggerPolicyPanel
+            policy={triggerPolicy}
+            metadata={triggerMetadata}
+            loading={triggerLoading}
+            saving={savingTriggers}
+            onChange={setTriggerPolicy}
+            onSave={handleSaveTriggers}
+          />
+        </TabsContent>
+
         {/* Kiosk Control Tab (v3.2.0) */}
         <TabsContent value="kiosk-control" className="space-y-6">
           {/* Post-Match Delay */}
@@ -1536,6 +1620,7 @@ export default function AdminSettings() {
           </Button>
         </TabsContent>
       </Tabs>
-    </div>
+      </div>
+    </AdminPage>
   );
 }
