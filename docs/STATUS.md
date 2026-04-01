@@ -10,6 +10,23 @@ The repo is now in a **coherent local-core state**:
 
 That said, this is **not yet fully production-proven**.
 
+## Operator surface update (latest pass)
+
+A new operator-facing polish pass has now landed on top of the local core:
+- admin navigation was reorganized around real venue tasks
+- dashboard / boards / revenue / settings were upgraded for clearer day-to-day operation
+- kiosk locked / in-game / result / observer-fallback screens were made more coherent and production-like
+- trigger-policy configuration now has a guarded admin UI plus backend validation/metadata support
+- board API responses were corrected to expose Autodarts target / agent endpoint fields needed by the admin board editor
+
+What was validated in this pass:
+- `frontend` production build completed successfully after the UI changes
+- `backend/tests/test_phase34_autodarts_triggers.py` passed (`8 passed`)
+- trigger metadata + board response schema changes were smoke-checked by direct runtime imports
+
+Known validation limit for this pass:
+- wider backend test subsets in this sandbox still hit missing environment dependencies in the provided venv (`httpx`, `requests`) before full collection, so broader reruns are still environment-blocked here
+
 The missing proof is outside this sandbox:
 - no real Windows board PC validation here
 - no live Autodarts session exercised here

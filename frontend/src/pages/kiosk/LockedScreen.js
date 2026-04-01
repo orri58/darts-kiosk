@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Lock, QrCode, Euro, Shield, Trophy, Crown, ShieldCheck, Target } from 'lucide-react';
+import { Crown, Euro, Lock, QrCode, Shield, ShieldCheck, Target, Trophy, WalletCards } from 'lucide-react';
 import { useI18n } from '../../context/I18nContext';
 import { useSettings } from '../../context/SettingsContext';
 import { QRCodeSVG } from 'qrcode.react';
@@ -19,7 +19,9 @@ function TopPlayersRotation() {
           const data = await res.json();
           setPlayers(data.players || []);
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     };
     fetchTop();
     const iv = setInterval(fetchTop, 60000);
@@ -28,30 +30,34 @@ function TopPlayersRotation() {
 
   useEffect(() => {
     if (players.length <= 1) return;
-    const iv = setInterval(() => setCurrent((c) => (c + 1) % players.length), 5000);
+    const iv = setInterval(() => setCurrent((value) => (value + 1) % players.length), 5000);
     return () => clearInterval(iv);
   }, [players.length]);
 
   if (players.length === 0) return null;
-  const p = players[current];
+  const player = players[current];
 
   return (
-    <div className="flex items-center gap-3 px-5 py-3 bg-zinc-800/50 border border-zinc-700 rounded-sm" data-testid="top-players-rotation">
-      <Crown className="w-5 h-5 text-amber-500 flex-shrink-0" />
-      <div className="min-w-0">
-        <p className="text-[11px] text-zinc-500 uppercase tracking-wider">{t('top_players_today')}</p>
-        <div className="flex items-center gap-2">
-          <span className="text-lg font-mono font-bold text-amber-400 truncate" data-testid="top-player-name">{p.nickname}</span>
-          <span className="text-xs text-zinc-500">{p.games_won}W / {p.games_played}G</span>
+    <div className="rounded-3xl border border-zinc-800 bg-zinc-950/75 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="top-players-rotation">
+      <div className="flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
+          <Crown className="h-5 w-5" />
         </div>
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{t('top_players_today')}</p>
+          <div className="mt-1 flex items-center gap-2">
+            <span className="truncate text-lg font-semibold text-white" data-testid="top-player-name">{player.nickname}</span>
+            <span className="text-xs text-zinc-500">{player.games_won}W / {player.games_played}G</span>
+          </div>
+        </div>
+        {players.length > 1 && (
+          <div className="flex gap-1">
+            {players.map((_, index) => (
+              <div key={index} className={`h-1.5 w-1.5 rounded-full ${index === current ? 'bg-amber-500' : 'bg-zinc-700'}`} />
+            ))}
+          </div>
+        )}
       </div>
-      {players.length > 1 && (
-        <div className="flex gap-1 ml-auto">
-          {players.map((_, i) => (
-            <div key={i} className={`w-1.5 h-1.5 rounded-full ${i === current ? 'bg-amber-500' : 'bg-zinc-700'}`} />
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -63,7 +69,6 @@ function TopStammkundenRotation() {
   const [fade, setFade] = useState(true);
   const { t } = useI18n();
 
-  // Fetch config + top registered players
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -74,7 +79,6 @@ function TopStammkundenRotation() {
         if (configRes.ok) {
           const cfg = await configRes.json();
           setConfig(cfg);
-          // Re-fetch with correct period if needed
           if (cfg.period !== 'month' || cfg.max_entries !== 3) {
             const updated = await fetch(`${API}/stats/top-registered?period=${cfg.period}&limit=${cfg.max_entries || 3}`);
             if (updated.ok) setData(await updated.json());
@@ -84,14 +88,17 @@ function TopStammkundenRotation() {
         } else if (dataRes.ok) {
           setData(await dataRes.json());
         }
-      } catch { /* silent */ }
+      } catch {
+        /* ignore */
+      }
     };
     fetchData();
-    const iv = setInterval(fetchData, 60000); // Re-fetch every 60s
+    const iv = setInterval(fetchData, 60000);
     return () => clearInterval(iv);
   }, []);
 
-  // Rotation timer with fade
+  const playerCount = data?.players?.length || 0;
+
   useEffect(() => {
     const players = data?.players || [];
     if (players.length <= 1) return;
@@ -99,24 +106,24 @@ function TopStammkundenRotation() {
     const iv = setInterval(() => {
       setFade(false);
       setTimeout(() => {
-        setCurrent((c) => (c + 1) % players.length);
+        setCurrent((value) => (value + 1) % players.length);
         setFade(true);
-      }, 300);
+      }, 280);
     }, interval);
     return () => clearInterval(iv);
-  }, [data?.players?.length, config?.interval_seconds]);
+  }, [playerCount, config?.interval_seconds, data?.players]);
 
-  // Don't render if disabled or no players
   if (!config?.enabled) return null;
   const players = data?.players || [];
   if (players.length === 0) {
-    // Fallback CTA when no registered players
     return (
-      <div className="px-5 py-4 bg-zinc-800/50 border border-zinc-700 rounded-sm" data-testid="stammkunde-cta">
+      <div className="rounded-3xl border border-zinc-800 bg-zinc-950/75 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="stammkunde-cta">
         <div className="flex items-center gap-3">
-          <ShieldCheck className="w-5 h-5 text-amber-500 flex-shrink-0" />
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+            <ShieldCheck className="h-5 w-5" />
+          </div>
           <div>
-            <p className="text-sm text-zinc-300">{t('become_stammkunde')}</p>
+            <p className="text-sm text-zinc-200">{t('become_stammkunde')}</p>
             <p className="text-xs text-zinc-500">{t('become_stammkunde_desc')}</p>
           </div>
         </div>
@@ -124,21 +131,19 @@ function TopStammkundenRotation() {
     );
   }
 
-  const p = players[current];
+  const player = players[current];
   const maxLen = config?.nickname_max_length || 15;
-  const displayName = p.nickname.length > maxLen ? p.nickname.slice(0, maxLen) + '...' : p.nickname;
+  const displayName = player.nickname.length > maxLen ? `${player.nickname.slice(0, maxLen)}...` : player.nickname;
 
   return (
-    <div className="px-5 py-4 bg-zinc-800/50 border border-amber-500/20 rounded-sm" data-testid="top-stammkunden-rotation">
-      <div className="flex items-center gap-2 mb-3">
-        <Trophy className="w-4 h-4 text-amber-500" />
-        <p className="text-[11px] text-amber-500/80 uppercase tracking-widest font-heading">
-          {t('top_stammkunden')}
-        </p>
+    <div className="rounded-3xl border border-amber-500/20 bg-[linear-gradient(135deg,rgba(245,158,11,0.10),rgba(24,24,27,0.95))] p-4 shadow-[0_20px_48px_rgba(0,0,0,0.28)]" data-testid="top-stammkunden-rotation">
+      <div className="mb-3 flex items-center gap-2">
+        <Trophy className="h-4 w-4 text-amber-400" />
+        <p className="text-[11px] uppercase tracking-[0.28em] text-amber-300">{t('top_stammkunden')}</p>
         {players.length > 1 && (
-          <div className="flex gap-1 ml-auto">
-            {players.map((_, i) => (
-              <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors duration-300 ${i === current ? 'bg-amber-500' : 'bg-zinc-700'}`} />
+          <div className="ml-auto flex gap-1">
+            {players.map((_, index) => (
+              <div key={index} className={`h-1.5 w-1.5 rounded-full ${index === current ? 'bg-amber-400' : 'bg-zinc-700'}`} />
             ))}
           </div>
         )}
@@ -146,44 +151,23 @@ function TopStammkundenRotation() {
 
       <div className={`transition-opacity duration-300 ${fade ? 'opacity-100' : 'opacity-0'}`} data-testid="stammkunde-card">
         <div className="flex items-center gap-4">
-          {/* Rank badge */}
-          <div className={`w-10 h-10 rounded-sm flex items-center justify-center flex-shrink-0 ${
-            current === 0 ? 'bg-amber-500/20 text-amber-400' :
-            current === 1 ? 'bg-zinc-600/30 text-zinc-300' :
-            'bg-orange-900/20 text-orange-400'
-          }`}>
-            <span className="text-lg font-heading font-bold">#{current + 1}</span>
+          <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${current === 0 ? 'bg-amber-500/20 text-amber-300' : current === 1 ? 'bg-zinc-700 text-zinc-200' : 'bg-orange-500/15 text-orange-300'}`}>
+            <span className="font-heading text-lg font-bold">#{current + 1}</span>
           </div>
-
-          {/* Player info */}
-          <div className="flex-1 min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="text-lg font-mono font-bold text-white truncate" data-testid="stammkunde-name">
-                {displayName}
-              </span>
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+              <span className="truncate text-lg font-semibold text-white" data-testid="stammkunde-name">{displayName}</span>
+              <ShieldCheck className="h-4 w-4 text-emerald-400" />
             </div>
-            <div className="flex items-center gap-3 mt-0.5">
-              <span className="text-xs text-zinc-500">
-                {p.games_won}S / {p.games_played}G
-              </span>
-              <span className="text-xs text-zinc-600">|</span>
-              <span className="text-xs text-zinc-400">
-                {p.win_rate}% Quote
-              </span>
+            <div className="mt-1 flex items-center gap-3 text-xs text-zinc-400">
+              <span>{player.games_won}S / {player.games_played}G</span>
+              <span className="text-zinc-600">•</span>
+              <span>{player.win_rate}% Quote</span>
             </div>
           </div>
-
-          {/* Highlight stat */}
-          {p.highlight && (
-            <div className={`px-3 py-1.5 rounded-sm text-xs font-mono font-bold flex-shrink-0 ${
-              p.highlight.type === '180+' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
-              p.highlight.type === 'checkout' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' :
-              p.highlight.type === 'throw' ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' :
-              'bg-zinc-700/50 text-zinc-400 border border-zinc-600'
-            }`} data-testid="stammkunde-highlight">
-              {p.highlight.type === '180+' && <Target className="w-3 h-3 inline mr-1" />}
-              {p.highlight.label}
+          {player.highlight && (
+            <div className="rounded-2xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-xs font-semibold text-zinc-200" data-testid="stammkunde-highlight">
+              {player.highlight.label}
             </div>
           )}
         </div>
@@ -192,7 +176,7 @@ function TopStammkundenRotation() {
   );
 }
 
-function PairingCode({ boardId }) {
+function PairingCode() {
   const [code, setCode] = useState('------');
   const [remaining, setRemaining] = useState(0);
   const { t } = useI18n();
@@ -205,7 +189,9 @@ function PairingCode({ boardId }) {
         setCode(data.code);
         setRemaining(data.expires_in);
       }
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   useEffect(() => {
@@ -216,21 +202,25 @@ function PairingCode({ boardId }) {
 
   useEffect(() => {
     if (remaining <= 0) return;
-    const iv = setInterval(() => setRemaining((r) => Math.max(0, r - 1)), 1000);
+    const iv = setInterval(() => setRemaining((value) => Math.max(0, value - 1)), 1000);
     return () => clearInterval(iv);
   }, [remaining]);
 
   const pct = Math.max(0, (remaining / 60) * 100);
 
   return (
-    <div className="flex items-center gap-4 px-5 py-3 bg-zinc-800/50 border border-zinc-700 rounded-sm" data-testid="pairing-code-display">
-      <Shield className="w-5 h-5 text-amber-500 flex-shrink-0" />
-      <div>
-        <p className="text-[11px] text-zinc-500 uppercase tracking-wider">{t('pairing_code')}</p>
-        <p className="text-2xl font-mono font-bold tracking-[0.3em] text-amber-400" data-testid="pairing-code-value">{code}</p>
-      </div>
-      <div className="w-12 h-1 bg-zinc-700 rounded-full overflow-hidden ml-auto">
-        <div className="h-full bg-amber-500 transition-all duration-1000 ease-linear" style={{ width: `${pct}%` }} />
+    <div className="rounded-3xl border border-zinc-800 bg-zinc-950/75 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="pairing-code-display">
+      <div className="flex items-center gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
+          <Shield className="h-5 w-5" />
+        </div>
+        <div>
+          <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{t('pairing_code')}</p>
+          <p className="text-2xl font-mono font-bold tracking-[0.25em] text-white" data-testid="pairing-code-value">{code}</p>
+        </div>
+        <div className="ml-auto w-16 overflow-hidden rounded-full bg-zinc-800">
+          <div className="h-1.5 bg-amber-500 transition-all duration-1000 ease-linear" style={{ width: `${pct}%` }} />
+        </div>
       </div>
     </div>
   );
@@ -242,11 +232,8 @@ export default function LockedScreen({ branding, pricing, boardId }) {
   const [qrConfig, setQrConfig] = useState(null);
   const [baseUrl, setBaseUrl] = useState('');
 
-  const formatPrice = (amount, currency = 'EUR') => {
-    return `${amount.toFixed(2)} ${currency}`;
-  };
+  const formatPrice = (amount, currency = 'EUR') => `${amount.toFixed(2)} ${currency}`;
 
-  // Fetch QR config and base URL
   useEffect(() => {
     const fetchQrConfig = async () => {
       try {
@@ -259,127 +246,97 @@ export default function LockedScreen({ branding, pricing, boardId }) {
           const data = await urlRes.json();
           setBaseUrl(data.base_url || '');
         }
-      } catch { /* silent */ }
+      } catch {
+        /* ignore */
+      }
     };
     fetchQrConfig();
   }, []);
 
   return (
-    <div className="h-full w-full flex flex-col texture-overlay" data-testid="locked-screen">
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col items-center justify-center relative z-10 px-8">
-        {/* Logo / Cafe Name */}
-        <div className="text-center mb-12">
-          {branding.logo_url ? (
-            <img 
-              src={branding.logo_url} 
-              alt={branding.cafe_name}
-              className="h-24 w-auto mx-auto mb-6"
-            />
-          ) : (
-            <div className="mb-4">
-              <h1 className="text-6xl font-heading font-bold uppercase tracking-wider text-white">
-                {branding.cafe_name}
-              </h1>
-              {branding.subtitle && (
-                <p className="text-xl text-zinc-400 mt-2">{branding.subtitle}</p>
+    <div className="relative h-full w-full overflow-hidden bg-zinc-950" data-testid="locked-screen">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(245,158,11,0.16),transparent_30%),linear-gradient(180deg,rgba(9,9,11,0.96),rgba(9,9,11,1))]" />
+      <div className="absolute inset-0 opacity-[0.08] texture-overlay" />
+
+      <div className="relative z-10 flex h-full flex-col px-6 py-6 lg:px-10 lg:py-8">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between rounded-3xl border border-zinc-800/80 bg-zinc-950/70 px-5 py-4 backdrop-blur">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500">Board {boardId}</p>
+            <h1 className="mt-1 text-2xl font-heading uppercase tracking-[0.08em] text-white">{branding.cafe_name}</h1>
+            {branding.subtitle && <p className="text-sm text-zinc-500">{branding.subtitle}</p>}
+          </div>
+          <div className="rounded-full border border-zinc-800 bg-zinc-900/80 px-4 py-2 text-sm text-zinc-300">
+            Admin Panel: <span className="font-mono text-white">/admin</span>
+          </div>
+        </div>
+
+        <div className="mx-auto grid w-full max-w-7xl flex-1 gap-6 py-8 lg:grid-cols-[1.2fr,0.8fr] lg:items-center">
+          <div className="space-y-6">
+            <div className="inline-flex h-20 w-20 items-center justify-center rounded-3xl border border-zinc-800 bg-zinc-900/80 text-zinc-400 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
+              <Lock className="h-10 w-10" strokeWidth={2.2} />
+            </div>
+            <div>
+              <h2 className="text-4xl font-heading uppercase tracking-[0.08em] text-white md:text-6xl" data-testid="locked-message">
+                {kioskTexts.locked_title || t('locked')}
+              </h2>
+              <p className="mt-4 max-w-2xl text-lg leading-8 text-zinc-400">
+                {kioskTexts.locked_subtitle || t('locked_message')}
+              </p>
+              {kioskTexts.pricing_hint && (
+                <p className="mt-3 text-sm uppercase tracking-[0.22em] text-amber-300">{kioskTexts.pricing_hint}</p>
               )}
             </div>
-          )}
-        </div>
 
-        {/* Lock Icon with Glow */}
-        <div className="relative mb-12">
-          <div className="w-32 h-32 rounded-full bg-zinc-900 border-4 border-zinc-700 flex items-center justify-center">
-            <Lock className="w-16 h-16 text-zinc-500" strokeWidth={2.5} />
-          </div>
-          <div className="absolute inset-0 rounded-full bg-zinc-700/20 blur-xl -z-10"></div>
-        </div>
-
-        {/* Lock Message */}
-        <div className="text-center mb-16">
-          <h2 className="text-4xl font-heading font-bold uppercase tracking-wider text-zinc-300 mb-4" data-testid="locked-message">
-            {kioskTexts.locked_title || t('locked')}
-          </h2>
-          <p className="text-2xl text-zinc-500">
-            {kioskTexts.locked_subtitle || t('locked_message')}
-          </p>
-          {kioskTexts.pricing_hint && (
-            <p className="text-lg text-zinc-600 mt-3">{kioskTexts.pricing_hint}</p>
-          )}
-        </div>
-
-        {/* Pricing Info */}
-        <div className="w-full max-w-2xl" data-testid="pricing-info">
-          <div className="bg-zinc-900/80 border-2 border-zinc-800 rounded-sm p-8">
-            <div className="flex items-center gap-3 mb-6">
-              <Euro className="w-6 h-6 text-amber-500" />
-              <h3 className="text-xl font-heading uppercase tracking-wider text-zinc-300">
-                {t('prices')}
-              </h3>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="text-center p-4 bg-zinc-800/50 rounded-sm border border-zinc-700">
-                <p className="text-zinc-500 uppercase text-sm mb-2">{t('per_game')}</p>
-                <p className="text-3xl font-mono font-bold text-white">
-                  {formatPrice(pricing.per_game?.price_per_credit || 2.0)}
-                </p>
+            <div className="grid gap-4 md:grid-cols-3" data-testid="pricing-info">
+              <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
+                <div className="flex items-center gap-2 text-sm text-zinc-500">
+                  <WalletCards className="h-4 w-4 text-amber-400" />
+                  {t('per_game')}
+                </div>
+                <p className="mt-4 text-3xl font-semibold text-white">{formatPrice(pricing.per_game?.price_per_credit || 2.0)}</p>
+                <p className="mt-2 text-sm text-zinc-500">Direkter Credit-Verkauf</p>
               </div>
-              <div className="text-center p-4 bg-zinc-800/50 rounded-sm border border-zinc-700">
-                <p className="text-zinc-500 uppercase text-sm mb-2">{t('per_30_min')}</p>
-                <p className="text-3xl font-mono font-bold text-white">
-                  {formatPrice(pricing.per_time?.price_per_30_min || 5.0)}
-                </p>
+              <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
+                <div className="flex items-center gap-2 text-sm text-zinc-500">
+                  <Euro className="h-4 w-4 text-amber-400" />
+                  {t('per_30_min')}
+                </div>
+                <p className="mt-4 text-3xl font-semibold text-white">{formatPrice(pricing.per_time?.price_per_30_min || 5.0)}</p>
+                <p className="mt-2 text-sm text-zinc-500">Kurzsession / Warm-up</p>
               </div>
-              <div className="text-center p-4 bg-zinc-800/50 rounded-sm border border-zinc-700">
-                <p className="text-zinc-500 uppercase text-sm mb-2">{t('per_60_min')}</p>
-                <p className="text-3xl font-mono font-bold text-white">
-                  {formatPrice(pricing.per_time?.price_per_60_min || 8.0)}
-                </p>
+              <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
+                <div className="flex items-center gap-2 text-sm text-zinc-500">
+                  <Euro className="h-4 w-4 text-amber-400" />
+                  {t('per_60_min')}
+                </div>
+                <p className="mt-4 text-3xl font-semibold text-white">{formatPrice(pricing.per_time?.price_per_60_min || 8.0)}</p>
+                <p className="mt-2 text-sm text-zinc-500">Längere freie Spielphase</p>
               </div>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Bottom Section: Top Players + Stammkunden */}
-      <div className="relative z-10 px-6 pb-4 space-y-2">
-        <div className="max-w-4xl mx-auto space-y-2">
-          <TopStammkundenRotation />
-          <TopPlayersRotation />
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div className="relative z-10 p-6 border-t border-zinc-800 bg-zinc-950/80">
-        <div className="flex items-center justify-between max-w-4xl mx-auto">
-          <div className="flex items-center gap-3 text-zinc-600">
-            <QrCode className="w-5 h-5" />
-            <span className="text-sm uppercase tracking-wider">{t('board')}: {boardId}</span>
+          <div className="space-y-4">
+            <PairingCode />
+            {qrConfig?.enabled && baseUrl ? (
+              <div className="rounded-3xl border border-zinc-800 bg-zinc-950/75 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="lockscreen-qr">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{qrConfig.label || 'Leaderboard'}</p>
+                    <p className="mt-2 text-sm leading-6 text-zinc-400">Stats & Ergebnisse direkt am Handy ansehen.</p>
+                  </div>
+                  <div className="rounded-2xl bg-white p-2">
+                    <QRCodeSVG value={`${baseUrl}${qrConfig.path || '/public/leaderboard'}`} size={72} bgColor="#ffffff" fgColor="#09090b" level="L" />
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            <TopStammkundenRotation />
+            <TopPlayersRotation />
           </div>
-          <PairingCode boardId={boardId} />
-          {qrConfig?.enabled && baseUrl && (
-            <div className="flex items-center gap-3" data-testid="lockscreen-qr">
-              <div className="text-right">
-                <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{qrConfig.label || 'Leaderboard'}</p>
-              </div>
-              <div className="bg-white p-1 rounded-sm">
-                <QRCodeSVG
-                  value={`${baseUrl}${qrConfig.path || '/public/leaderboard'}`}
-                  size={48}
-                  bgColor="#ffffff"
-                  fgColor="#09090b"
-                  level="L"
-                />
-              </div>
-            </div>
-          )}
-          {!qrConfig?.enabled && (
-            <div className="text-zinc-600 text-sm">
-              Staff Panel: <span className="font-mono">/admin</span>
-            </div>
-          )}
+        </div>
+
+        <div className="mx-auto w-full max-w-7xl rounded-3xl border border-zinc-800 bg-zinc-950/70 px-5 py-4 text-sm text-zinc-400 backdrop-blur">
+          Unlocks laufen lokal über den Operator. Kein Lizenz-/Zentral-Noise auf dem Startscreen — nur das, was Gäste hier wirklich brauchen.
         </div>
       </div>
     </div>

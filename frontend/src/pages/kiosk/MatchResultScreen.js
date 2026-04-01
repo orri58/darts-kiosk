@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Trophy, Target, Users, Clock, Share2 } from 'lucide-react';
+import { Clock, Share2, Target, Trophy, Users, Wallet } from 'lucide-react';
 
 const QR_DISPLAY_SECONDS = 60;
 
@@ -11,13 +11,13 @@ export default function MatchResultScreen({ branding, matchToken, session, onTim
 
   useEffect(() => {
     const iv = setInterval(() => {
-      setSecondsLeft((s) => {
-        if (s <= 1) {
+      setSecondsLeft((value) => {
+        if (value <= 1) {
           clearInterval(iv);
           onTimeout();
           return 0;
         }
-        return s - 1;
+        return value - 1;
       });
     }, 1000);
     return () => clearInterval(iv);
@@ -26,96 +26,89 @@ export default function MatchResultScreen({ branding, matchToken, session, onTim
   const pct = (secondsLeft / QR_DISPLAY_SECONDS) * 100;
 
   return (
-    <div className="h-full w-full flex flex-col bg-zinc-950" data-testid="match-result-screen">
-      {/* Header */}
-      <div className="p-6 border-b border-zinc-800">
-        <div className="flex items-center justify-between max-w-6xl mx-auto">
-          <h1 className="text-2xl font-heading font-bold uppercase tracking-wider text-white">
-            {branding?.cafe_name || 'Dart Zone'}
-          </h1>
-          <div className="flex items-center gap-2 bg-amber-500/20 text-amber-400 border border-amber-500/50 rounded-sm px-4 py-2">
-            <Trophy className="w-5 h-5" />
-            <span className="font-heading uppercase tracking-wider">SPIEL BEENDET</span>
+    <div className="relative h-full w-full overflow-hidden bg-zinc-950" data-testid="match-result-screen">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(245,158,11,0.16),transparent_28%),linear-gradient(180deg,rgba(9,9,11,0.96),rgba(9,9,11,1))]" />
+      <div className="relative z-10 flex h-full flex-col px-6 py-6 lg:px-10 lg:py-8">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between rounded-3xl border border-zinc-800 bg-zinc-950/70 px-5 py-4 backdrop-blur">
+          <div>
+            <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500">Match result</p>
+            <h1 className="mt-1 text-2xl font-heading uppercase tracking-[0.08em] text-white">{branding?.cafe_name || 'Dart Zone'}</h1>
+          </div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-300">
+            <Trophy className="w-4 h-4" /> Spiel beendet
           </div>
         </div>
-      </div>
 
-      {/* Main */}
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="flex flex-col lg:flex-row items-center gap-12 max-w-5xl w-full">
-          {/* Left: Match Info */}
-          <div className="flex-1 space-y-8 text-center lg:text-left">
+        <div className="mx-auto grid w-full max-w-7xl flex-1 gap-6 py-8 lg:grid-cols-[1fr,0.85fr] lg:items-center">
+          <div className="space-y-6">
             <div>
-              <div className="flex items-center justify-center lg:justify-start gap-3 mb-2">
-                <Target className="w-8 h-8 text-amber-500" />
-                <h2 className="text-5xl font-heading font-bold uppercase text-white" data-testid="match-game-type">
-                  {session?.game_type || 'DART'}
-                </h2>
+              <div className="flex items-center gap-3">
+                <div className="flex h-16 w-16 items-center justify-center rounded-3xl border border-zinc-800 bg-zinc-900/80 text-amber-400">
+                  <Target className="h-8 w-8" />
+                </div>
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500">Abgeschlossenes Spiel</p>
+                  <h2 className="text-5xl font-heading uppercase tracking-[0.08em] text-white md:text-6xl" data-testid="match-game-type">{session?.game_type || 'DART'}</h2>
+                </div>
               </div>
+              <p className="mt-4 max-w-2xl text-lg leading-8 text-zinc-400">
+                Ergebnis teilen, bevor der Screen automatisch zurück auf Locked fällt. Lokal, schnell, ohne unnötige Schritte.
+              </p>
             </div>
 
-            {/* Players */}
-            <div>
-              <div className="flex items-center justify-center lg:justify-start gap-2 mb-3">
-                <Users className="w-5 h-5 text-zinc-500" />
-                <span className="text-sm text-zinc-500 uppercase tracking-wider">Spieler</span>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
+                <div className="flex items-center gap-2 text-sm text-zinc-500">
+                  <Users className="h-4 w-4 text-zinc-400" /> Spieler
+                </div>
+                <div className="mt-4 flex flex-wrap gap-3">
+                  {session?.players?.map((player, index) => (
+                    <span
+                      key={index}
+                      className={`rounded-2xl border px-4 py-2 text-base font-medium ${index === 0 ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-zinc-700 bg-zinc-900 text-zinc-200'}`}
+                      data-testid={`match-player-${index}`}
+                    >
+                      {index === 0 && <Trophy className="mr-2 inline h-4 w-4" />}
+                      {player}
+                    </span>
+                  ))}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-3 justify-center lg:justify-start">
-                {session?.players?.map((player, i) => (
-                  <span
-                    key={i}
-                    className={`px-4 py-2 rounded-sm font-mono text-lg ${i === 0 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-zinc-800 text-zinc-300 border border-zinc-700'}`}
-                    data-testid={`match-player-${i}`}
-                  >
-                    {i === 0 && <Trophy className="w-4 h-4 inline mr-2" />}
-                    {player}
-                  </span>
-                ))}
-              </div>
-            </div>
 
-            {/* Share hint */}
-            <div className="flex items-center justify-center lg:justify-start gap-2 text-zinc-500">
-              <Share2 className="w-4 h-4" />
-              <span className="text-sm">QR-Code scannen um das Ergebnis zu teilen</span>
+              <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
+                <div className="flex items-center gap-2 text-sm text-zinc-500">
+                  <Wallet className="h-4 w-4 text-zinc-400" /> Session
+                </div>
+                <p className="mt-4 text-3xl font-semibold text-white">{session?.pricing_mode === 'per_time' ? `${session?.minutes_total || 0} min` : `${session?.credits_total || 0} Credits`}</p>
+                <p className="mt-2 text-lg text-zinc-400">{session?.price_total?.toFixed(2)} €</p>
+              </div>
             </div>
           </div>
 
-          {/* Right: QR Code */}
-          <div className="flex flex-col items-center gap-4">
-            <div className="bg-white p-6 rounded-sm" data-testid="match-qr-code">
-              <QRCodeSVG
-                value={matchUrl}
-                size={220}
-                level="M"
-                bgColor="#ffffff"
-                fgColor="#000000"
-              />
+          <div className="rounded-[2rem] border border-zinc-800 bg-zinc-950/75 p-6 shadow-[0_24px_60px_rgba(0,0,0,0.28)]">
+            <div className="flex items-center gap-2 text-sm text-zinc-400">
+              <Share2 className="h-4 w-4 text-amber-400" /> Ergebnis teilen
             </div>
-            <p className="text-xs text-zinc-600 font-mono text-center max-w-[280px] break-all">
-              {matchUrl}
-            </p>
-            <p className="text-sm text-zinc-500">24h gueltig</p>
+            <div className="mt-5 flex flex-col items-center gap-4">
+              <div className="rounded-[1.75rem] bg-white p-5" data-testid="match-qr-code">
+                <QRCodeSVG value={matchUrl} size={220} level="M" bgColor="#ffffff" fgColor="#000000" />
+              </div>
+              <p className="text-center text-sm leading-6 text-zinc-400">QR scannen, um das Match online zu öffnen oder weiterzuleiten.</p>
+              <p className="max-w-[320px] break-all text-center font-mono text-xs text-zinc-600">{matchUrl}</p>
+              <div className="inline-flex items-center rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-xs uppercase tracking-[0.22em] text-zinc-500">24h gültig</div>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Footer: countdown */}
-      <div className="p-4 border-t border-zinc-800 bg-zinc-950/80">
-        <div className="max-w-4xl mx-auto">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-zinc-600 uppercase tracking-wider flex items-center gap-1">
-              <Clock className="w-3 h-3" /> Zurueck zum Startbildschirm in
+        <div className="mx-auto w-full max-w-7xl rounded-3xl border border-zinc-800 bg-zinc-950/70 px-5 py-4 backdrop-blur">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="flex items-center gap-1 text-xs uppercase tracking-[0.22em] text-zinc-500">
+              <Clock className="w-3 h-3" /> Zurück zum Startscreen in
             </span>
-            <span className="text-sm font-mono text-zinc-400" data-testid="match-countdown">
-              {secondsLeft}s
-            </span>
+            <span className="text-sm font-mono text-zinc-300" data-testid="match-countdown">{secondsLeft}s</span>
           </div>
-          <div className="w-full h-1 bg-zinc-800 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-amber-500 transition-all duration-1000 ease-linear"
-              style={{ width: `${pct}%` }}
-            />
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+            <div className="h-full bg-amber-500 transition-all duration-1000 ease-linear" style={{ width: `${pct}%` }} />
           </div>
         </div>
       </div>

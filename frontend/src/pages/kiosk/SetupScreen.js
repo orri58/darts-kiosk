@@ -344,6 +344,42 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
       {/* Main Content */}
       <div className="flex-1 overflow-auto p-8">
         <div className="max-w-6xl mx-auto">
+          <div className="grid gap-4 mb-8 lg:grid-cols-[1.15fr,0.85fr]">
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
+              <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500 mb-3">Setup flow</p>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className={`rounded-2xl border px-4 py-3 ${step === 1 ? 'border-amber-500/40 bg-amber-500/10' : 'border-zinc-800 bg-zinc-950/70'}`}>
+                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Schritt 1</p>
+                  <p className="mt-1 font-medium text-white">Spiel wählen</p>
+                  <p className="mt-1 text-sm text-zinc-500">301, 501, Cricket oder Training.</p>
+                </div>
+                <div className={`rounded-2xl border px-4 py-3 ${step === 2 ? 'border-amber-500/40 bg-amber-500/10' : 'border-zinc-800 bg-zinc-950/70'}`}>
+                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Schritt 2</p>
+                  <p className="mt-1 font-medium text-white">Spieler vorbereiten</p>
+                  <p className="mt-1 text-sm text-zinc-500">Namen, Stammkunden-PIN und Startfreigabe.</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
+              <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500 mb-3">Session summary</p>
+              <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Modus</p>
+                  <p className="mt-1 font-medium text-white">{session?.pricing_mode === 'per_time' ? 'Zeitbasiert' : 'Spielbasiert'}</p>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Spiel</p>
+                  <p className="mt-1 font-medium text-white">{selectedGame || 'Noch nicht gewählt'}</p>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Spieler</p>
+                  <p className="mt-1 font-medium text-white">{players.filter(p => p.trim().length > 0).length} / {maxPlayers}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Step 1: Game Type */}
           {step === 1 && (
             <div className="animate-slide-up" data-testid="step-game-type">
