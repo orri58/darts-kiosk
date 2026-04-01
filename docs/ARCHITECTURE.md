@@ -1,202 +1,269 @@
 # Architecture
 
-## Current target architecture (Phase 2)
+This document describes the **current runtime architecture**, not the repo's old recovery mythology.
 
-The repo is **not** a single homogeneous system anymore.
+The key design decision is simple:
 
-The correct mental model is:
+> protect the local board runtime first; treat central, portal, and experimental surfaces as optional overlays unless they are re-proven end to end.
 
-1. **stable local core** first
-2. **operator surfaces** on top of that core
-3. **optional adapters** outside the core
-4. **dormant / not-yet-reintegrated modules** kept off the default runtime path
+## 1. System model
 
-That is the only layering consistent with the recovered code, the local-core audit, and the current Phase 2 cleanup.
+The application is split into three practical layers.
 
----
+### 1.1 Protected local core
 
-## 1. Layer map
+This is the part that must keep a board usable even when central services are unavailable.
 
-### Layer 0 — Local core (default, protected)
+Core responsibilities:
+- local authentication and admin control
+- board unlock / extend / lock
+- session persistence in SQLite
+- settings stored locally in SQLite JSON blobs
+- observer-first Autodarts integration
+- authoritative start/finish handling
+- pricing / credits / time-capacity enforcement
+- local WebSocket fanout and polling fallback
+- local revenue/reporting views based on stored session rows
 
-This is the product that must keep working even if every central/licensing piece is absent.
-
-**Responsibilities**
-- local auth
-- local board/session persistence
-- unlock / extend / lock
-- observer-first kiosk session lifecycle
-- session finalization
-- local settings
-- local revenue / reports
-- local websocket fanout
-- local watchdog / backup / health / update helpers
-
-**Primary backend modules**
-- `backend/database.py`
+Primary modules:
+- `backend/server.py`
 - `backend/models/__init__.py`
+- `backend/database.py`
 - `backend/dependencies.py`
-- `backend/schemas.py`
-- `backend/routers/auth.py`
+- `backend/runtime_features.py`
 - `backend/routers/boards.py`
 - `backend/routers/kiosk.py`
 - `backend/routers/settings.py`
 - `backend/routers/admin.py`
-- `backend/routers/backups.py`
-- `backend/routers/updates.py`
-- `backend/routers/agent.py`
-- `backend/routers/discovery.py`
-- `backend/routers/matches.py`
-- `backend/routers/stats.py`
-- `backend/routers/players.py`
+- `backend/services/session_pricing.py`
 - `backend/services/autodarts_observer.py`
 - `backend/services/ws_manager.py`
+- `backend/services/scheduler.py`
+- `frontend/src/pages/kiosk/*`
+- `frontend/src/pages/admin/*`
+- `frontend/src/context/*`
 
-**Primary frontend surfaces**
-- `/kiosk`
-- `/admin`
-- local contexts: `AuthContext`, `SettingsContext`, `I18nContext`
+### 1.2 Optional adapter ring
 
-**Local-core rules**
-- local play must not depend on central reachability
-- observer lifecycle stays local and authoritative
-- board unlock creates local DB state before side effects
-- session finalization remains local and idempotent
-- unsupported modes must not be advertised as stable
+This exists in the repo but is **not** the protected production baseline.
 
----
+Typical examples:
+- Layer A heartbeat / central visibility
+- central proxy routes
+- config sync / telemetry / offline queue / action poller
+- portal-facing surfaces
 
-### Layer 1 — Operator-facing local surfaces
+Current expectation:
+- adapters may be enabled explicitly
+- adapter failure must not block local unlock/play/lock
+- local-core modules must not depend on central success to function
 
-These are still part of the local product, but they must stay aligned with the real local-core capabilities.
+### 1.3 Legacy / incomplete surfaces
 
-**Currently operator-facing and supported**
-- board unlock / extend / lock
-- `per_game`
-- `per_time`
-- branding / pricing / sound / language / kiosk texts / PWA / kiosk control
-- public leaderboard QR on lock screen
-- QR match sharing only when a session truly ends
-
-**Stable in backend lifecycle, but not fully surfaced in local UI yet**
-- `per_player`
-- Autodarts trigger policy config
-
-**Explicitly hidden/degraded in current local UI**
-- call-staff UI is hidden by default
-- observer-mode unlock now fails clearly if the board has no `autodarts_target_url`
-
-That last point is intentional: observer-first local runtime is safer with an honest block than with a fake unlocked state that cannot launch the real gameplay surface.
-
----
-
-### Layer 2 — Optional adapter ring (opt-in)
-
-This layer is allowed to exist, but it is **outside** the stable local runtime path.
-
-**Examples**
-- Layer A central heartbeat
-- `/api/central/*` visibility proxy
-- `/portal` frontend routes
-
-**Phase 2 rule**
-- adapters are mounted only through explicit seams
-- adapters are opt-in
-- adapters may observe local state, but must not destabilize local play
-
-**Current gates**
-- backend: `backend/runtime_features.py`
-- route composition: `backend/app_layers.py`
-- frontend route surface: `frontend/src/runtimeFeatures.js`
-
-**Default behavior**
-- `ENABLE_CENTRAL_ADAPTERS` unset/false → no central adapter startup, no mounted central proxy
-- `ENABLE_PORTAL_SURFACE` only matters when central adapters are enabled
-
-So the default product path is again: **local only**.
-
----
-
-### Layer 3 — Dormant / not yet reintegrated modules
-
-These modules may stay in the repo, but they are **not** current product truth.
+These still exist in the tree or UI, but should not be mistaken for battle-tested core behavior.
 
 Examples:
-- `backend/routers/licensing.py`
-- `backend/services/license_service.py`
-- `backend/services/license_sync_client.py`
-- `backend/services/config_sync_client.py`
-- `backend/services/action_poller.py`
-- `backend/services/telemetry_sync_client.py`
-- `backend/services/ws_push_client.py`
-- `central_server/*`
-- legacy portal/operator pages not mounted in the default app flow
+- call-staff UX path
+- some manual/setup-mode assumptions in kiosk flow
+- assorted legacy regression suites that target preview deployments rather than the current local-core contract
 
-They are staging material for later reintegration, not part of the baseline runtime contract.
+## 2. Runtime composition
 
----
+## 2.1 Startup
 
-## 2. Explicit seams added in Phase 2
+Entrypoint: `backend/server.py`
 
-### Runtime feature seam
-- `backend/runtime_features.py`
-- `frontend/src/runtimeFeatures.js`
+Startup does the following:
+1. loads env/secrets
+2. initializes the database
+3. seeds default admin/staff users if missing
+4. seeds `BOARD-1` and `BOARD-2` if missing
+5. seeds default settings blobs if missing
+6. starts local background services such as scheduler, backup, health monitor, update checks, watchdog, and mDNS
+7. mounts local-core API routers under `/api`
+8. mounts optional adapter routes only when runtime flags permit them
 
-Purpose:
-- central surface is explicit instead of ambient
-- local supported pricing modes are explicit
-- incomplete UI surfaces can be hidden without rewriting the whole app
+Important nuance:
+- the codebase contains central/adapter wiring
+- the **default design intent** is still local-first
+- docs and validation should describe that honestly, not pretend the repo is purely local or purely centralized
 
-### Route composition seam
-- `backend/app_layers.py`
+## 2.2 Data model
 
-Purpose:
-- local-core routers mount by default
-- adapter routers mount only when explicitly enabled
-- `backend/server.py` stops being a grab-bag of local + central wiring
+Core persistent entities:
+- `Board` — local board identity and status (`locked`, `unlocked`, `in_game`, `offline`)
+- `Session` — pricing mode, capacity, price, timestamps, players, and end reason
+- `Settings` — local JSON config blobs
+- `AuditLog` — operator/admin actions
+- `MatchResult` — optional public result sharing tokenized record
+- `Player` — guest/registered nickname stats
 
----
+### Session truth model
 
-## 3. Supported local flow
+A `Session` is the local source of truth for:
+- capacity sold (`credits_total`, `minutes_total`, `players_count`)
+- capacity remaining (`credits_remaining`, `expires_at`)
+- recorded sale amount (`price_total`)
+- lifecycle state (`active`, `finished`, `expired`, `cancelled`)
+- player names if captured
 
-### Board/session flow
-1. admin unlocks board locally
-2. local DB session is created
-3. if runtime is observer mode, board must already have `autodarts_target_url`
-4. observer starts against the configured target
-5. `finalize_match()` remains the authority for credit/time/session-end decisions
-6. if credits/time remain, observer stays alive
-7. if session truly ends, board locks and kiosk UI is restored
+There is **no dedicated payment ledger** yet. Revenue and accounting views derive from `Session.price_total`.
 
-### Supported pricing modes in backend lifecycle
-- `per_game`
-- `per_player`
-- `per_time`
+## 3. Board/session lifecycle
 
-### Still not fully surfaced in local operator UI
-- `per_player`
-- trigger-policy editing
+## 3.1 Unlock
 
----
+Route: `POST /api/boards/{board_id}/unlock`
 
-## 4. Match result / QR sharing rule
+Flow:
+1. validate board exists
+2. validate pricing mode is supported by the local core
+3. in observer mode, require an Autodarts target URL
+4. ensure no active session already exists
+5. seed session capacity from pricing mode
+6. create `Session(status=active)`
+7. set board status to `unlocked`
+8. broadcast local state update
+9. if configured, start observer / desktop side effects
 
-QR match sharing is now aligned with the real session lifecycle:
-- if the session actually ends, a match token may be created
-- if credits/time remain and the board stays active, the local kiosk flow wins and no operator-facing result QR interrupts it
+Protected behavior:
+- local DB state is written before observer side effects matter
+- central connectivity is not part of the unlock path
 
-This matches the observer-first local core better than the previous hybrid behavior.
+## 3.2 Start of play
 
----
+Authoritative path: observer callback `_on_game_started()` in `backend/routers/kiosk.py`
 
-## 5. What must stay true in future phases
+What happens:
+- board moves to `in_game`
+- `per_player` sessions charge exactly once at authoritative start-of-play
+- `per_game` and `per_time` sessions do not charge at start
+- a start sound/event is broadcast
 
-Any central/licensing reintegration must satisfy all of these:
+This is why the repo is described as **observer-first**. The kiosk UI can register names/game type, but the authoritative gameplay start is the observer callback.
 
-1. **Local auth remains local unless explicitly replaced with a proven boundary.**
-2. **Board unlock/finalize must continue to work with no central connectivity.**
-3. **Adapters fail detached, not by corrupting local runtime flow.**
-4. **New modes are hidden until lifecycle/accounting semantics are complete.**
-5. **Mounted routes and startup services must reflect reality, not aspiration.**
+## 3.3 Finish of play
 
-If a change violates one of those, it belongs outside the local-core path until proven safe.
+Authoritative path: `finalize_match(board_id, trigger)` in `backend/routers/kiosk.py`
+
+Responsibilities:
+- duplicate-finalize protection
+- capacity consumption on authoritative finish when applicable
+- keep-alive vs teardown decision
+- session close / board lock when capacity is exhausted
+- optional match-result record creation
+- player stat increments when match completion is recorded
+- observer teardown or return-home behavior
+- local WebSocket fanout and kiosk refresh coordination
+- timeout recovery path
+
+This is the main lifecycle choke point and the most important contract to protect.
+
+## 3.4 Manual lock
+
+Route: `POST /api/boards/{board_id}/lock`
+
+Behavior:
+- active session becomes `cancelled`
+- `ended_reason=manual_lock`
+- board moves to `locked`
+- observer shutdown is requested
+
+Manual lock is an operator override, not a match finish.
+
+## 4. Pricing and capacity rules
+
+Implementation spine:
+- `backend/services/session_pricing.py`
+- `backend/routers/boards.py`
+- `backend/routers/kiosk.py`
+
+### `per_game`
+- capacity is `credits_remaining`
+- one authoritative finish consumes one credit
+- assistive finish hints do not consume credit
+- if credits remain, board stays unlocked and observer remains alive
+- if credits hit zero, board locks and session ends
+
+### `per_player`
+- unlock seeds credits from player count
+- authoritative start-of-play consumes the whole player count once
+- finish does not add a second charge
+- practical effect: one paid match for the registered player count unless extended/unlocked again
+
+### `per_time`
+- no credit deduction per match
+- capacity is time until `expires_at`
+- match finish only decides whether time remains; if yes, session stays alive
+
+Full billing notes live in `docs/CREDITS_PRICING.md`.
+
+## 5. Autodarts integration model
+
+This is **not** a clean server-to-server API integration.
+
+It is a browser observer around `play.autodarts.io` using:
+- Playwright WebSocket capture
+- console heuristics
+- DOM fallback heuristics
+- Windows foreground/window choreography for kiosk vs Autodarts
+
+Practical trust ladder:
+1. authoritative WebSocket signals
+2. assistive WebSocket hints
+3. console/DOM diagnostics
+
+Billing-critical actions should stay tied to the top of that ladder.
+
+See `docs/AUTODARTS_ANALYSIS.md` for the detailed evidence.
+
+## 6. Local settings and realtime model
+
+### Settings
+- stored in `Settings.value` JSON blobs
+- lazily created with defaults
+- frontend also has some fallback defaults so kiosk/admin can still render in degraded conditions
+
+### Realtime
+- push: `/api/ws/boards` via `backend/services/ws_manager.py`
+- pull fallback: frontend polling in kiosk/admin flows
+
+That push+poll redundancy is intentional and should stay.
+
+## 7. Revenue and reporting model
+
+Current accounting model:
+- revenue is derived from `Session.price_total`
+- revenue summary is booked revenue from closed sessions in the selected period
+- reports expose session history and local bookkeeping views
+- there is still no payment ledger or reconciliation layer
+
+Important limitation:
+- this is acceptable for local operator reporting
+- it is not yet a full finance/accounting subsystem
+
+## 8. Deployment modes
+
+### Developer / local Linux workflow
+- run backend from repo root via `python -m uvicorn backend.server:app`
+- run frontend separately with `yarn start`
+- use pytest suites for local-core validation
+
+### Windows board PC workflow
+- use `release/windows/*.bat`
+- prepare persistent Autodarts profile via `setup_profile.bat`
+- validate with `smoke_test.bat`
+- perform live observer/kiosk checks on the actual machine
+
+## 9. Known risks and intentionally deferred areas
+
+Still risky / not fully validated:
+- real Windows foreground/focus behavior
+- long-running live Autodarts observer reliability
+- stale legacy tests that still describe older recovery assumptions
+- optional/legacy surfaces that look more complete than they are
+
+The architectural stance for now is conservative:
+- keep the local core small and explicit
+- document incomplete surfaces honestly
+- do not pretend sandbox validation replaced real-machine proof

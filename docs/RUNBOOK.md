@@ -1,8 +1,16 @@
 # Runbook
 
-This runbook is for operating a local board PC in the real world.
+This runbook is for operating or debugging a **local board PC**.
 
-## Daily operator commands
+Use it for:
+- normal startup/shutdown
+- smoke validation after updates
+- observer/profile recovery
+- checking whether a board is actually usable for local play
+
+This document assumes the current baseline is **local-first**. Central connectivity may exist, but local play should not depend on it.
+
+## 1. Daily operator commands
 
 ### Start
 ```bat
@@ -14,145 +22,226 @@ release\windows\start.bat
 release\windows\stop.bat
 ```
 
-### Quick smoke check
+### Smoke check
 ```bat
 release\windows\smoke_test.bat
 ```
 
-## Expected healthy state
+### Rebuild dependencies / environment
+```bat
+release\windows\setup_windows.bat
+```
 
-A healthy local machine should have all of these:
-- `/api/health` returns 200
-- `/api/boards` returns the configured board id
-- `/api/kiosk/<BOARD_ID>/observer-status` returns JSON, not a crash/timeout
-- kiosk page loads in Chrome
-- board status changes are reflected without backend exceptions
-- local play still works if central connectivity disappears
+### Recreate the persistent Autodarts profile
+```bat
+release\windows\setup_profile.bat
+```
 
-## Main URLs
+## 2. Expected healthy state
 
-Replace `<BOARD_ID>` with the value from `backend\.env`.
+A healthy board PC should have all of the following:
+- `GET /api/health` returns `200`
+- `GET /api/boards` returns the expected board id
+- `GET /api/kiosk/<BOARD_ID>/observer-status` returns JSON instead of timing out/crashing
+- admin UI loads
+- kiosk UI loads
+- unlocking creates an active session
+- locking cancels the active session and restores locked state
+- if the observer is configured, it can open the correct Autodarts profile/session
+- central outages do not prevent local unlock/play/lock flows
+
+## 3. Main URLs
+
+Replace `<BOARD_ID>` with the board id configured on that machine.
 
 - Kiosk UI: `http://localhost:8001/kiosk/<BOARD_ID>`
 - Admin UI: `http://localhost:8001/admin`
 - Health: `http://localhost:8001/api/health`
 - Boards: `http://localhost:8001/api/boards`
+- Board session: `http://localhost:8001/api/boards/<BOARD_ID>/session`
 - Observer status: `http://localhost:8001/api/kiosk/<BOARD_ID>/observer-status`
 - Version: `http://localhost:8001/api/system/version`
 
-## Core operational checks
+## 4. First checks when something feels off
 
-### 1. Board assignment
-- open Admin
-- confirm the configured `BOARD_ID` exists
-- confirm the physical board PC is pointed at the same id in `backend\.env`
-- if the wrong board is used, fix `BOARD_ID`, stop, then start again
+### 4.1 Confirm board identity
+Check `backend\.env`:
+- `BOARD_ID`
+- `AUTODARTS_MODE`
+- `AUTODARTS_HEADLESS`
+- `AUTODARTS_MOCK`
 
-### 2. Autodarts observer
-If observer-related play automation is expected:
-- verify `AUTODARTS_MODE=observer`
-- verify `AUTODARTS_HEADLESS=false` during debugging
-- run `setup_profile.bat` again if login/session looks stale
-- inspect `data\autodarts_debug\` for screenshots
+Then confirm:
+- the same board exists in `/api/boards`
+- the kiosk URL uses the same board id
+- the Autodarts profile path belongs to the same board
 
-### 3. Session / credits flow
-For a pay-to-play board:
-- unlock or start a session from the UI
-- verify the board transitions from `locked` -> `unlocked` / `in_game`
-- verify credits decrement as matches complete
-- verify the board returns to `locked` when credits/session end
+A wrong `BOARD_ID` causes a shocking amount of fake mystery.
 
-## Logs
+### 4.2 Confirm board/session state
+Check:
+- `/api/boards/<BOARD_ID>`
+- `/api/boards/<BOARD_ID>/session`
+- `/api/kiosk/<BOARD_ID>/observer-status`
+
+Questions to answer quickly:
+- is the board `locked`, `unlocked`, or `in_game`?
+- is there an active session?
+- how many credits remain, or what is the time state?
+- is the observer actually open/running?
+
+### 4.3 Confirm local backend health before blaming Autodarts
+If these fail, stop looking at browser/observer symptoms first:
+- `/api/health`
+- `/api/system/version`
+- `/api/boards`
+
+If the backend is not healthy, observer recovery will not save you.
+
+## 5. Core operational flows
+
+## 5.1 Unlock flow
+Expected:
+1. board starts `locked`
+2. admin/staff unlocks board
+3. active session is created
+4. board becomes `unlocked`
+5. if observer mode is configured, observer starts for that board
+
+If unlock fails, check:
+- board exists
+- board has an Autodarts target URL when observer mode requires it
+- board does not already have an active session
+- pricing mode is one of `per_game`, `per_player`, `per_time`
+
+## 5.2 Start-of-play flow
+Expected:
+1. session already exists
+2. observer sees authoritative gameplay start
+3. board becomes `in_game`
+4. `per_player` capacity charges once here
+
+If `per_player` sessions look wrong, check whether the operator-entered player count/names match what was intended.
+
+## 5.3 Finish-of-play flow
+Expected:
+1. observer sees authoritative finish or staff ends manually
+2. `finalize_match()` runs
+3. credit/time capacity is evaluated
+4. board either:
+   - stays alive for next game, or
+   - locks and tears down observer
+
+If a board locks too early or not at all, inspect:
+- pricing mode
+- `credits_remaining`
+- `expires_at`
+- observer trigger reason in logs
+
+## 5.4 Manual lock flow
+Expected:
+1. operator locks board
+2. active session becomes `cancelled`
+3. `ended_reason=manual_lock`
+4. board returns to `locked`
+5. observer shutdown is requested
+
+## 6. Logs and artifacts
 
 Look here first:
 - `data\logs\app.log`
 - `logs\backend.log`
 - `data\autodarts_debug\`
 
-What to search for:
+Useful search terms:
+- `SESSION`
 - `AUTODARTS`
-- `SESSION_`
-- `CREDIT`
-- `ACTION-POLL`
+- `Observer->Kiosk`
+- `RETURN_HOME`
+- `KIOSK_UI`
+- `board_status`
 - `CONFIG-SYNC`
-- `HEARTBEAT`
+- `ACTION-POLL`
 - `TELEMETRY`
-- `OFFLINE-Q`
 
-## Local-first / central outage behavior
+## 7. Troubleshooting recipes
 
-Central connectivity is optional for the local core.
+## 7.1 Backend will not come up
 
-If the central side is down, the expected behavior is:
-- backend stays up
-- observer/session flow keeps working locally
-- central heartbeat/config/telemetry paths back off and log warnings
-- local operator actions do not block on central responses
-
-If local play stops because of a central outage, that is a bug.
-
-## Troubleshooting
-
-### Backend does not come up
 Check:
 - `logs\backend.log`
 - `data\logs\app.log`
 - Python/venv activation
-- VC++ redistributable if import errors mention `greenlet`
+- VC++ redistributable if imports fail around `greenlet`
 
-Quick response:
+Recovery:
 1. `release\windows\stop.bat`
-2. rerun `release\windows\setup_windows.bat` if dependencies changed
+2. `release\windows\setup_windows.bat`
 3. `release\windows\start.bat`
 4. `release\windows\smoke_test.bat`
 
-### Wrong board opens in kiosk mode
+## 7.2 Wrong board opens or wrong profile is reused
+
 Cause:
-- `BOARD_ID` mismatch between Windows scripts and app data
+- `BOARD_ID` mismatch between backend config and operator assumptions
 
 Fix:
 1. edit `backend\.env`
-2. set correct `BOARD_ID`
+2. correct `BOARD_ID`
 3. stop/start again
-4. verify `/api/boards`
+4. re-check `/api/boards`
 
-### Chrome or observer looks stuck after restart
+## 7.3 Observer opens but login/session is gone
+
+Fix:
+1. stop the app
+2. run `release\windows\setup_profile.bat`
+3. sign in again inside the persistent profile
+4. close Chrome normally
+5. start the app again
+
+Artifacts to inspect after failure:
+- `data\autodarts_debug\`
+- observer status endpoint
+
+## 7.4 Chrome/observer looks stuck after restart
+
 Cause:
-- stale profile-tied Chrome processes
+- stale Chrome processes or broken profile reuse
 
 Fix:
 1. `release\windows\stop.bat`
-2. verify Chrome is gone in Task Manager
+2. confirm Chrome is really gone in Task Manager
 3. start again
 
-Phase 5/6 scripts now kill Chrome using profile paths, not flaky window-title matching.
+Phase 5/6 already improved Chrome cleanup by targeting profile paths instead of window titles.
 
-### Autodarts login keeps disappearing
-Fix path:
-1. stop the app
-2. run `release\windows\setup_profile.bat`
-3. sign in again
-4. close Chrome normally
-5. start again
+## 7.5 Credits/session behavior looks wrong
 
-### Observer status endpoint returns errors or empty data
 Check:
-- board exists in `/api/boards`
-- `BOARD_ID` matches
-- `AUTODARTS_MODE` is correct
-- Playwright/Chrome are installed
-- `data\autodarts_debug\` for screenshots
-
-### Credits/session behavior looks wrong
-Check:
-- board status in Admin/API
-- observer status endpoint
-- recent app logs for match finalization / credit consumption
+- board status in Admin or `/api/boards/<BOARD_ID>`
+- active session row via `/api/boards/<BOARD_ID>/session`
+- recent finalize/start logs
 - pricing settings in Admin
 
-## Recovery actions
+Remember:
+- `per_player` charges at authoritative start, not finish
+- `per_game` charges at authoritative finish/manual end
+- `per_time` uses `expires_at`, not credit deduction
 
-### Rebuild a machine after dependency drift
+## 7.6 Central outage suspicion
+
+Expected behavior during central trouble:
+- local backend still runs
+- local observer/session flow still works
+- optional sync/heartbeat loops log warnings/backoff
+- unlock/play/lock does not block on remote success
+
+If central problems stop local play, treat that as a bug.
+
+## 8. Recovery actions
+
+### Full rebuild after drift
 ```bat
 release\windows\stop.bat
 release\windows\setup_windows.bat
@@ -160,14 +249,14 @@ release\windows\start.bat
 release\windows\smoke_test.bat
 ```
 
-### Reset only the kiosk UI browser profile
-Delete or archive:
+### Reset kiosk UI browser profile only
+Archive/delete:
 - `data\kiosk_ui_profile`
 
 Then start again.
 
-### Reset only the Autodarts observer browser profile
-Delete or archive:
+### Reset Autodarts observer profile only
+Archive/delete:
 - `data\chrome_profile\<BOARD_ID>`
 
 Then rerun:
@@ -175,32 +264,34 @@ Then rerun:
 release\windows\setup_profile.bat
 ```
 
-Do **not** delete both profiles casually on a live board unless you want a re-login session.
+Do not casually delete both profiles on a live board unless you want to rebuild the whole login/session state.
 
-## Validation commands
+## 9. Validation checklist after update
 
-### API smoke test
-```bat
-release\windows\smoke_test.bat
-```
+Minimum:
+1. `start.bat`
+2. `smoke_test.bat`
+3. open Admin and Kiosk UI
+4. verify correct board id
+5. unlock board
+6. verify active session and observer status
+7. lock board
+8. verify session is cancelled and board returns to locked
 
-### Direct Python smoke test
-```bat
-python scripts\local_smoke.py --base-url http://localhost:8001 --board-id BOARD-1
-```
+Live validation still required beyond this repo:
+- real Autodarts match start
+- real authoritative finish
+- real keep-alive / next-game behavior
+- real window-focus behavior on Windows kiosk hardware
 
-### Observer status check
-```text
-GET /api/kiosk/BOARD-1/observer-status
-```
+## 10. Escalation bundle
 
-## Escalate / still broken
-
-If the machine still fails after the runbook steps, capture:
+If the board still fails after runbook steps, collect:
 - `data\logs\app.log`
 - `logs\backend.log`
-- the output of `smoke_test.bat`
-- any files from `data\autodarts_debug\`
-- the exact `BOARD_ID` and Autodarts-related env settings
+- output from `smoke_test.bat`
+- any files in `data\autodarts_debug\`
+- `BOARD_ID` and Autodarts-related env settings
+- whether the failure happened on unlock, start-of-play, finish, or lock
 
-That is enough to debug most real failures without doing séance work in production.
+That is enough to debug most real failures without guessing wildly.

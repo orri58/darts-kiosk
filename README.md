@@ -1,191 +1,172 @@
-# Darts Kiosk — Cafe Dartboard Management System
+# Darts Kiosk
 
-A production-grade kiosk system for cafes and bars with dartboards. Each dartboard gets a dedicated Mini-PC running this software. Staff unlock boards for customers, the system manages sessions, pricing, and integrates with [Autodarts](https://autodarts.io) for automated scoring.
+Local-first darts board control and kiosk software for venue operation.
 
-## Current Status: `v4.0.0-recovery`
+The current repo state is centered on a **protected local core**:
+- local auth, boards, sessions, settings, admin UI
+- observer-first Autodarts integration via Playwright/Chrome
+- pricing / credits / session lifecycle in local SQLite
+- local WebSocket updates with polling fallback
+- Windows operator scripts for bring-up and smoke checks
 
-The system underwent a recovery to restore stability after a series of regressions introduced by central server / licensing features (v3.4–v3.15). The **local core** is now stable and fully tested. Central/portal features are disabled and will be reintroduced in controlled layers.
+There is also an **optional central adapter ring** in the tree, but it is **not required** for local play and is **not the production baseline validated in this repo**.
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Local Admin Panel | **Stable** | Full CRUD, board management, settings, revenue |
-| Kiosk UI | **Stable** | Lock/unlock screens, autodarts integration |
-| Board Control | **Stable** | Unlock, lock, session flow |
-| Autodarts Integration | **Stable** | Observer mode, browser automation via Playwright |
-| Revenue & Reporting | **Stable** | Session-based revenue tracking |
-| Central Server / Portal | **Disabled** | Planned reintegration in layers (see `docs/RECOVERY.md`) |
-| Licensing | **Disabled** | Planned reintegration as Layer B |
+## Current reality
 
-See `docs/STATUS.md` for the full component matrix.
+What is in good shape now:
+- board unlock / lock flow
+- local session persistence
+- authoritative match start/finish handling for the protected local core
+- per-game, per-player, and per-time capacity rules in backend logic
+- local revenue summary from recorded session sale totals
+- Windows setup/start/stop/smoke helper scripts
+- focused in-process backend validation for the local core
 
----
+What is **not** fully proven here:
+- a real Windows board PC end-to-end run
+- live Autodarts login/session stability over long runtimes
+- Chrome/window-focus behavior on a physical kiosk machine
+- full operator UX around every optional or legacy surface still present in the repo
 
-## Architecture
+Short version: the repo is now understandable, testable, and honest about its boundaries, but it still needs **real-machine validation** before anyone calls it done.
 
+## Architecture in one paragraph
+
+A staff/admin user unlocks a board, which creates a local `Session` row and moves the board to `unlocked`. In observer mode, the backend launches a persistent Chrome/Playwright observer against the configured Autodarts URL. Authoritative WebSocket signals drive `_on_game_started()` and `finalize_match()`, which update board/session state, charge the correct capacity unit, decide whether the session stays alive or locks, and coordinate kiosk/observer UI behavior. Settings, reporting, and revenue all read from the local database; central outages are supposed to stay non-fatal to local play.
+
+More detail:
+- `docs/ARCHITECTURE.md`
+- `docs/ANALYSIS.md`
+- `docs/CREDITS_PRICING.md`
+- `docs/RUNBOOK.md`
+- `docs/TESTING.md`
+- `docs/STATUS.md`
+
+## Repository layout
+
+```text
+backend/            FastAPI app, models, routers, services, tests
+frontend/           React admin + kiosk UI
+release/windows/    Windows setup/start/stop/smoke scripts
+scripts/            Helper scripts, including local smoke tooling
+docs/               Architecture, analysis, status, runbook, testing notes
+central_server/     Central-side code and experiments (not local-core baseline)
 ```
-┌─────────────────────────────────────────────┐
-│                 Mini-PC (per dartboard)      │
-│  ┌──────────┐  ┌──────────┐  ┌───────────┐ │
-│  │ React    │  │ FastAPI  │  │ SQLite    │ │
-│  │ Frontend │──│ Backend  │──│ Database  │ │
-│  │ (Kiosk + │  │ (API +   │  │           │ │
-│  │  Admin)  │  │ Services)│  └───────────┘ │
-│  └──────────┘  └──────────┘                 │
-│                      │                      │
-│              ┌───────┴────────┐             │
-│              │ Autodarts      │             │
-│              │ (Playwright    │             │
-│              │  Browser Auto) │             │
-│              └────────────────┘             │
-└─────────────────────────────────────────────┘
-```
 
-See `docs/ARCHITECTURE.md` for the full system design.
+## Protected local-core modules
 
----
+These are the modules to treat as the real product spine:
+- `backend/server.py`
+- `backend/models/__init__.py`
+- `backend/database.py`
+- `backend/dependencies.py`
+- `backend/runtime_features.py`
+- `backend/routers/boards.py`
+- `backend/routers/kiosk.py`
+- `backend/routers/settings.py`
+- `backend/routers/admin.py`
+- `backend/services/session_pricing.py`
+- `backend/services/autodarts_observer.py`
+- `backend/services/ws_manager.py`
+- `backend/services/scheduler.py`
+- `frontend/src/pages/kiosk/*`
+- `frontend/src/pages/admin/*`
+- `frontend/src/context/*`
 
-## Quick Start (Development)
+If you change behavior there, update tests and docs in the same branch.
 
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-- SQLite3
+## Developer quick start
 
 ### Backend
+
+From the repo root:
+
 ```bash
-cd backend
-pip install -r requirements.txt
-uvicorn backend.server:app --host 0.0.0.0 --port 8001 --reload
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r backend/requirements.txt
+python -m uvicorn backend.server:app --reload --port 8001
 ```
 
+Notes:
+- run `uvicorn` from the **repo root**, not from inside `backend/`
+- review `backend/.env` for local settings when using a real runtime
+- default local URLs assume port `8001`
+
 ### Frontend
+
 ```bash
 cd frontend
 yarn install
-yarn start    # Starts on port 3000
+REACT_APP_BACKEND_URL=http://localhost:8001 yarn start
 ```
 
-### First Login
-The system creates a default admin on first start:
-- **Username:** `admin`
-- **Password:** `admin123`
-- **PIN:** `1234`
+### Local URLs
 
-A staff account is also created:
-- **Username:** `wirt`
-- **Password:** `wirt123`
+- API root: `http://localhost:8001/api`
+- Health: `http://localhost:8001/api/health`
+- Admin UI: `http://localhost:8001/admin`
+- Kiosk UI: `http://localhost:8001/kiosk/BOARD-1`
+- Observer status: `http://localhost:8001/api/kiosk/BOARD-1/observer-status`
 
----
+## Windows operator path
 
-## Repository Structure
+For a real board PC, the intended operator flow is via:
+- `release/windows/check_requirements.bat`
+- `release/windows/setup_windows.bat`
+- `release/windows/setup_profile.bat`
+- `release/windows/start.bat`
+- `release/windows/stop.bat`
+- `release/windows/smoke_test.bat`
 
-```
-darts-kiosk/
-├── backend/                 # FastAPI backend (FROZEN CORE)
-│   ├── server.py            # Main application entry point
-│   ├── database.py          # SQLite + SQLAlchemy setup
-│   ├── models/              # ORM models
-│   ├── routers/             # API route handlers
-│   │   ├── auth.py          # Authentication (JWT)
-│   │   ├── boards.py        # Board CRUD + unlock/lock
-│   │   ├── kiosk.py         # Kiosk state + game flow
-│   │   ├── admin.py         # Revenue, logs, reports
-│   │   ├── settings.py      # Branding, pricing, language
-│   │   ├── players.py       # Player stats + Stammkunde
-│   │   └── ...
-│   ├── services/            # Business logic services
-│   │   ├── autodarts_observer.py   # Playwright automation
-│   │   ├── ws_manager.py           # WebSocket broadcasts
-│   │   ├── health_monitor.py       # System health
-│   │   └── ...
-│   └── tests/               # Test suites
-├── frontend/                # React frontend (FROZEN CORE)
-│   └── src/
-│       ├── App.js           # Routing (admin + kiosk only)
-│       ├── pages/admin/     # Admin panel pages
-│       ├── pages/kiosk/     # Kiosk UI screens
-│       ├── context/         # React contexts (auth, settings, i18n)
-│       └── hooks/           # Custom hooks (WS, sound)
-├── central_server/          # Central management server (DISABLED)
-├── docs/                    # Documentation
-│   ├── ARCHITECTURE.md      # System architecture
-│   ├── RECOVERY.md          # Recovery strategy
-│   ├── RUNBOOK.md           # Operations guide
-│   ├── STATUS.md            # Component status matrix
-│   └── TESTING.md           # Testing guide
-├── release/                 # Build scripts + release artifacts
-├── memory/                  # Project memory (PRD, changelog)
-├── VERSION                  # Current version string
-├── Dockerfile               # Container build
-├── docker-compose.yml       # Docker orchestration
-├── install.sh               # Linux production installer
-└── CONTRIBUTING.md          # Contribution guidelines
-```
-
----
-
-## Build & Deploy
-
-### Windows (Test Environment)
-```bash
-bash release/build_release.sh
-# Output: release/build/darts-kiosk-v4.0.0-recovery-windows/
-# Run: start.bat
-```
-
-### Linux (Production)
-```bash
-bash release/build_release.sh
-# Output: release/build/darts-kiosk-v4.0.0-recovery-linux.tar.gz
-# Install: tar xzf ... && cd darts-kiosk && ./install.sh
-```
-
-### Docker
-```bash
-docker-compose up --build
-```
-
----
+See:
+- `docs/RUNBOOK.md`
+- `docs/STATUS.md`
+- `release/windows/README.md`
 
 ## Testing
 
-```bash
-# Run baseline recovery tests
-cd /app && python -m pytest backend/tests/test_v400_recovery_baseline.py -v
+The current authoritative local-core subset is:
 
-# Run full regression suite
-python -m pytest backend/tests/test_regression_e2e.py -v
+```bash
+source .venv/bin/activate
+python -m pytest -q \
+  backend/tests/test_phase34_autodarts_triggers.py \
+  backend/tests/test_phase34_credits_pricing.py \
+  backend/tests/test_phase56_stability_installation.py \
+  backend/tests/test_phase789_local_core_validation.py
 ```
 
-See `docs/TESTING.md` for the complete testing guide.
+This validates:
+- Autodarts trigger classification boundaries
+- pricing / credit consumption rules
+- optional adapter-service startup hardening
+- board unlock / lock
+- session lifecycle transitions
+- authoritative start/finish handling
+- revenue summary behavior for local accounting
 
----
+It does **not** replace live Windows / Autodarts verification.
 
-## Documentation
+## Documentation index
 
-| Document | Purpose |
-|----------|---------|
-| `docs/ARCHITECTURE.md` | System design and data flows |
-| `docs/RECOVERY.md` | Why recovery was needed, reintegration plan |
-| `docs/RUNBOOK.md` | How to run, verify, and debug the system |
-| `docs/STATUS.md` | Component status matrix |
-| `docs/TESTING.md` | Test categories, commands, checklists |
-| `CONTRIBUTING.md` | Contribution rules and frozen core policy |
-| `memory/FROZEN_CORE.md` | List of frozen modules |
-| `memory/PRD.md` | Product requirements |
-| `memory/CHANGELOG.md` | Version history |
+- `docs/ARCHITECTURE.md` — current runtime structure and source-of-truth modules
+- `docs/ANALYSIS.md` — synthesis of baseline, local-core, and Autodarts analysis
+- `docs/AUTODARTS_ANALYSIS.md` — detailed observer/trigger evidence
+- `docs/CREDITS_PRICING.md` — billing and capacity semantics
+- `docs/RUNBOOK.md` — operator actions and troubleshooting
+- `docs/STATUS.md` — what is validated, what is risky, what is pending
+- `docs/TESTING.md` — test strategy and exact commands
+- `CONTRIBUTING.md` — contribution expectations for the protected local core
+- `FINAL_REPORT.md` — final phase 7/8/9 wrap-up
 
----
+## Known limits / honesty section
 
-## Key Concepts
+Please do not overread the current state.
 
-- **Frozen Core:** The local admin/kiosk/board/autodarts modules restored from v3.3.1-hotfix2. No modifications allowed without explicit approval.
-- **Recovery Layers:** Central features will be reintroduced in order: visibility → licensing → board control → config sync. Each must be verified before the next starts.
-- **Fail-Closed:** Any license or authorization check that fails must block the action, never silently allow it.
-- **Autodarts Observer:** Uses Playwright to automate the Autodarts web app. Requires Chrome/Chromium installed on the target machine.
+This repo is **not yet proven** as a finished production deployment because the missing evidence is outside this sandbox:
+- no physical Windows kiosk validation pass
+- no live Autodarts session exercised here
+- no proof of long-running observer resilience on a venue machine
 
----
-
-## License
-
-Proprietary. All rights reserved.
+What this repo now provides is a coherent, documented, locally testable baseline that an external developer or operator can actually understand and continue from without guesswork or archaeology.

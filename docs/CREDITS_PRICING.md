@@ -1,142 +1,156 @@
 # Credits & Pricing
 
-## Ground truth after Phase 3/4
+This document describes the **current local-core billing and capacity model**.
 
-Billing now depends on **pricing mode** and **authority level** of the gameplay signal.
+Two separate ideas matter:
+- **sale recording** — `Session.price_total`, written when the session is created/unlocked
+- **capacity consumption** — when credits or time are actually consumed during play
 
-The backend distinguishes between:
-- **authoritative start** — strong WS start-of-play signal from Autodarts
-- **authoritative finish** — strong WS finish signal or explicit staff/manual end
-- **abort/reset** — delete/cancel paths that end or reset a match but do not themselves create billable authority
-- **diagnostic hints** — DOM/console observations used for visibility, never for billing authority
+The repo currently has correctable local accounting and capacity control, but it does **not** yet have a dedicated payments ledger.
 
----
+## 1. Ground truth
 
-## Mode matrix
+Billing now depends on both:
+- the configured `pricing_mode`
+- the **authority level** of the gameplay signal
 
-| Mode | Capacity model | Bill moment | Units consumed | Next-game rule |
+Signal hierarchy:
+1. authoritative WebSocket start/finish signals
+2. assistive WebSocket hints
+3. console/DOM diagnostics
+
+Only the first category should drive billing-critical actions.
+
+## 2. Pricing-mode matrix
+
+| Mode | Capacity model | Charge moment | Units consumed | Session-end rule |
 | --- | --- | --- | --- | --- |
-| `per_game` | session credits | authoritative finish / manual end | `1` per finished game | stay alive while credits remain |
-| `per_player` | session credits seeded from player count | authoritative start-of-play | resolved player count once | no next game after that match unless extended/unlocked again |
-| `per_time` | wall-clock expiry | no credit deduction | `0` | stay alive until `expires_at` |
+| `per_game` | credits on session | authoritative finish / manual end | `1` per finished game | end when no credits remain |
+| `per_player` | credits seeded from player count | authoritative start-of-play | full resolved player count once | usually ends after that paid match unless extended |
+| `per_time` | wall-clock time until `expires_at` | no per-match charge | `0` | end when time expires |
 
----
+## 3. `per_game`
 
-## `per_game`
-
-### What charges
+### Charges on authoritative finish
 - `match_end_state_finished`
 - `match_end_game_finished`
 - `manual`
 - compatibility trigger `finished`
 
-### What does **not** charge
+### Does **not** charge
 - `aborted`
 - `match_abort_delete`
+- assistive hint `match_end_gameshot_match`
 - console-only finish hints
 - DOM-only finish hints
-- assistive WS hints like `match_end_gameshot_match`
 
 ### Behavior
-- one finished game consumes exactly one credit
-- if credits remain, observer stays alive and returns Autodarts to the lobby/home flow
-- if credits hit zero, the session closes and the board locks
+- one authoritative finish consumes one credit
+- if credits remain, observer stays alive and board returns to `unlocked`
+- if credits reach zero, session closes and board locks
 
----
+## 4. `per_player`
 
-## `per_player`
-
-### Seed state
-At unlock time the backend seeds:
+### Unlock-time seed
+At unlock:
 - `credits_total = players_count`
 - `credits_remaining = players_count`
 
-This keeps the existing session schema usable without adding a new ledger table.
+That preserves the existing `Session` schema without inventing a separate participation ledger.
 
-### Bill moment
-`per_player` is now billed on **authoritative start-of-play**, not on finish.
+### Charge moment
+`per_player` is billed on **authoritative start-of-play**, not on finish.
 
-The resolved player count is:
-1. `len(session.players)` if player names were registered
+Resolved player count is:
+1. non-empty `len(session.players)` if player names exist
 2. else `session.players_count`
 3. else fallback `1`
 
 ### Guarantees
-- 1 player start => 1 credit consumed
-- 3 player start => 3 credits consumed
-- repeated start signals / observer retries do not double-charge
+- repeated start signals do not double-charge
+- finish does not add a second charge
 - abort before authoritative start does not charge
-- abort after an authoritative start does not add a second charge
+- abort after a charged start does not add another charge
 
-### Why this model
-This matches the product intent better than finish-time deduction:
-- the billable unit is participation, not checkout
-- the match may still be aborted later, but only a real start can consume the player charge
-- observer-first local flow stays intact because the charge is tied to the first strong WS start signal
+### Why it works better
+This matches the actual product intent:
+- you are charging for participation, not only checkout success
+- the start signal is the strongest proof that the paid match really began
 
----
+## 5. `per_time`
 
-## `per_time`
+`per_time` never consumes credits on match events.
 
-`per_time` never consumes credits.
+Capacity comes only from elapsed time:
+- if `now < expires_at`, the session may stay alive after a match
+- if time is exhausted, finalization locks the board and ends the session
 
-Session end is derived only from time capacity:
-- if `expires_at` is still in the future, keep the board/session alive
-- if the session is out of time, finalize and lock
+## 6. Finalization rules
 
----
+`finalize_match()` remains the backend authority for closing or continuing a session.
 
-## Finalization rules
-
-`finalize_match()` is still the single backend authority for session closure.
-
-It now asks one question after any finalize-time charge logic:
-
-> Does this session still have capacity for another game?
+After any finalize-time logic, it decides whether the session still has remaining capacity.
 
 Capacity rules:
 - `per_game`: `credits_remaining > 0`
-- `per_player`: `credits_remaining > 0` before authoritative start, then normally `0` after the one match begins
+- `per_player`: typically `credits_remaining == 0` immediately after authoritative start charge
 - `per_time`: `now < expires_at`
 
-If no capacity remains:
-- session closes
+If capacity remains:
+- session stays active
+- board stays available
+- observer remains alive
+- Autodarts is returned toward its home/ready state
+
+If capacity is exhausted:
+- session ends
 - board locks
 - observer tears down
 - kiosk UI is restored
 
-If capacity remains:
-- session stays active
-- board stays unlocked
-- observer stays alive
-- Autodarts is returned to a ready state for the next game
+## 7. Idempotency / double-charge protection
 
----
+Two protection layers matter.
 
-## Idempotency / double-charge protection
-
-Two layers matter:
-
-### 1. Start-time idempotency (`per_player`)
+### 7.1 Start-time idempotency (`per_player`)
 The backend refuses to charge again when:
 - the board is already `in_game`, or
-- the session's player charge has already been consumed
+- the session already consumed its start-time capacity
 
-### 2. Finish-time idempotency (`per_game`)
-The backend refuses to charge twice for the same finalized match by using:
+### 7.2 Finish-time idempotency (`per_game`)
+The backend refuses duplicate finalize charges using:
 - in-flight finalize guard
 - finalized-state guard
-- last finalized `match_id` guard
+- last-finalized `match_id` guard
 
----
+## 8. Revenue/reporting implications
 
-## Reporting notes
-
-The current repo still books revenue into `Session.price_total` rather than a dedicated payments ledger.
+Current reporting uses `Session.price_total` as booked sale value.
 
 That means:
-- revenue reports still read from session sale data
-- the new charging rules improve **session capacity correctness**
-- they do **not** yet create a new accounting ledger layer
+- revenue summary is derived from stored session rows
+- the new pricing logic improves **capacity correctness**
+- it does **not** create a payment ledger, invoice model, or reconciliation layer
 
-That is intentional for Phase 3/4: correctness first, ledger redesign later.
+This is acceptable for local operator reporting and internal totals. It is not the same as finance-grade accounting.
+
+## 9. What is validated in tests
+
+Covered in the in-process backend suite:
+- authoritative finish consumes one `per_game` credit
+- assistive finish hints do not consume credit
+- `per_player` charges at authoritative start and only once
+- abort-before-start does not consume capacity
+- session keep-alive vs lock behavior follows remaining capacity
+- revenue summary excludes active sessions and tolerates null/zero sale totals
+
+See `docs/TESTING.md` for the exact command.
+
+## 10. What still needs live validation
+
+Still not proven here:
+- whether live Autodarts WebSocket traffic always maps cleanly to the expected authoritative events in a real venue session
+- whether long-running observers or reconnect paths ever produce edge-case duplicate or missing signals
+- whether every real operator flow sets the intended `price_total` at unlock time
+
+So the pricing model is now documented and locally validated, but not yet fully field-proven.

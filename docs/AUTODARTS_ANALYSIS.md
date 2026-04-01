@@ -1,5 +1,10 @@
 # Autodarts Integration Analysis
 
+This document preserves the **detailed evidence** behind the current observer-first Autodarts model.
+
+For the cross-repo synthesis, read `docs/ANALYSIS.md`.
+For the current billing/capacity rules tied to these signals, read `docs/CREDITS_PRICING.md`.
+
 Commit audited: `cef9724`
 
 ## Executive summary

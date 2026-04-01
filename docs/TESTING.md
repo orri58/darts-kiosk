@@ -1,112 +1,127 @@
-# Testing Guide
+# Testing
 
-## Test Categories
+This project has a lot of historical test artifacts. Not all of them are equally useful.
 
-### 1. Baseline Recovery Tests
-Verifies the 6 core flows of the frozen local core.
+This document defines the **current authoritative local-core validation path**.
+
+## 1. Test strategy
+
+The protected baseline is validated with focused backend tests that run entirely in-process against isolated SQLite databases or directly exercised services.
+
+Why this is the current best fit:
+- the critical logic is backend lifecycle/state logic
+- it avoids pretending preview URLs or stale environments are trustworthy gates
+- it lets us validate local-core behavior without needing a real Windows box for every change
+
+## 2. Authoritative test subset
+
+Run from the repo root:
 
 ```bash
-python -m pytest backend/tests/test_v400_recovery_baseline.py -v
+source .venv/bin/activate
+python -m pytest -q \
+  backend/tests/test_phase34_autodarts_triggers.py \
+  backend/tests/test_phase34_credits_pricing.py \
+  backend/tests/test_phase56_stability_installation.py \
+  backend/tests/test_phase789_local_core_validation.py
 ```
 
-Covers: auth, board unlock/lock, session flow, settings, revenue, observer status.
+Current observed result for this documentation pass:
+- `21 passed`
 
-### 2. Regression E2E Tests
-Broader regression suite covering data corruption handling and central server endpoints.
+## 3. What each suite proves
 
-```bash
-python -m pytest backend/tests/test_regression_e2e.py -v
-```
+### `backend/tests/test_phase34_autodarts_triggers.py`
+Validates:
+- authoritative finish classification
+- assistive finish classification
+- pending-finish upgrade behavior
+- delete/reset staying diagnostic unless qualified
+- console/DOM finish hints staying non-authoritative
 
-**Note:** Some tests in this suite reference central server endpoints that are currently disabled. These tests will be skipped or need updating.
+### `backend/tests/test_phase34_credits_pricing.py`
+Validates:
+- `per_player` start charge for 1 or multiple players
+- no double charge on repeated authoritative starts
+- `per_game` authoritative finish consumes one credit
+- abort-before-start does not consume `per_player` capacity
 
-### 3. Historical Test Files
-The `backend/tests/` directory contains 80+ test files from previous development iterations. These are preserved for reference but many are outdated. The authoritative tests for the current state are:
+### `backend/tests/test_phase56_stability_installation.py`
+Validates:
+- `ConfigSyncClient.start()` is non-blocking
+- `ActionPoller.start()` is non-blocking
+- remote board updates use the correct WebSocket broadcast signature
+- central heartbeat health payload uses the actual health monitor snapshot
 
-- `test_v400_recovery_baseline.py` — current baseline
-- `test_regression_e2e.py` — regression suite (partially applicable)
+### `backend/tests/test_phase789_local_core_validation.py`
+Validates:
+- board unlock -> active session -> unlocked board
+- board lock -> cancelled session -> locked board
+- kiosk start-game session registration
+- authoritative `per_game` finish keep-alive vs final lock
+- assistive finish hint does not consume a `per_game` credit
+- `per_player` start charge happens once and finish does not double-charge
+- revenue summary excludes active sessions and tolerates nullable recorded prices
 
----
+## 4. What this subset does **not** prove
 
-## Running Tests
+It does not prove:
+- real Windows focus/foreground behavior
+- real Playwright/Chrome profile stability on a board PC
+- live Autodarts traffic in the wild
+- operator ergonomics on a touch/kiosk deployment
+- full frontend rendering behavior across all pages
+- long-running soak stability
 
-### Prerequisites
-```bash
-pip install pytest httpx
-```
+Those require live validation.
 
-### Run All Current Tests
-```bash
-cd /app
-python -m pytest backend/tests/test_v400_recovery_baseline.py -v --tb=short
-```
+## 5. Live validation checklist
 
-### Run a Specific Test
-```bash
-python -m pytest backend/tests/test_v400_recovery_baseline.py::TestBoardControl -v
-```
+After code changes that affect runtime behavior, perform at least one real-machine pass:
 
----
+1. `release/windows/setup_windows.bat`
+2. `release/windows/setup_profile.bat`
+3. `release/windows/start.bat`
+4. `release/windows/smoke_test.bat`
+5. unlock board
+6. observe real match start
+7. observe real match finish
+8. verify next-game or lock behavior matches pricing mode
+9. test manual lock
+10. restart the machine/app path if possible
 
-## What Is Mocked vs Real
+## 6. Historical / non-authoritative tests
 
-| Component | In Tests | Notes |
-|-----------|----------|-------|
-| Backend API | **Real** | Tests use `httpx.AsyncClient` with the real FastAPI app |
-| SQLite Database | **Real** | Tests use the actual database |
-| Autodarts | **Not tested** | Requires Chrome, not available in CI. Verified manually on Windows. |
-| Central Server | **Real** (when active) | Tests use `httpx` against port 8002 |
-| Frontend | **Playwright** | Browser automation for UI verification |
-| WebSocket | **Not tested** | Tested manually via browser |
+These files still exist and may still be useful as historical artifacts or ad-hoc smoke checks, but they are **not** the main release gate for the protected local core:
+- `backend/tests/test_v400_recovery_baseline.py`
+- `backend/tests/test_layer_a_integration.py`
+- preview/deployment-specific request suites under older regression names
 
----
+Why they are not the main gate:
+- some target external preview URLs or old assumptions
+- some describe recovery states more than current architecture
+- some are broader but less reliable for day-to-day local-core changes
 
-## Manual Verification Checklist (Windows Device)
+## 7. Recommended workflow for contributors
 
-Before any release, verify on a real Windows machine:
+### For docs-only changes
+- read the current docs set for consistency
+- no mandatory runtime test unless behavior claims changed
 
-### Board Control
-- [ ] Start `start.bat` — backend starts without errors
-- [ ] Open `http://localhost:8001` in browser
-- [ ] Login as admin
-- [ ] Click "Freischalten" on a board
-- [ ] Verify kiosk screen shows "Entsperrt" on the kiosk display
-- [ ] Click "Sperren" — board returns to locked
-- [ ] Verify kiosk screen shows "Gesperrt"
+### For local-core backend changes
+Run the authoritative subset above.
 
-### Autodarts
-- [ ] Unlock a board
-- [ ] Click "Autodarts Starten" on kiosk
-- [ ] Verify Chrome opens and navigates to play.autodarts.io
-- [ ] Verify observer detects game start/end
+### For Windows/operator changes
+Run the authoritative subset **and** a live Windows smoke pass.
 
-### Settings
-- [ ] Change cafe name in admin settings
-- [ ] Verify kiosk display updates with new name
-- [ ] Change pricing mode
-- [ ] Unlock board — verify new pricing is applied
+### For observer/Autodarts changes
+Run the authoritative subset **and** a live Autodarts validation pass before strong claims.
 
-### Revenue
-- [ ] Create and finish a session (unlock → play → lock)
-- [ ] Check revenue page — verify amount matches pricing config
-- [ ] Export CSV report
+## 8. Failure policy
 
-### Session Flow
-- [ ] Unlock with "Pro Spiel" pricing, 3 games, 2 players
-- [ ] Verify session shows correct game count and total price
-- [ ] End session — verify it shows as finished
+If one of the authoritative tests fails:
+- do not wave it away with “works on the real board probably”
+- fix the code or update the docs/status to explain the limitation
+- if a behavior cannot be reproduced in-process but is real-machine-only, document the exact gap
 
----
-
-## Release Acceptance Checklist
-
-- [ ] All `test_v400_recovery_baseline.py` tests pass
-- [ ] Backend starts without import errors
-- [ ] Frontend compiles without errors
-- [ ] Admin login works
-- [ ] Board unlock/lock works
-- [ ] Kiosk displays correct state
-- [ ] Settings save and apply
-- [ ] Revenue endpoint returns correct numbers
-- [ ] Windows build runs from `start.bat`
-- [ ] No 500 errors in backend logs after 5 minutes of operation
+The goal here is not to make the suite look pretty. It is to keep the protected local core understandable and trustworthy.
