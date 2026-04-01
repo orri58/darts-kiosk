@@ -1,193 +1,199 @@
 # Architecture
 
-## Overview
+## Current target architecture (Phase 2)
 
-The Darts Kiosk system has two architectural layers:
+The repo is **not** a single homogeneous system anymore.
 
-1. **Local Device** (stable, frozen core) — runs on each Mini-PC connected to a dartboard
-2. **Central Server** (disabled, planned reintegration) — manages multiple devices from a single admin portal
+The correct mental model is:
 
-This document describes both layers. The local device layer is production-ready. The central server layer is disabled in v4.0.0-recovery and will be reintroduced in controlled phases.
+1. **stable local core** first
+2. **operator surfaces** on top of that core
+3. **optional adapters** outside the core
+4. **dormant / not-yet-reintegrated modules** kept off the default runtime path
 
----
-
-## Local Device Architecture
-
-```
-┌─ Mini-PC ─────────────────────────────────────────────┐
-│                                                        │
-│  ┌─ Frontend (React, Port 3000) ───────────────────┐  │
-│  │                                                  │  │
-│  │  /admin/*          /kiosk/:boardId               │  │
-│  │  ┌──────────┐      ┌───────────────────┐        │  │
-│  │  │ Admin    │      │ Kiosk UI          │        │  │
-│  │  │ Panel    │      │ (Locked/Setup/    │        │  │
-│  │  │          │      │  InGame/Finished) │        │  │
-│  │  └──────────┘      └───────────────────┘        │  │
-│  └──────────────────────────────────────────────────┘  │
-│           │                      │                     │
-│           ▼                      ▼                     │
-│  ┌─ Backend (FastAPI, Port 8001) ──────────────────┐  │
-│  │                                                  │  │
-│  │  Routers:                                        │  │
-│  │  ├── auth.py      JWT login (username + PIN)     │  │
-│  │  ├── boards.py    Board CRUD, unlock/lock        │  │
-│  │  ├── kiosk.py     Kiosk state, game flow         │  │
-│  │  ├── admin.py     Revenue, logs, reports         │  │
-│  │  ├── settings.py  Branding, pricing, language    │  │
-│  │  ├── players.py   Player stats, Stammkunde       │  │
-│  │  ├── matches.py   Match results, QR sharing      │  │
-│  │  └── stats.py     Leaderboards                   │  │
-│  │                                                  │  │
-│  │  Services:                                       │  │
-│  │  ├── autodarts_observer.py  Playwright browser   │  │
-│  │  ├── ws_manager.py         WebSocket broadcasts  │  │
-│  │  ├── health_monitor.py     System health         │  │
-│  │  ├── sound_generator.py    Game sounds (WAV)     │  │
-│  │  ├── mdns_service.py       Network discovery     │  │
-│  │  ├── backup_service.py     DB backup/restore     │  │
-│  │  └── scheduler.py          Periodic tasks        │  │
-│  │                                                  │  │
-│  └──────────────────────────────────────────────────┘  │
-│           │                                            │
-│           ▼                                            │
-│  ┌─ SQLite Database ───────────────────────────────┐  │
-│  │  darts_kiosk.sqlite                             │  │
-│  │  Tables: users, boards, sessions, settings,     │  │
-│  │          players, match_results, audit_logs      │  │
-│  └─────────────────────────────────────────────────┘  │
-│                                                        │
-│  ┌─ Autodarts (Playwright) ────────────────────────┐  │
-│  │  Chrome/Chromium → play.autodarts.io            │  │
-│  │  Observer watches for game start/end events     │  │
-│  └─────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────┘
-```
-
-### Data Flow: Board Unlock → Game → Lock
-
-```
-Admin clicks "Unlock"
-  → POST /api/boards/{id}/unlock
-    → Creates Session (status=active, pricing, players)
-    → Board.status = unlocked
-    → WebSocket broadcast: board_update
-    → Kiosk UI switches to SetupScreen
-
-Player starts game
-  → POST /api/kiosk/{id}/start-game
-    → Autodarts observer opens browser
-    → Navigates to play.autodarts.io
-    → Monitors for game events
-    → Board.status = in_game
-
-Game ends (autodarts callback or manual)
-  → Session.status = finished
-  → Session.ended_at = now
-  → Board.status = locked (auto-lock)
-  → WebSocket broadcast: board_update
-  → Kiosk UI switches to LockedScreen
-
-Admin can also manually lock
-  → POST /api/boards/{id}/lock
-    → Ends active session
-    → Board.status = locked
-```
+That is the only layering consistent with the recovered code, the local-core audit, and the current Phase 2 cleanup.
 
 ---
 
-## Central Server Architecture (DISABLED)
+## 1. Layer map
 
-The central server is a separate FastAPI application that manages multiple local devices. It is currently **disabled** in v4.0.0-recovery due to stability regressions.
+### Layer 0 — Local core (default, protected)
 
-```
-┌─ Central Server (Port 8002) ───────────────────────┐
-│                                                     │
-│  central_server/server.py                           │
-│  ├── Auth (superadmin/staff)                        │
-│  ├── Device management                              │
-│  ├── License management                             │
-│  ├── Remote actions (unlock/lock via portal)        │
-│  ├── Telemetry (heartbeat, events, stats)           │
-│  ├── Config sync (push config to devices)           │
-│  └── WebSocket hub (real-time device status)        │
-│                                                     │
-│  SQLite: central_licenses.sqlite                    │
-│  Tables: devices, customers, locations, licenses,   │
-│          remote_actions, telemetry_events            │
-└─────────────────────────────────────────────────────┘
-         │
-         │ HTTP API
-         ▼
-┌─ Local Device ──────────────────────────────────────┐
-│  (proxied via /api/central/*)                       │
-│                                                     │
-│  Post-baseline services (currently disabled):       │
-│  ├── action_poller.py      Polls remote actions     │
-│  ├── config_sync_client.py Fetches config           │
-│  ├── license_service.py    License enforcement      │
-│  ├── ws_push_client.py     WS to central            │
-│  └── telemetry_sync_client.py  Sends telemetry      │
-└─────────────────────────────────────────────────────┘
-```
+This is the product that must keep working even if every central/licensing piece is absent.
 
-### Configuration Hierarchy (when central is active)
+**Responsibilities**
+- local auth
+- local board/session persistence
+- unlock / extend / lock
+- observer-first kiosk session lifecycle
+- session finalization
+- local settings
+- local revenue / reports
+- local websocket fanout
+- local watchdog / backup / health / update helpers
 
-```
-Priority (highest to lowest):
-  1. Device-specific config (per device override)
-  2. Location config
-  3. Customer config
-  4. Global config (system defaults)
-```
+**Primary backend modules**
+- `backend/database.py`
+- `backend/models/__init__.py`
+- `backend/dependencies.py`
+- `backend/schemas.py`
+- `backend/routers/auth.py`
+- `backend/routers/boards.py`
+- `backend/routers/kiosk.py`
+- `backend/routers/settings.py`
+- `backend/routers/admin.py`
+- `backend/routers/backups.py`
+- `backend/routers/updates.py`
+- `backend/routers/agent.py`
+- `backend/routers/discovery.py`
+- `backend/routers/matches.py`
+- `backend/routers/stats.py`
+- `backend/routers/players.py`
+- `backend/services/autodarts_observer.py`
+- `backend/services/ws_manager.py`
 
-### Reintegration Plan
+**Primary frontend surfaces**
+- `/kiosk`
+- `/admin`
+- local contexts: `AuthContext`, `SettingsContext`, `I18nContext`
 
-See `docs/RECOVERY.md` for the layered reintroduction strategy.
-
----
-
-## Database Schema (Local)
-
-### Core Tables
-
-| Table | Purpose | Key Columns |
-|-------|---------|-------------|
-| `users` | Admin/staff accounts | username, hashed_password, role, pin_hash |
-| `boards` | Dartboard registrations | board_id, name, status (locked/unlocked/in_game) |
-| `sessions` | Game sessions | board_id, status, pricing_mode, price_total, started_at, ended_at |
-| `settings` | Key-value config store | key, value (JSON) |
-| `players` | Registered players (Stammkunde) | nickname, pin_hash, qr_token |
-| `match_results` | Shared match data | public_token, board_id, game_data (JSON) |
-| `audit_logs` | Admin action log | action, user_id, details, created_at |
-
-### Board States
-
-```
-locked → unlocked → in_game → locked
-                         ↑
-                    (autodarts callback or manual lock)
-```
-
-### Session States
-
-```
-active → finished
-active → cancelled
-```
+**Local-core rules**
+- local play must not depend on central reachability
+- observer lifecycle stays local and authoritative
+- board unlock creates local DB state before side effects
+- session finalization remains local and idempotent
+- unsupported modes must not be advertised as stable
 
 ---
 
-## Technology Stack
+### Layer 1 — Operator-facing local surfaces
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | Python 3.11, FastAPI, SQLAlchemy, Pydantic |
-| Frontend | React 18, Tailwind CSS, Shadcn/UI |
-| Database | SQLite (local), SQLite (central) |
-| Browser Automation | Playwright (Chromium) |
-| Real-time | WebSocket (native FastAPI) |
-| Audio | pydub (WAV generation) |
-| Network Discovery | Zeroconf (mDNS) |
-| i18n | Custom context (DE/EN) |
-| Auth | JWT (HS256) |
+These are still part of the local product, but they must stay aligned with the real local-core capabilities.
+
+**Currently operator-facing and supported**
+- board unlock / extend / lock
+- `per_game`
+- `per_time`
+- branding / pricing / sound / language / kiosk texts / PWA / kiosk control
+- public leaderboard QR on lock screen
+- QR match sharing only when a session truly ends
+
+**Explicitly hidden/degraded in Phase 2**
+- `per_player` is no longer treated as a stable operator mode
+- call-staff UI is hidden by default
+- observer-mode unlock now fails clearly if the board has no `autodarts_target_url`
+
+That last point is intentional: observer-first local runtime is safer with an honest block than with a fake unlocked state that cannot launch the real gameplay surface.
+
+---
+
+### Layer 2 — Optional adapter ring (opt-in)
+
+This layer is allowed to exist, but it is **outside** the stable local runtime path.
+
+**Examples**
+- Layer A central heartbeat
+- `/api/central/*` visibility proxy
+- `/portal` frontend routes
+
+**Phase 2 rule**
+- adapters are mounted only through explicit seams
+- adapters are opt-in
+- adapters may observe local state, but must not destabilize local play
+
+**Current gates**
+- backend: `backend/runtime_features.py`
+- route composition: `backend/app_layers.py`
+- frontend route surface: `frontend/src/runtimeFeatures.js`
+
+**Default behavior**
+- `ENABLE_CENTRAL_ADAPTERS` unset/false → no central adapter startup, no mounted central proxy
+- `ENABLE_PORTAL_SURFACE` only matters when central adapters are enabled
+
+So the default product path is again: **local only**.
+
+---
+
+### Layer 3 — Dormant / not yet reintegrated modules
+
+These modules may stay in the repo, but they are **not** current product truth.
+
+Examples:
+- `backend/routers/licensing.py`
+- `backend/services/license_service.py`
+- `backend/services/license_sync_client.py`
+- `backend/services/config_sync_client.py`
+- `backend/services/action_poller.py`
+- `backend/services/telemetry_sync_client.py`
+- `backend/services/ws_push_client.py`
+- `central_server/*`
+- legacy portal/operator pages not mounted in the default app flow
+
+They are staging material for later reintegration, not part of the baseline runtime contract.
+
+---
+
+## 2. Explicit seams added in Phase 2
+
+### Runtime feature seam
+- `backend/runtime_features.py`
+- `frontend/src/runtimeFeatures.js`
+
+Purpose:
+- central surface is explicit instead of ambient
+- local supported pricing modes are explicit
+- incomplete UI surfaces can be hidden without rewriting the whole app
+
+### Route composition seam
+- `backend/app_layers.py`
+
+Purpose:
+- local-core routers mount by default
+- adapter routers mount only when explicitly enabled
+- `backend/server.py` stops being a grab-bag of local + central wiring
+
+---
+
+## 3. Supported local flow
+
+### Board/session flow
+1. admin unlocks board locally
+2. local DB session is created
+3. if runtime is observer mode, board must already have `autodarts_target_url`
+4. observer starts against the configured target
+5. `finalize_match()` remains the authority for credit/time/session-end decisions
+6. if credits/time remain, observer stays alive
+7. if session truly ends, board locks and kiosk UI is restored
+
+### Supported pricing modes
+- `per_game`
+- `per_time`
+
+### Historical-but-not-supported lifecycle mode
+- `per_player`
+
+Historical data/config may still exist, but it is not a supported local operator mode anymore.
+
+---
+
+## 4. Match result / QR sharing rule
+
+QR match sharing is now aligned with the real session lifecycle:
+- if the session actually ends, a match token may be created
+- if credits/time remain and the board stays active, the local kiosk flow wins and no operator-facing result QR interrupts it
+
+This matches the observer-first local core better than the previous hybrid behavior.
+
+---
+
+## 5. What must stay true in future phases
+
+Any central/licensing reintegration must satisfy all of these:
+
+1. **Local auth remains local unless explicitly replaced with a proven boundary.**
+2. **Board unlock/finalize must continue to work with no central connectivity.**
+3. **Adapters fail detached, not by corrupting local runtime flow.**
+4. **New modes are hidden until lifecycle/accounting semantics are complete.**
+5. **Mounted routes and startup services must reflect reality, not aspiration.**
+
+If a change violates one of those, it belongs outside the local-core path until proven safe.
