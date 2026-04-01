@@ -78,8 +78,11 @@ These are still part of the local product, but they must stay aligned with the r
 - public leaderboard QR on lock screen
 - QR match sharing only when a session truly ends
 
-**Explicitly hidden/degraded in Phase 2**
-- `per_player` is no longer treated as a stable operator mode
+**Stable in backend lifecycle, but not fully surfaced in local UI yet**
+- `per_player`
+- Autodarts trigger policy config
+
+**Explicitly hidden/degraded in current local UI**
 - call-staff UI is hidden by default
 - observer-mode unlock now fails clearly if the board has no `autodarts_target_url`
 
@@ -165,14 +168,14 @@ Purpose:
 6. if credits/time remain, observer stays alive
 7. if session truly ends, board locks and kiosk UI is restored
 
-### Supported pricing modes
+### Supported pricing modes in backend lifecycle
 - `per_game`
+- `per_player`
 - `per_time`
 
-### Historical-but-not-supported lifecycle mode
+### Still not fully surfaced in local operator UI
 - `per_player`
-
-Historical data/config may still exist, but it is not a supported local operator mode anymore.
+- trigger-policy editing
 
 ---
 
