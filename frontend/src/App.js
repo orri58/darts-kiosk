@@ -34,6 +34,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { SettingsProvider } from "./context/SettingsContext";
 import { I18nProvider } from "./context/I18nContext";
 import { CentralAuthProvider } from "./context/CentralAuthContext";
+import { PORTAL_SURFACE_ENABLED } from "./runtimeFeatures";
 
 function App() {
   return (
@@ -74,12 +75,16 @@ function App() {
               <Route path="reports" element={<AdminReports />} />
             </Route>
             
-            {/* Portal Routes (Layer A — read-only) */}
-            <Route path="/portal/login" element={<CentralAuthProvider><PortalLogin /></CentralAuthProvider>} />
-            <Route path="/portal" element={<CentralAuthProvider><PortalLayout /></CentralAuthProvider>}>
-              <Route index element={<PortalDashboard />} />
-              <Route path="devices" element={<PortalDevices />} />
-            </Route>
+            {/* Portal Routes (opt-in central adapter surface) */}
+            {PORTAL_SURFACE_ENABLED && (
+              <>
+                <Route path="/portal/login" element={<CentralAuthProvider><PortalLogin /></CentralAuthProvider>} />
+                <Route path="/portal" element={<CentralAuthProvider><PortalLayout /></CentralAuthProvider>}>
+                  <Route index element={<PortalDashboard />} />
+                  <Route path="devices" element={<PortalDevices />} />
+                </Route>
+              </>
+            )}
 
             {/* Default redirect */}
             <Route path="/" element={<Navigate to="/kiosk" replace />} />

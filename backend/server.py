@@ -36,6 +36,8 @@ from backend.models import (
     DEFAULT_PALETTES, DEFAULT_PRICING, DEFAULT_BRANDING
 )
 from backend.dependencies import hash_password, get_or_create_setting, MODE
+from backend.runtime_features import AUTODARTS_MODE, central_adapters_enabled
+from backend.app_layers import include_local_core_routes, include_optional_adapter_routes
 
 # Services
 from backend.services.scheduler import start_scheduler, stop_scheduler
@@ -43,9 +45,6 @@ from backend.services.backup_service import start_backup_service, stop_backup_se
 from backend.services.health_monitor import health_monitor, start_health_monitor, stop_health_monitor
 from backend.services.ws_manager import board_ws
 from backend.services.mdns_service import mdns_service
-
-# Routers
-from backend.routers import auth, boards, kiosk, settings, admin, backups, updates, agent, discovery, matches, stats, players
 
 # Configuration
 from backend.database import DATA_DIR
@@ -205,18 +204,21 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning(f"Autodarts Desktop startup check failed (non-critical): {exc}")
 
-    # Layer A: Start central heartbeat (non-blocking, disabled if no CENTRAL_SERVER_URL)
-    from backend.integrations.layer_a import start_layer_a
-    await start_layer_a()
+    if central_adapters_enabled():
+        from backend.integrations.layer_a import start_layer_a
+        await start_layer_a()
+        logger.info("Central adapter ring enabled")
+    else:
+        logger.info("Central adapter ring disabled — local-core only runtime path")
 
     logger.info(f"Darts Kiosk System started in {MODE} mode")
     logger.info(f"Setup complete: {is_setup_complete()}")
-    logger.info(f"Autodarts mode: {os.environ.get('AUTODARTS_MODE', 'observer')}")
+    logger.info(f"Autodarts mode: {AUTODARTS_MODE}")
     yield
     # Shutdown: stop watchdog, close all observers
-    # Layer A: Stop heartbeat
-    from backend.integrations.layer_a import stop_layer_a
-    await stop_layer_a()
+    if central_adapters_enabled():
+        from backend.integrations.layer_a import stop_layer_a
+        await stop_layer_a()
 
     await stop_watchdog()
     from backend.services.autodarts_observer import observer_manager
@@ -251,22 +253,8 @@ if ALLOWED_HOSTS != ['*']:
 from fastapi import APIRouter
 api_router = APIRouter(prefix="/api")
 
-api_router.include_router(auth.router)
-api_router.include_router(boards.router)
-api_router.include_router(kiosk.router)
-api_router.include_router(settings.router)
-api_router.include_router(admin.router)
-api_router.include_router(backups.router)
-api_router.include_router(updates.router)
-api_router.include_router(agent.router)
-api_router.include_router(discovery.router)
-api_router.include_router(matches.router)
-api_router.include_router(stats.router)
-api_router.include_router(players.router)
-
-# Layer A: Central read-only visibility proxy
-from backend.routers import central_proxy
-api_router.include_router(central_proxy.router)
+include_local_core_routes(api_router)
+include_optional_adapter_routes(api_router)
 
 app.include_router(api_router)
 
