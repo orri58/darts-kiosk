@@ -29,6 +29,9 @@ echo.
 
 REM === Configuration ===
 set BOARD_ID=BOARD-1
+if exist "backend\.env" call :load_env_value BOARD_ID BOARD_ID
+
+echo   Profilpfad: data\chrome_profile\%BOARD_ID%
 
 REM === Create profile directory ===
 if not exist "data\chrome_profile\%BOARD_ID%" (
@@ -69,6 +72,8 @@ echo   (Nicht dieses Fenster schliessen)
 echo ================================================================
 echo.
 
+call :kill_chrome_profile "data\chrome_profile\%BOARD_ID%"
+
 REM Open Chrome with the persistent kiosk profile (normal mode, not kiosk)
 start "" /WAIT "%CHROME_PATH%" --user-data-dir="%~dp0data\chrome_profile\%BOARD_ID%" --no-first-run --no-default-browser-check "https://play.autodarts.io"
 
@@ -98,3 +103,19 @@ echo   Naechster Schritt: start.bat ausfuehren
 echo ================================================================
 echo.
 pause
+goto :eof
+
+:load_env_value
+setlocal enabledelayedexpansion
+set "_lookup=%~1"
+set "_value="
+for /f "tokens=1,* delims==" %%a in ('findstr /R /B /C:"%~1=" "backend\.env" 2^>nul') do (
+    if /I "%%a"=="%~1" set "_value=%%b"
+)
+for /f "tokens=* delims= " %%a in ("!_value!") do set "_value=%%a"
+endlocal & if not "%_value%"=="" set "%~2=%_value%"
+goto :eof
+
+:kill_chrome_profile
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'chrome.exe' -and $_.CommandLine -like '*%~1*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }" >nul 2>&1
+goto :eof

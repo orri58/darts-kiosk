@@ -232,12 +232,14 @@ echo ================================================================
 echo   SETUP v!APP_VERSION! ABGESCHLOSSEN!
 echo.
 echo   Naechster Schritt:
-echo   1. backend\.env pruefen (CENTRAL_SERVER_URL, JWT_SECRET)
-echo   2. start.bat ausfuehren
+echo   1. backend\.env pruefen (mindestens BOARD_ID und JWT_SECRET)
+echo   2. setup_profile.bat ausfuehren (Autodarts-Login + Extensions)
+echo   3. start.bat ausfuehren
+echo   4. smoke_test.bat ausfuehren
 echo.
 echo   Enthaltene Komponenten:
-echo   - Backend mit License Sync Client
-echo   - Frontend mit Betreiber-Portal
+echo   - Lokales Backend / Local-first Runtime
+echo   - Frontend / Kiosk + Admin UI
 echo   - Windows Agent (Autostart)
 echo   - Autodarts Integration (Playwright)
 echo.
