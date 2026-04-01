@@ -23,15 +23,16 @@ export default function ErrorScreen({ message, onRetry, onLock, onCallStaff }) {
 
       {/* Action Buttons */}
       <div className="flex flex-col sm:flex-row gap-4 w-full max-w-xl">
-        {/* Call Staff - Primary */}
-        <Button
-          onClick={onCallStaff}
-          data-testid="error-call-staff-btn"
-          className="flex-1 h-20 text-xl bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading tracking-wider"
-        >
-          <Phone className="w-6 h-6 mr-3" />
-          Personal rufen
-        </Button>
+        {onCallStaff && (
+          <Button
+            onClick={onCallStaff}
+            data-testid="error-call-staff-btn"
+            className="flex-1 h-20 text-xl bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading tracking-wider"
+          >
+            <Phone className="w-6 h-6 mr-3" />
+            Personal rufen
+          </Button>
+        )}
 
         {/* Back to Locked */}
         <Button

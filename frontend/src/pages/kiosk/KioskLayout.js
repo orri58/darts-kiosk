@@ -11,6 +11,7 @@ import ObserverActiveScreen from './ObserverActiveScreen';
 import InGameScreen from './InGameScreen';
 import MatchResultScreen from './MatchResultScreen';
 import ErrorScreen from './ErrorScreen';
+import { CALL_STAFF_ENABLED } from '../../runtimeFeatures';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -212,7 +213,7 @@ export default function KioskLayout() {
           observerState={observerState}
           observerError={observerError}
           onEndGame={handleEndGame}
-          onCallStaff={handleCallStaff}
+          onCallStaff={CALL_STAFF_ENABLED ? handleCallStaff : null}
         />
       )}
 
@@ -230,7 +231,7 @@ export default function KioskLayout() {
           branding={branding}
           session={session}
           onEndGame={handleEndGame}
-          onCallStaff={handleCallStaff}
+          onCallStaff={CALL_STAFF_ENABLED ? handleCallStaff : null}
         />
       )}
 
@@ -239,7 +240,7 @@ export default function KioskLayout() {
           message={errorMessage}
           onRetry={handleRetry}
           onLock={handleReturnToLocked}
-          onCallStaff={handleCallStaff}
+          onCallStaff={CALL_STAFF_ENABLED ? handleCallStaff : null}
         />
       )}
 

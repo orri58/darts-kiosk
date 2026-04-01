@@ -10,6 +10,7 @@ from backend.models import User, Settings
 from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG, DEFAULT_LOCKSCREEN_QR, DEFAULT_OVERLAY_CONFIG, DEFAULT_POST_MATCH_DELAY, DEFAULT_AUTODARTS_DESKTOP
 from backend.schemas import SettingsUpdate
 from backend.dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
+from backend.runtime_features import sanitize_pricing_settings
 from backend.services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
 
 router = APIRouter()
@@ -40,17 +41,19 @@ async def update_branding(data: SettingsUpdate, admin: User = Depends(require_ad
 
 @router.get("/settings/pricing")
 async def get_pricing(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "pricing", DEFAULT_PRICING)
+    pricing = await get_or_create_setting(db, "pricing", DEFAULT_PRICING)
+    return sanitize_pricing_settings(pricing)
 
 
 @router.put("/settings/pricing")
 async def update_pricing(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    sanitized_value = sanitize_pricing_settings(data.value)
     result = await db.execute(select(Settings).where(Settings.key == "pricing"))
     setting = result.scalar_one_or_none()
     if setting:
-        setting.value = data.value
+        setting.value = sanitized_value
     else:
-        setting = Settings(key="pricing", value=data.value)
+        setting = Settings(key="pricing", value=sanitized_value)
         db.add(setting)
     await db.flush()
     await log_audit(db, admin, "update_pricing", "settings", "pricing")

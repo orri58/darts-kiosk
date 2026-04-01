@@ -168,9 +168,6 @@ export default function AdminDashboard() {
       if (unlockMinutes === 60) return pricing?.per_time?.price_per_60_min || 8.0;
       return (unlockMinutes / 30) * (pricing?.per_time?.price_per_30_min || 5.0);
     }
-    if (unlockMode === 'per_player') {
-      return unlockPlayers * (pricing?.per_player?.price_per_player || 1.5);
-    }
     return 0;
   };
 
@@ -232,7 +229,7 @@ export default function AdminDashboard() {
 
   const openUnlockDialog = (board) => {
     setSelectedBoard(board);
-    setUnlockMode(pricing?.mode || 'per_game');
+    setUnlockMode(pricing?.mode === 'per_time' ? 'per_time' : 'per_game');
     setUnlockCredits(pricing?.per_game?.default_credits || 3);
     setUnlockMinutes(30);
     setUnlockPlayers(1);
@@ -473,7 +470,7 @@ export default function AdminDashboard() {
             {/* Mode Selection */}
             <div className="space-y-2">
               <label className="text-sm text-zinc-500 uppercase tracking-wider">Abrechnungsart</label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={() => setUnlockMode('per_game')}
                   data-testid="mode-per-game"
@@ -497,18 +494,6 @@ export default function AdminDashboard() {
                 >
                   <Clock className="w-5 h-5 mx-auto mb-1" />
                   <span className="text-xs uppercase">Pro Zeit</span>
-                </button>
-                <button
-                  onClick={() => setUnlockMode('per_player')}
-                  data-testid="mode-per-player"
-                  className={`p-3 rounded-sm border-2 transition-all ${
-                    unlockMode === 'per_player'
-                      ? 'border-amber-500 bg-amber-500/20 text-amber-500'
-                      : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
-                  }`}
-                >
-                  <Target className="w-5 h-5 mx-auto mb-1" />
-                  <span className="text-xs uppercase">Pro Spieler</span>
                 </button>
               </div>
             </div>
@@ -566,40 +551,6 @@ export default function AdminDashboard() {
                 </div>
               </div>
             )}
-
-            {unlockMode === 'per_player' && (
-              <div className="space-y-2">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">Anzahl Spieler</label>
-                <div className="flex items-center gap-4">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setUnlockPlayers(Math.max(1, unlockPlayers - 1))}
-                    className="h-12 w-12 border-zinc-700"
-                  >
-                    <Minus className="w-5 h-5" />
-                  </Button>
-                  <Input
-                    type="number"
-                    value={unlockPlayers}
-                    onChange={(e) => setUnlockPlayers(parseInt(e.target.value) || 1)}
-                    min="1"
-                    max={pricing?.max_players || 4}
-                    data-testid="players-input"
-                    className="input-industrial text-center text-2xl h-12"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setUnlockPlayers(Math.min(pricing?.max_players || 4, unlockPlayers + 1))}
-                    className="h-12 w-12 border-zinc-700"
-                  >
-                    <Plus className="w-5 h-5" />
-                  </Button>
-                </div>
-              </div>
-            )}
-
             {/* Price Display */}
             <div className="bg-zinc-800 rounded-sm p-4 text-center">
               <p className="text-sm text-zinc-500 uppercase mb-2">Gesamtpreis</p>

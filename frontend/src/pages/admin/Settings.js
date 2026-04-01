@@ -29,6 +29,7 @@ import { Switch } from '../../components/ui/switch';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
+import { CALL_STAFF_ENABLED } from '../../runtimeFeatures';
 import axios from 'axios';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -589,8 +590,8 @@ export default function AdminSettings() {
               {/* Default Mode */}
               <div className="space-y-2">
                 <label className="text-sm text-zinc-500 uppercase tracking-wider">Standard-Modus</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {['per_game', 'per_time', 'per_player'].map((mode) => (
+                <div className="grid grid-cols-2 gap-2">
+                  {['per_game', 'per_time'].map((mode) => (
                     <button
                       key={mode}
                       onClick={() => setLocalPricing({ ...localPricing, mode })}
@@ -600,7 +601,7 @@ export default function AdminSettings() {
                           : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
                       }`}
                     >
-                      {mode === 'per_game' ? 'Pro Spiel' : mode === 'per_time' ? 'Pro Zeit' : 'Pro Spieler'}
+                      {mode === 'per_game' ? 'Pro Spiel' : 'Pro Zeit'}
                     </button>
                   ))}
                 </div>
@@ -672,25 +673,6 @@ export default function AdminSettings() {
                       className="input-industrial h-10"
                     />
                   </div>
-                </div>
-              </div>
-
-              {/* Per Player Pricing */}
-              <div className="bg-zinc-800/50 rounded-sm p-4 space-y-4">
-                <h4 className="text-sm text-zinc-400 uppercase tracking-wider">Pro Spieler</h4>
-                <div className="space-y-2">
-                  <label className="text-xs text-zinc-500">Preis pro Spieler (€)</label>
-                  <Input
-                    type="number"
-                    step="0.5"
-                    value={localPricing.per_player?.price_per_player || 1.5}
-                    onChange={(e) => setLocalPricing({
-                      ...localPricing,
-                      per_player: { ...localPricing.per_player, price_per_player: parseFloat(e.target.value) }
-                    })}
-                    data-testid="price-per-player-input"
-                    className="input-industrial h-10 max-w-xs"
-                  />
                 </div>
               </div>
 
@@ -1225,8 +1207,8 @@ export default function AdminSettings() {
                     <div>
                       <Label className="text-zinc-200 text-base">QR Match Sharing aktivieren</Label>
                       <p className="text-zinc-400 text-sm mt-1">
-                        Nach Spielende wird ein QR-Code mit Match-Ergebnis angezeigt,
-                        den Kunden scannen und teilen koennen.
+                        Nach echtem Session-Ende wird ein QR-Code mit Match-Ergebnis angezeigt.
+                        Bei laufender Session mit Restcredits bleibt der Kiosk im lokalen Flow.
                       </p>
                     </div>
                     <Switch
@@ -1311,10 +1293,12 @@ export default function AdminSettings() {
                     <Label className="text-zinc-300">Spiel beendet</Label>
                     <Input data-testid="kiosk-text-game-finished" value={localKioskTexts.game_finished || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, game_finished: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="SPIEL BEENDET" />
                   </div>
-                  <div>
-                    <Label className="text-zinc-300">Personal rufen</Label>
-                    <Input data-testid="kiosk-text-call-staff" value={localKioskTexts.call_staff || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, call_staff: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Personal rufen" />
-                  </div>
+                  {CALL_STAFF_ENABLED && (
+                    <div>
+                      <Label className="text-zinc-300">Personal rufen</Label>
+                      <Input data-testid="kiosk-text-call-staff" value={localKioskTexts.call_staff || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, call_staff: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Personal rufen" />
+                    </div>
+                  )}
                   <div>
                     <Label className="text-zinc-300">Credits-Label</Label>
                     <Input data-testid="kiosk-text-credits-label" value={localKioskTexts.credits_label || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, credits_label: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Spiele übrig" />

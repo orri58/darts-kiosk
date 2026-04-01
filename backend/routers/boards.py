@@ -1,6 +1,5 @@
 """Board CRUD & Session Control Routes"""
 import asyncio
-import os
 import uuid
 from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +17,7 @@ from backend.dependencies import (
     get_current_user, require_admin, log_audit,
     get_active_session_for_board
 )
+from backend.runtime_features import AUTODARTS_MODE, observer_mode_requires_target, supports_local_pricing_mode
 from backend.services.ws_manager import board_ws
 from backend.routers.kiosk import start_observer_for_board, stop_observer_for_board
 from backend.services.autodarts_observer import observer_manager
@@ -139,6 +139,18 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
     board = result.scalar_one_or_none()
     if not board:
         raise HTTPException(status_code=404, detail="Board not found")
+
+    if not supports_local_pricing_mode(data.pricing_mode):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Pricing mode '{data.pricing_mode}' is not available in the stable local core"
+        )
+
+    if observer_mode_requires_target() and not board.autodarts_target_url:
+        raise HTTPException(
+            status_code=400,
+            detail="Board is not configured for observer mode. Set an Autodarts target URL before unlocking."
+        )
 
     existing = await get_active_session_for_board(db, board.id)
     if existing:
@@ -285,7 +297,7 @@ async def get_board_session(board_id: str, db: AsyncSession = Depends(get_db)):
 
     return {
         "board_status": board.status,
-        "autodarts_mode": os.environ.get('AUTODARTS_MODE', 'observer'),
+        "autodarts_mode": AUTODARTS_MODE,
         "observer_browser_open": obs_status.get("browser_open", False),
         "observer_state": obs_status.get("state", "closed"),
         "observer_error": obs_status.get("last_error"),

@@ -286,7 +286,7 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                     # ── Match result + player stats ──
                     if _should_deduct_credit(trigger):
                         match_sharing = await get_or_create_setting(db, "match_sharing", DEFAULT_MATCH_SHARING)
-                        if match_sharing.get("enabled", False):
+                        if match_sharing.get("enabled", False) and should_lock:
                             match_token = secrets.token_hex(16)
                             duration = None
                             if session.started_at:

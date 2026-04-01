@@ -85,14 +85,16 @@ export default function ObserverActiveScreen({
             )}
           </Button>
 
-          <Button
-            onClick={onCallStaff}
-            variant="outline"
-            className="w-full h-12 border-2 border-zinc-700 text-zinc-300 hover:border-amber-500 hover:text-amber-500 uppercase font-heading tracking-wider"
-            data-testid="fallback-call-staff-btn"
-          >
-            <Phone className="w-5 h-5 mr-2" /> Personal rufen
-          </Button>
+          {onCallStaff && (
+            <Button
+              onClick={onCallStaff}
+              variant="outline"
+              className="w-full h-12 border-2 border-zinc-700 text-zinc-300 hover:border-amber-500 hover:text-amber-500 uppercase font-heading tracking-wider"
+              data-testid="fallback-call-staff-btn"
+            >
+              <Phone className="w-5 h-5 mr-2" /> Personal rufen
+            </Button>
+          )}
 
           {!showConfirmEnd ? (
             <Button

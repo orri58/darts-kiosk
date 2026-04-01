@@ -132,16 +132,17 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
 
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row gap-4 w-full max-w-2xl">
-          {/* Call Staff */}
-          <Button
-            onClick={onCallStaff}
-            data-testid="call-staff-btn"
-            variant="outline"
-            className="flex-1 h-20 text-xl bg-transparent border-2 border-zinc-700 text-zinc-300 hover:border-amber-500 hover:text-amber-500 uppercase font-heading tracking-wider"
-          >
-            <Phone className="w-6 h-6 mr-3" />
-            {kioskTexts.call_staff || 'Personal rufen'}
-          </Button>
+          {onCallStaff && (
+            <Button
+              onClick={onCallStaff}
+              data-testid="call-staff-btn"
+              variant="outline"
+              className="flex-1 h-20 text-xl bg-transparent border-2 border-zinc-700 text-zinc-300 hover:border-amber-500 hover:text-amber-500 uppercase font-heading tracking-wider"
+            >
+              <Phone className="w-6 h-6 mr-3" />
+              {kioskTexts.call_staff || 'Personal rufen'}
+            </Button>
+          )}
 
           {/* End Game (Manual) */}
           {!showConfirmEnd ? (
