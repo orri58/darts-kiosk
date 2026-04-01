@@ -16,6 +16,7 @@ _TRUTHY = {"1", "true", "yes", "on"}
 
 LOCAL_CORE_PRICING_MODES = (
     PricingMode.PER_GAME.value,
+    PricingMode.PER_PLAYER.value,
     PricingMode.PER_TIME.value,
 )
 
@@ -48,12 +49,7 @@ def supports_local_pricing_mode(mode: str | None) -> bool:
 
 
 def sanitize_pricing_settings(pricing: Dict[str, Any] | None) -> Dict[str, Any]:
-    """Keep pricing config compatible with the stable local-core surface.
-
-    Historical data may still contain `per_player`. We preserve that payload for
-    reporting / future migration, but normalize the operator-facing default mode
-    back to a supported local mode.
-    """
+    """Keep pricing config compatible with the supported local-core modes."""
     cleaned: Dict[str, Any] = deepcopy(pricing or {})
     if cleaned.get("mode") not in LOCAL_CORE_PRICING_MODES:
         cleaned["mode"] = PricingMode.PER_GAME.value

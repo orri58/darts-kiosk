@@ -8,6 +8,7 @@ import uuid
 import enum
 
 from backend.database import Base
+from backend.services.autodarts_triggers import DEFAULT_TRIGGER_POLICY
 
 
 def generate_uuid():
@@ -376,6 +377,11 @@ DEFAULT_OVERLAY_CONFIG = {
 
 DEFAULT_POST_MATCH_DELAY = {
     "delay_ms": 5000,
+}
+
+DEFAULT_AUTODARTS_TRIGGERS = {
+    "version": 1,
+    **DEFAULT_TRIGGER_POLICY,
 }
 
 DEFAULT_AUTODARTS_DESKTOP = {

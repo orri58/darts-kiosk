@@ -473,6 +473,13 @@ class ActionPoller:
         except Exception:
             pass
 
+        try:
+            from backend.services.session_pricing import initial_credit_seed
+        except ImportError:
+            from services.session_pricing import initial_credit_seed
+
+        credits_total, credits_remaining = initial_credit_seed(pricing_mode, credits, players_count)
+
         expires_at = None
         if pricing_mode == PricingMode.PER_TIME.value and minutes:
             expires_at = datetime.now(timezone.utc) + timedelta(minutes=minutes)
@@ -481,8 +488,8 @@ class ActionPoller:
             board_id=board.id,
             pricing_mode=pricing_mode,
             game_type=game_type,
-            credits_total=credits,
-            credits_remaining=credits,
+            credits_total=credits_total,
+            credits_remaining=credits_remaining,
             minutes_total=minutes,
             price_total=price_total,
             players_count=players_count,
@@ -499,8 +506,8 @@ class ActionPoller:
         except Exception:
             pass
 
-        logger.info(f"[ACTION-POLL] Board {board.board_id} unlocked: mode={pricing_mode} credits={credits}")
-        return True, f"Board {board.board_id} unlocked (mode={pricing_mode}, credits={credits}, minutes={minutes})"
+        logger.info(f"[ACTION-POLL] Board {board.board_id} unlocked: mode={pricing_mode} credits={credits_remaining}")
+        return True, f"Board {board.board_id} unlocked (mode={pricing_mode}, credits={credits_remaining}, minutes={minutes})"
 
     async def _do_lock(self, db, board) -> tuple:
         """Lock a board and end any active session."""

@@ -33,7 +33,7 @@ load_secrets_to_env()
 from backend.database import get_db, init_db, Base, async_engine, AsyncSessionLocal
 from backend.models import (
     User, Board, UserRole, BoardStatus,
-    DEFAULT_PALETTES, DEFAULT_PRICING, DEFAULT_BRANDING
+    DEFAULT_PALETTES, DEFAULT_PRICING, DEFAULT_BRANDING, DEFAULT_AUTODARTS_TRIGGERS
 )
 from backend.dependencies import hash_password, get_or_create_setting, MODE
 from backend.runtime_features import AUTODARTS_MODE, central_adapters_enabled
@@ -159,6 +159,7 @@ async def lifespan(app: FastAPI):
         await get_or_create_setting(db, "branding", DEFAULT_BRANDING)
         await get_or_create_setting(db, "pricing", DEFAULT_PRICING)
         await get_or_create_setting(db, "palettes", DEFAULT_PALETTES)
+        await get_or_create_setting(db, "autodarts_triggers", DEFAULT_AUTODARTS_TRIGGERS)
 
         await db.commit()
 

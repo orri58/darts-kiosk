@@ -1,18 +1,16 @@
 """
-Kiosk Action Routes — Observer MVP (v2.7.0)
+Kiosk Action Routes — local authoritative session lifecycle.
 
 Central finalization via finalize_match(board_id, trigger):
   - Single entry point for ALL match-end scenarios
-  - Observer teardown ONLY when should_lock (credits exhausted)
-  - Observer KEPT ALIVE when credits remain (next game ready)
-  - After finish with credits: navigate Autodarts to home/lobby
-  - Duplicate match-ID guard: credit deducted exactly ONCE per match
-  - Credit deduction for finished, aborted, manual (not for crashed/unknown)
-  - Lock ONLY when credits <= 0 after deduction
-  - Delay ONLY for trigger="finished" (player sees result)
-  - Abort (delete) = immediate finalize, NO delay
-  - return_to_kiosk_ui() GUARANTEED via finally block (even on partial failure)
-  - Timeout protection (15s) prevents hanging finalize
+  - Observer teardown ONLY when session capacity is exhausted
+  - Observer stays alive when more local capacity remains
+  - Authoritative Autodarts WS finish signals decide billing/finalization
+  - Per-game billing happens on authoritative finish/manual stop
+  - Per-player billing happens once on authoritative start-of-play
+  - Abort/delete never deducts by itself
+  - return_to_kiosk_ui() is still guaranteed on true session end
+  - Timeout protection prevents hanging finalization
 """
 import asyncio
 import os
@@ -26,11 +24,17 @@ from sqlalchemy import select
 from pydantic import BaseModel
 
 from backend.database import get_db, AsyncSessionLocal
-from backend.models import Board, Session, MatchResult, Player, User, BoardStatus, SessionStatus, PricingMode, Settings
+from backend.models import Board, Session, MatchResult, Player, User, BoardStatus, SessionStatus, PricingMode, Settings, DEFAULT_AUTODARTS_TRIGGERS
 from backend.schemas import StartGameRequest, EndGameRequest
 from backend.dependencies import get_active_session_for_board, log_audit, get_or_create_setting, require_admin
 from backend.services.ws_manager import board_ws
 from backend.services.autodarts_observer import observer_manager, ObserverState
+from backend.services.autodarts_triggers import build_trigger_policy
+from backend.services.session_pricing import (
+    apply_authoritative_start_charge,
+    finalize_session_consumption,
+    should_record_match_completion,
+)
 
 import logging
 logger = logging.getLogger(__name__)
@@ -54,21 +58,13 @@ _last_finalized_match: dict = {}  # board_id -> match_id (prevents duplicate cre
 # =====================================================================
 
 def _should_deduct_credit(trigger: str) -> bool:
-    """
-    Central credit deduction policy.
+    """Compatibility helper for finalize-time credit deductions.
 
-    Deduct for:
-      - "finished", "manual", "aborted"
-      - Any WS-specific match_end_* or match_abort_* trigger
-    Do NOT deduct for:
-      - "crashed" (system failure, not player action)
-      - unknown triggers
+    Only authoritative finishes and manual staff ends consume a finalize-time
+    credit. Abort/delete paths never deduct here; per-player charging happens at
+    authoritative start-of-play instead.
     """
-    if trigger in ("finished", "manual", "aborted"):
-        return True
-    if trigger.startswith("match_end_") or trigger.startswith("match_abort_"):
-        return True
-    return False
+    return trigger in {"finished", "manual", "match_end_state_finished", "match_end_game_finished"}
 
 
 # =====================================================================
@@ -236,31 +232,17 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                         return {"should_lock": False, "should_teardown": True,
                                 "credits_remaining": 0, "board_status": board.status}
 
-                    # ── Credit deduction ──
-                    credits_before = session.credits_remaining
-                    consume_credit = _should_deduct_credit(trigger) and session.pricing_mode == PricingMode.PER_GAME.value
-
-                    if consume_credit:
-                        session.credits_remaining = max(0, session.credits_remaining - 1)
-
-                    credit_after = session.credits_remaining
+                    # ── Finalize-time capacity + billing ──
+                    finalize_decision = finalize_session_consumption(session, trigger)
+                    credits_before = finalize_decision.credits_before
+                    credit_after = finalize_decision.credits_after
                     credits_remaining = credit_after
+                    should_lock = finalize_decision.should_lock
+                    should_teardown = finalize_decision.should_teardown
 
                     # ── Store match_id for duplicate prevention ──
                     if current_match_id:
                         _last_finalized_match[board_id] = current_match_id
-
-                    # ═══ AUTHORITATIVE DECISION (v3.2.2) ═══
-                    # Single source of truth — all downstream logic uses these
-                    has_remaining_credits = True
-                    if session.pricing_mode == PricingMode.PER_GAME.value:
-                        has_remaining_credits = credit_after > 0
-                    elif session.pricing_mode == PricingMode.PER_TIME.value:
-                        if session.expires_at and datetime.now(timezone.utc) >= session.expires_at:
-                            has_remaining_credits = False
-
-                    should_lock = not has_remaining_credits
-                    should_teardown = should_lock
 
                     obs_for_log = observer_manager.get(board_id)
                     lc_log = obs_for_log.lifecycle_state.value if obs_for_log else "none"
@@ -268,15 +250,17 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                     branch = "session_end" if should_lock else "keep_alive"
                     logger.info(
                         f"[SESSION] finalize decision board={board_id} "
-                        f"trigger={trigger} credit_before={credits_before} credit_after={credit_after} "
-                        f"has_remaining_credits={has_remaining_credits} "
+                        f"trigger={trigger} pricing_mode={session.pricing_mode} "
+                        f"credit_before={credits_before} credit_after={credit_after} "
+                        f"charge_applied={finalize_decision.charge_applied} consume_units={finalize_decision.consume_units} "
+                        f"has_remaining_capacity={finalize_decision.has_remaining_capacity} "
                         f"should_lock={should_lock} should_teardown={should_teardown} "
                         f"branch={branch} desired_state={desired_log} lifecycle={lc_log}"
                     )
                     if should_lock:
-                        logger.info(f"[SESSION] lock_enforced board={board_id} reason=no_remaining_credits")
+                        logger.info(f"[SESSION] lock_enforced board={board_id} reason=no_remaining_capacity")
                     else:
-                        logger.info(f"[SESSION] keep_alive_allowed board={board_id} reason=remaining_credits")
+                        logger.info(f"[SESSION] keep_alive_allowed board={board_id} reason=remaining_capacity")
 
                     logger.info(
                         f"[SESSION] finalize committed board={board_id} "
@@ -284,7 +268,7 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                     )
 
                     # ── Match result + player stats ──
-                    if _should_deduct_credit(trigger):
+                    if should_record_match_completion(trigger):
                         match_sharing = await get_or_create_setting(db, "match_sharing", DEFAULT_MATCH_SHARING)
                         if match_sharing.get("enabled", False) and should_lock:
                             match_token = secrets.token_hex(16)
@@ -444,7 +428,7 @@ async def _finalize_match_inner(board_id: str, trigger: str,
 
         # ── Step 7: Sound broadcast ──
         try:
-            if _should_deduct_credit(trigger):
+            if should_record_match_completion(trigger):
                 await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "checkout"})
             if not should_lock:
                 await board_ws.broadcast("credit_update", {
@@ -595,9 +579,13 @@ async def finalize_match(board_id: str, trigger: str,
 # Observer callbacks — SYNCHRONOUS (no create_task)
 # =====================================================================
 
-async def _on_game_started(board_id: str):
-    """Observer detected match start. Set board to IN_GAME. Reset finalized flag."""
-    logger.info(f"[Observer->Kiosk] === GAME STARTED === board={board_id}")
+async def _on_game_started(board_id: str, trigger: str = "observer_start"):
+    """Observer detected authoritative start-of-play.
+
+    Per-player sessions bill exactly once here. Per-game and per-time sessions only
+    transition the board into in-game state.
+    """
+    logger.info(f"[Observer->Kiosk] === GAME STARTED === board={board_id} trigger={trigger}")
     _finalized.pop(board_id, None)
     _last_finalized_match.pop(board_id, None)
     try:
@@ -605,8 +593,21 @@ async def _on_game_started(board_id: str):
             async with db.begin():
                 result = await db.execute(select(Board).where(Board.board_id == board_id))
                 board = result.scalar_one_or_none()
-                if board:
-                    board.status = BoardStatus.IN_GAME.value
+                if not board:
+                    return
+                session = await get_active_session_for_board(db, board.id)
+                if not session:
+                    return
+
+                charge = apply_authoritative_start_charge(session, board.status)
+                board.status = BoardStatus.IN_GAME.value
+
+                logger.info(
+                    f"[Observer->Kiosk] start_charge board={board_id} trigger={trigger} "
+                    f"pricing_mode={session.pricing_mode} charged={charge.charged} units={charge.units} "
+                    f"credits_before={charge.credits_before} credits_after={charge.credits_after} "
+                    f"reason={charge.reason}"
+                )
         await board_ws.broadcast("board_status", {"board_id": board_id, "status": "in_game"})
         await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "start"})
     except Exception as e:
@@ -649,6 +650,17 @@ def _get_observer_match_id(board_id: str) -> str:
 # Observer lifecycle
 # =====================================================================
 
+async def _load_autodarts_trigger_policy() -> dict:
+    try:
+        async with AsyncSessionLocal() as db:
+            policy = await get_or_create_setting(db, "autodarts_triggers", DEFAULT_AUTODARTS_TRIGGERS)
+            await db.commit()
+            return build_trigger_policy(policy).export()
+    except Exception as exc:
+        logger.warning(f"[Kiosk] Failed to load autodarts trigger policy, using defaults: {exc}")
+        return build_trigger_policy(DEFAULT_AUTODARTS_TRIGGERS).export()
+
+
 async def start_observer_for_board(board_id: str, autodarts_url: str):
     if AUTODARTS_MODE != 'observer':
         logger.info(f"[Kiosk] AUTODARTS_MODE={AUTODARTS_MODE}, skipping observer")
@@ -660,7 +672,11 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
     _finalized.pop(board_id, None)
 
     headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
-    logger.info(f"[Kiosk] === Observer Start === board={board_id} url={autodarts_url} headless={headless}")
+    trigger_policy = await _load_autodarts_trigger_policy()
+    logger.info(
+        f"[Kiosk] === Observer Start === board={board_id} url={autodarts_url} headless={headless} "
+        f"authoritative_finish={trigger_policy.get('authoritative_finish')}"
+    )
 
     await observer_manager.open(
         board_id=board_id,
@@ -668,6 +684,7 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
         on_game_started=_on_game_started,
         on_game_ended=_on_game_ended,
         headless=headless,
+        trigger_config=trigger_policy,
     )
 
     status = observer_manager.get_status(board_id)
@@ -789,14 +806,18 @@ async def get_ws_diagnostic(board_id: str):
         "ws_state": {
             "match_active": ws.match_active,
             "match_finished": ws.match_finished,
+            "finish_pending": ws.finish_pending,
             "winner_detected": ws.winner_detected,
             "last_match_state": ws.last_match_state,
             "last_game_event": ws.last_game_event,
             "last_match_id": ws.last_match_id,
+            "last_start_trigger": ws.last_start_trigger,
+            "pending_finish_trigger": ws.pending_finish_trigger,
             "frames_received": ws.frames_received,
             "match_relevant_frames": ws.match_relevant_frames,
             "finish_trigger": ws.finish_trigger,
         },
+        "trigger_policy": obs.export_trigger_policy(),
         "captured_frames_count": len(frames),
         "captured_frames": [f.to_dict() for f in frames[-30:]],
     }

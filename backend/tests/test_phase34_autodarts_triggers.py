@@ -1,0 +1,93 @@
+import pytest
+
+from backend.services.autodarts_observer import AutodartsObserver, ObserverState
+from backend.services.autodarts_triggers import TriggerAuthority, build_trigger_policy
+
+
+@pytest.fixture
+def observer():
+    obs = AutodartsObserver("BOARD-T1")
+    obs.set_trigger_policy()
+    return obs
+
+
+def test_trigger_policy_classifies_authoritative_and_assistive_finish_signals():
+    policy = build_trigger_policy()
+
+    confirmed = policy.classify_ws("match_end_state_finished", "autodarts.matches.abc.state")
+    assistive = policy.classify_ws("match_end_gameshot_match", "autodarts.matches.abc.game-events")
+
+    assert confirmed.authority == TriggerAuthority.AUTHORITATIVE
+    assert assistive.authority == TriggerAuthority.ASSISTIVE
+
+
+def test_assistive_finish_signal_is_pending_only(observer, monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(observer, "_schedule_immediate_finalize", lambda trigger, match_id: scheduled.append((trigger, match_id)))
+    monkeypatch.setattr(observer, "_schedule_finalize_safety", lambda trigger, match_id: scheduled.append((f"safety:{trigger}", match_id)))
+
+    observer._ws_state.match_active = True
+    observer._ws_state.last_match_id = "match-1"
+
+    observer._update_ws_state(
+        "match_end_gameshot_match",
+        "autodarts.matches.match-1.game-events",
+        {"event": "game_shot", "body": {"type": "match"}},
+        '{"event":"game_shot"}',
+    )
+
+    assert observer._ws_state.finish_pending is True
+    assert observer._ws_state.match_finished is False
+    assert observer._ws_state.pending_finish_trigger == "match_end_gameshot_match"
+    assert scheduled == []
+
+
+def test_confirmed_finish_upgrades_pending_signal(observer, monkeypatch):
+    scheduled = []
+    monkeypatch.setattr(observer, "_schedule_immediate_finalize", lambda trigger, match_id: scheduled.append((trigger, match_id)))
+    monkeypatch.setattr(observer, "_schedule_finalize_safety", lambda trigger, match_id: scheduled.append((f"safety:{trigger}", match_id)))
+
+    observer._ws_state.match_active = True
+    observer._ws_state.last_match_id = "match-2"
+    observer._ws_state.finish_pending = True
+    observer._ws_state.pending_finish_trigger = "match_end_gameshot_match"
+
+    observer._update_ws_state(
+        "match_end_state_finished",
+        "autodarts.matches.match-2.state",
+        {"finished": True},
+        '{"finished":true}',
+    )
+
+    assert observer._ws_state.match_finished is True
+    assert observer._ws_state.finish_pending is False
+    assert observer._ws_state.finish_trigger == "match_end_state_finished"
+    assert scheduled == [
+        ("match_end_state_finished", "match-2"),
+        ("safety:match_end_state_finished", "match-2"),
+    ]
+
+
+def test_unqualified_delete_is_diagnostic_only(observer):
+    observer._ws_state.match_active = True
+    observer._ws_state.last_match_id = "match-3"
+
+    observer._update_ws_state(
+        "match_reset_delete",
+        "system.notifications.global",
+        {"event": "delete"},
+        '{"event":"delete"}',
+    )
+
+    assert observer._ws_state.match_active is True
+    assert observer._abort_detected is False
+    assert observer._ws_state.finish_trigger is None
+
+
+def test_console_and_dom_finish_hints_stay_non_authoritative(observer):
+    observer._stable_state = ObserverState.IN_GAME
+    merged = observer._merge_detection(None, ObserverState.FINISHED, ObserverState.FINISHED)
+
+    assert merged == ObserverState.IDLE
+    assert observer.export_trigger_policy()["allow_console_finish_authority"] is False
+    assert observer.export_trigger_policy()["allow_dom_finish_authority"] is False

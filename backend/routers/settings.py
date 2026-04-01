@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from backend.database import get_db
 from backend.models import User, Settings
-from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG, DEFAULT_LOCKSCREEN_QR, DEFAULT_OVERLAY_CONFIG, DEFAULT_POST_MATCH_DELAY, DEFAULT_AUTODARTS_DESKTOP
+from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG, DEFAULT_LOCKSCREEN_QR, DEFAULT_OVERLAY_CONFIG, DEFAULT_POST_MATCH_DELAY, DEFAULT_AUTODARTS_TRIGGERS, DEFAULT_AUTODARTS_DESKTOP
 from backend.schemas import SettingsUpdate
 from backend.dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
 from backend.runtime_features import sanitize_pricing_settings
@@ -328,6 +328,27 @@ async def update_post_match_delay(data: SettingsUpdate, admin: User = Depends(re
         db.add(setting)
     await db.flush()
     await log_audit(db, admin, "update_post_match_delay", "settings", "post_match_delay")
+    return setting.value
+
+
+# ===== Autodarts Trigger Policy =====
+
+@router.get("/settings/autodarts-triggers")
+async def get_autodarts_triggers(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "autodarts_triggers", DEFAULT_AUTODARTS_TRIGGERS)
+
+
+@router.put("/settings/autodarts-triggers")
+async def update_autodarts_triggers(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "autodarts_triggers"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="autodarts_triggers", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_autodarts_triggers", "settings", "autodarts_triggers")
     return setting.value
 
 

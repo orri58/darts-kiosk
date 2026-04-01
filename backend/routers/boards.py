@@ -19,6 +19,7 @@ from backend.dependencies import (
 )
 from backend.runtime_features import AUTODARTS_MODE, observer_mode_requires_target, supports_local_pricing_mode
 from backend.services.ws_manager import board_ws
+from backend.services.session_pricing import initial_credit_seed
 from backend.routers.kiosk import start_observer_for_board, stop_observer_for_board
 from backend.services.autodarts_observer import observer_manager
 
@@ -160,12 +161,18 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
     if data.pricing_mode == PricingMode.PER_TIME.value and data.minutes:
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=data.minutes)
 
+    credits_total, credits_remaining = initial_credit_seed(
+        data.pricing_mode,
+        data.credits,
+        data.players_count,
+    )
+
     session = Session(
         board_id=board.id,
         pricing_mode=data.pricing_mode,
         game_type=data.game_type,
-        credits_total=data.credits or 0,
-        credits_remaining=data.credits or 0,
+        credits_total=credits_total,
+        credits_remaining=credits_remaining,
         minutes_total=data.minutes or 0,
         price_total=data.price_total,
         players_count=data.players_count,

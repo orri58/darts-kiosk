@@ -19,14 +19,13 @@ Autodarts messaging patterns observed:
   - autodarts.boards.{id}.state       → board state changes
 
 Credit logic:
-  Credits are decremented on game START (idle -> in_game), not on finish.
+  Observer signals do not directly bill. They only emit authoritative start/finish
+  callbacks to the kiosk router, which applies per-mode billing rules.
 
 Session-end logic:
-  Triggered ONLY by confirmed exit from in_game:
-    - Event-driven: WS match finished / matchshot / winner
-    - DOM fallback: strong match-end markers (Rematch/Share buttons)
-    - Abort: return to lobby (idle)
-  On confirmed exit: check credits → lock board, close browser, restore kiosk.
+  Triggered ONLY by authoritative WS finish/abort signals.
+  Console and DOM remain diagnostic/degraded inputs and must not become billing
+  authority on their own.
 """
 import asyncio
 import json
@@ -43,6 +42,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
+
+from backend.services.autodarts_triggers import TriggerAction, TriggerAuthority, build_trigger_policy
 
 logger = logging.getLogger(__name__)
 
@@ -166,21 +167,27 @@ class WSEventState:
     """Accumulated state from WebSocket events."""
     match_active: bool = False
     match_finished: bool = False
+    finish_pending: bool = False
     winner_detected: bool = False
     last_match_state: Optional[str] = None
     last_game_event: Optional[str] = None
     last_match_id: Optional[str] = None
+    last_start_trigger: Optional[str] = None
+    pending_finish_trigger: Optional[str] = None
     frames_received: int = 0
     match_relevant_frames: int = 0
-    finish_trigger: Optional[str] = None  # What triggered the finish detection
+    finish_trigger: Optional[str] = None  # Authoritative finish trigger only
 
     def reset(self):
         self.match_active = False
         self.match_finished = False
+        self.finish_pending = False
         self.winner_detected = False
         self.last_match_state = None
         self.last_game_event = None
         self.last_match_id = None
+        self.last_start_trigger = None
+        self.pending_finish_trigger = None
         self.finish_trigger = None
 
 
@@ -251,6 +258,10 @@ class AutodartsObserver:
 
         # Per-game tracking
         self._credit_consumed = False
+        self._authoritative_start_emitted = False
+
+        # Trigger policy (configurable, defaults loaded locally)
+        self._trigger_policy = build_trigger_policy()
 
         # ── WebSocket event capture (network-level) ──
         self._ws_state = WSEventState()
@@ -286,6 +297,18 @@ class AutodartsObserver:
             return not self._page.is_closed()
         except Exception:
             return False
+
+    def set_trigger_policy(self, config: Optional[dict] = None):
+        self._trigger_policy = build_trigger_policy(config)
+
+    def export_trigger_policy(self) -> dict:
+        return self._trigger_policy.export()
+
+    def _finish_is_authoritative(self) -> bool:
+        return self._ws_state.finish_trigger in self._trigger_policy.authoritative_finish
+
+    def _start_is_authoritative(self) -> bool:
+        return self._ws_state.last_start_trigger in self._trigger_policy.authoritative_start
 
     async def _dispatch_finalize(self, trigger: str, source: str) -> Optional[dict]:
         """
@@ -594,6 +617,7 @@ class AutodartsObserver:
         on_game_started: Optional[Callable] = None,
         on_game_ended: Optional[Callable] = None,
         headless: bool = False,
+        trigger_config: Optional[dict] = None,
     ):
         """Open Chrome with persistent profile and start the observer loop."""
         # ═══ v3.2.5: COMPREHENSIVE START GUARD ═══
@@ -640,6 +664,7 @@ class AutodartsObserver:
 
         self._on_game_started = on_game_started
         self._on_game_ended = on_game_ended
+        self.set_trigger_policy(trigger_config)
 
         # ── HARD RESET of all runtime flags for clean start ──
         self._stopping = False
@@ -652,6 +677,7 @@ class AutodartsObserver:
         self._exit_polls = 0
         self._exit_saw_finished = False
         self._credit_consumed = False
+        self._authoritative_start_emitted = False
         self._ws_state = WSEventState()
         self._ws_frames.clear()
 
@@ -1278,140 +1304,116 @@ class AutodartsObserver:
         return None
 
     def _update_ws_state(self, interpretation: str, channel: str, payload, raw: str):
-        """
-        Update ws_state based on the Autodarts lifecycle state machine.
-
-        State machine:
-          turn_start / throw           → match_active = True
-          game_shot+match / finished   → match_finished = True, match_active = False
-          delete                       → full reset
-
-        Ignored: round changes, turn_end, score updates, generic match events
-        """
+        """Update WS lifecycle state using the configured trigger policy."""
         ws = self._ws_state
+        decision = self._trigger_policy.classify_ws(interpretation, channel)
 
         # ── Track match ID from channel ──
         match_id = self._extract_match_id(channel)
         if match_id:
             ws.last_match_id = match_id
 
-        # ═══ MATCH START ═══
-        if interpretation in ("match_start_turn_start", "match_start_throw"):
-            # v3.3.1: Revoke false finish if in-game signal arrives after premature match_finished
-            if ws.match_finished:
-                old_trigger = ws.finish_trigger
+        if decision.action == TriggerAction.START and decision.is_authoritative:
+            ws.last_start_trigger = interpretation
+            if ws.match_finished or ws.finish_pending:
                 logger.warning(
-                    f"[Observer:{self.board_id}] *** FALSE_FINISH_REVOKED *** "
-                    f"reason={interpretation} after premature trigger={old_trigger} "
-                    f"match_id={ws.last_match_id} — match is still active"
+                    f"[Observer:{self.board_id}] FALSE_FINISH_REVOKED reason={interpretation} "
+                    f"prev_finish={ws.finish_trigger or ws.pending_finish_trigger} match_id={ws.last_match_id}"
                 )
-                ws.match_finished = False
-                ws.winner_detected = False
-                ws.finish_trigger = None
-                ws.match_active = True
-                self._finalized = False
-                self._finalize_dispatching = False
-            elif not ws.match_active:
-                ws.match_active = True
-                logger.info(
-                    f"[Observer:{self.board_id}] *** MATCH START DETECTED *** "
-                    f"reason={interpretation} | match_id={ws.last_match_id}"
-                )
+            ws.match_active = True
+            ws.match_finished = False
+            ws.finish_pending = False
+            ws.winner_detected = False
+            ws.pending_finish_trigger = None
+            ws.finish_trigger = None
+            self._abort_detected = False
+            self._finalized = False
+            self._finalize_dispatching = False
+            logger.info(
+                f"[Observer:{self.board_id}] MATCH_START_ACCEPTED trigger={interpretation} "
+                f"match_id={ws.last_match_id} authority={decision.authority.value}"
+            )
+            return
 
-        # ═══ MATCH END (authoritative) ═══
-        elif interpretation in ("match_end_gameshot_match", "match_end_state_finished",
-                                "match_end_game_finished", "match_finished_matchshot"):
-            # Duplicate match-ID guard: ignore repeat finish signals for already-finalized match
+        if decision.action == TriggerAction.FINISH:
             current_mid = ws.last_match_id
             if current_mid and current_mid == self._last_finalized_match_id:
                 logger.info(
                     f"[Observer:{self.board_id}] MATCH_FINISH_DUPLICATE_IGNORED "
-                    f"trigger={interpretation} match_id={current_mid} reason=match_already_finalized")
+                    f"trigger={interpretation} match_id={current_mid} reason=match_already_finalized"
+                )
                 return
 
-            # v3.3.1: Separate confirmed (state frame) from pending (gameshot) signals
-            is_confirmed = interpretation in ("match_end_state_finished", "match_end_game_finished")
+            if decision.authority == TriggerAuthority.ASSISTIVE:
+                ws.finish_pending = True
+                ws.pending_finish_trigger = interpretation
+                ws.last_game_event = interpretation
+                logger.info(
+                    f"[Observer:{self.board_id}] MATCH_FINISH_PENDING trigger={interpretation} "
+                    f"match_id={ws.last_match_id} authority=assistive"
+                )
+                return
 
-            if ws.match_finished:
-                if is_confirmed and ws.finish_trigger not in ("match_end_state_finished", "match_end_game_finished"):
-                    # State frame CONFIRMS a pending gameshot finish — upgrade trigger and dispatch
-                    logger.info(
-                        f"[Observer:{self.board_id}] MATCH_FINISH_CONFIRMED "
-                        f"trigger={interpretation} match_id={current_mid} "
-                        f"(upgrades pending trigger={ws.finish_trigger})")
-                    ws.finish_trigger = interpretation
-                    self._schedule_immediate_finalize(interpretation, ws.last_match_id)
-                else:
-                    logger.info(
-                        f"[Observer:{self.board_id}] MATCH_FINISH_DUPLICATE_IGNORED "
-                        f"trigger={interpretation} match_id={current_mid} reason=already_marked_finished "
-                        f"first_trigger={ws.finish_trigger}")
+            if self._trigger_policy.require_prior_active_for_finish and not ws.match_active and not ws.finish_pending:
+                logger.warning(
+                    f"[Observer:{self.board_id}] MATCH_FINISH_IGNORED trigger={interpretation} "
+                    f"match_id={ws.last_match_id} reason=no_prior_active_match"
+                )
                 return
 
             ws.match_finished = True
+            ws.finish_pending = False
             ws.match_active = False
             ws.winner_detected = True
+            ws.pending_finish_trigger = None
             ws.finish_trigger = interpretation
             logger.info(
-                f"[Observer:{self.board_id}] *** MATCH FINISH DETECTED *** "
-                f"trigger={interpretation} | match_id={ws.last_match_id} | "
-                f"confirmed={is_confirmed}"
+                f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED trigger={interpretation} "
+                f"match_id={ws.last_match_id} authority={decision.authority.value}"
             )
-            logger.info(
-                f"[Observer:{self.board_id}] MATCH_FINISH_ACCEPTED "
-                f"trigger={interpretation} match_id={ws.last_match_id}"
-            )
-
-            if is_confirmed:
-                # State frame (finished=true) = authoritative → immediate finalize
-                self._schedule_immediate_finalize(interpretation, ws.last_match_id)
-            else:
-                # gameshot_match/matchshot = may be premature for multi-leg matches
-                # Let debounce or state frame confirm; safety net as backup
-                logger.info(
-                    f"[Observer:{self.board_id}] MATCH_FINISH_PENDING "
-                    f"trigger={interpretation} match_id={ws.last_match_id} "
-                    f"(awaiting state frame confirmation or debounce)")
-
-            # Always schedule safety net as backup
+            self._schedule_immediate_finalize(interpretation, ws.last_match_id)
             self._schedule_finalize_safety(interpretation, ws.last_match_id)
+            return
 
-        # ═══ POST-MATCH RESET (delete = match removed) ═══
-        elif interpretation == "match_reset_delete":
+        if decision.action == TriggerAction.ABORT:
             was_active = ws.match_active
             was_finished = ws.match_finished
             old_match_id = ws.last_match_id
 
-            if was_active and not was_finished:
-                # Duplicate match-ID guard: ignore abort for already-finalized match
-                if old_match_id and old_match_id == self._last_finalized_match_id:
-                    logger.info(
-                        f"[Observer:{self.board_id}] SKIP_DUPLICATE_FINALIZE "
-                        f"match_id={old_match_id} (abort signal for already-finalized match)")
-                    ws.reset()
-                    return
-                # ── DELETE during active match = ABORT ──
-                # Match was manually cancelled in Autodarts UI.
-                # Set abort_detected for IMMEDIATE finalize (bypass debounce).
-                ws.match_active = False
-                ws.finish_trigger = "match_abort_delete"
-                self._abort_detected = True
+            if old_match_id and old_match_id == self._last_finalized_match_id:
                 logger.info(
-                    f"[Observer:{self.board_id}] *** MATCH ABORT DETECTED *** "
-                    f"(delete event during active match) | match_id={old_match_id} | "
-                    f"abort_detected=True (IMMEDIATE finalize)"
+                    f"[Observer:{self.board_id}] SKIP_DUPLICATE_FINALIZE "
+                    f"match_id={old_match_id} (abort signal for already-finalized match)"
                 )
-            else:
-                # Post-match cleanup or delete without active game → full reset
                 ws.reset()
-                logger.info(
-                    f"[Observer:{self.board_id}] *** MATCH RESET DETECTED *** "
-                    f"(delete event) | was_active={was_active} | was_finished={was_finished} "
-                    f"| match_id={old_match_id}"
-                )
+                return
 
-        # ═══ LEG-LEVEL gameshot (ignored for lifecycle) ═══
-        elif interpretation == "round_transition_gameshot":
+            if self._trigger_policy.require_prior_active_for_abort and (not was_active or was_finished):
+                logger.info(
+                    f"[Observer:{self.board_id}] MATCH_ABORT_IGNORED trigger={interpretation} "
+                    f"match_id={old_match_id} reason=no_prior_active_match"
+                )
+                return
+
+            ws.match_active = False
+            ws.finish_pending = False
+            ws.pending_finish_trigger = None
+            ws.finish_trigger = "match_abort_delete"
+            self._abort_detected = True
+            logger.info(
+                f"[Observer:{self.board_id}] MATCH_ABORT_ACCEPTED trigger={interpretation} "
+                f"match_id={old_match_id} authority={decision.authority.value}"
+            )
+            return
+
+        if interpretation == "match_reset_delete":
+            logger.info(
+                f"[Observer:{self.board_id}] MATCH_DELETE_DIAGNOSTIC ignored "
+                f"channel={channel} reason={decision.reason}"
+            )
+            return
+
+        if interpretation == "round_transition_gameshot":
             ws.last_game_event = "gameshot"
             logger.info(
                 f"[Observer:{self.board_id}] WS_EVENT: gameshot "
@@ -1645,6 +1647,7 @@ class AutodartsObserver:
                     self._finalized = False
                     self._credit_consumed = False
                     self._abort_detected = False
+                    self._authoritative_start_emitted = False
                     self._exit_polls = 0
                     self._exit_saw_finished = False
                     self._ws_state.reset()
@@ -1680,6 +1683,7 @@ class AutodartsObserver:
                             self._finalized = False
                             self._finalize_dispatching = False
                             self._credit_consumed = False
+                            self._authoritative_start_emitted = False
                             self._exit_polls = 0
                             self._exit_saw_finished = False
                             self._ws_state.reset()
@@ -1722,6 +1726,22 @@ class AutodartsObserver:
                 # ── PRIMARY: WS event state (already accumulated) ──
                 event_state = self._read_ws_event_state()
 
+                if event_state == ObserverState.IN_GAME and self._start_is_authoritative() and not self._authoritative_start_emitted:
+                    self._authoritative_start_emitted = True
+                    self._credit_consumed = True
+                    self._finalized = False
+                    self._abort_detected = False
+                    self.status.games_observed += 1
+                    logger.info(
+                        f"[Observer:{self.board_id}] AUTHORITATIVE_START_ACCEPTED "
+                        f"trigger={self._ws_state.last_start_trigger} games_observed={self.status.games_observed}"
+                    )
+                    if self._on_game_started:
+                        try:
+                            await self._on_game_started(self.board_id, self._ws_state.last_start_trigger or "observer_start")
+                        except Exception as e:
+                            logger.error(f"[Observer:{self.board_id}] on_game_started ERROR: {e}", exc_info=True)
+
                 # ── SECONDARY: Console capture ──
                 console_state = await self._read_console_state()
 
@@ -1739,8 +1759,8 @@ class AutodartsObserver:
                 ws = self._ws_state
                 logger.info(
                     f"[Observer:{self.board_id}] POLL: stable={stable.value} | merged={raw.value} | "
-                    f"ws_finished={ws.match_finished} ws_winner={ws.winner_detected} "
-                    f"ws_trigger={ws.finish_trigger} | "
+                    f"ws_finished={ws.match_finished} ws_pending={ws.finish_pending} ws_winner={ws.winner_detected} "
+                    f"ws_trigger={ws.finish_trigger} pending_trigger={ws.pending_finish_trigger} | "
                     f"ws_frames={ws.frames_received} ws_match_frames={ws.match_relevant_frames} | "
                     f"dom={dom_state.value}"
                 )
@@ -1772,6 +1792,15 @@ class AutodartsObserver:
                                     f"(finalized={self._finalized} abort_detected={self._abort_detected})")
                         continue
 
+                    if raw == ObserverState.FINISHED and not self._finish_is_authoritative():
+                        logger.warning(
+                            f"[Observer:{self.board_id}] NON_AUTHORITATIVE_FINISH_HINT ignored "
+                            f"console_dom_only=True pending_trigger={ws.pending_finish_trigger} ws_trigger={ws.finish_trigger}"
+                        )
+                        self._exit_polls = 0
+                        self._exit_saw_finished = False
+                        continue
+
                     self._exit_polls += 1
                     if raw == ObserverState.FINISHED:
                         self._exit_saw_finished = True
@@ -1781,19 +1810,13 @@ class AutodartsObserver:
                                 f"(merged={raw.value}, saw_finished={self._exit_saw_finished}, "
                                 f"ws_trigger={ws.finish_trigger})")
 
-                    # Fast-track: only state-frame confirmed triggers skip debounce
-                    # v3.3.1: gameshot_match needs full debounce (false-finish protection)
-                    _confirmed_debounce = ("match_end_state_finished", "match_end_game_finished")
-                    debounce_needed = 1 if ws.finish_trigger in _confirmed_debounce else DEBOUNCE_EXIT_POLLS
+                    debounce_needed = 1 if self._finish_is_authoritative() else DEBOUNCE_EXIT_POLLS
                     if self._exit_polls < debounce_needed:
                         continue
 
                     # ─── CONFIRMED: match is really over ──────────
-                    # Use WS finish_trigger as specific reason when available
-                    if self._exit_saw_finished and ws.finish_trigger:
-                        reason = ws.finish_trigger
-                    elif self._exit_saw_finished:
-                        reason = "finished"
+                    if self._exit_saw_finished and self._finish_is_authoritative():
+                        reason = ws.finish_trigger or "finished"
                     else:
                         reason = "aborted"
                     confirmed_state = ObserverState.FINISHED if self._exit_saw_finished else raw
@@ -1823,6 +1846,7 @@ class AutodartsObserver:
                     self._finalized = False
                     self._credit_consumed = False
                     self._abort_detected = False
+                    self._authoritative_start_emitted = False
                     self._exit_polls = 0
                     self._exit_saw_finished = False
                     self._ws_state.reset()
@@ -1851,24 +1875,11 @@ class AutodartsObserver:
                                     f"{stable.value} -> in_game (immediate) ===")
                         self._stable_state = ObserverState.IN_GAME
                         self._set_state(ObserverState.IN_GAME)
-                        self._credit_consumed = True
+                        self._credit_consumed = self._credit_consumed or self._authoritative_start_emitted
                         self._finalized = False  # Reset for new game
                         self._abort_detected = False  # Reset for new game
                         self._exit_polls = 0
                         self._exit_saw_finished = False
-                        self.status.games_observed += 1
-
-                        # Reset WS state for fresh game tracking
-                        self._ws_state.reset()
-
-                        logger.info(f"[Observer:{self.board_id}] GAME STARTED — "
-                                    f"games_observed={self.status.games_observed}")
-                        if self._on_game_started:
-                            try:
-                                await self._on_game_started(self.board_id)
-                            except Exception as e:
-                                logger.error(f"[Observer:{self.board_id}] on_game_started ERROR: {e}",
-                                             exc_info=True)
 
                     elif stable == ObserverState.FINISHED and effective_raw == ObserverState.IDLE:
                         # Player dismissed results and returned to lobby.
@@ -2074,29 +2085,31 @@ class AutodartsObserver:
         dom_state: ObserverState,
     ) -> ObserverState:
         """
-        Merge three detection sources. Priority:
-          1. WS FINISHED → always trust (strongest signal)
-          2. Console FINISHED → trust (Winner Animation, matchshot logs)
-          3. WS IN_GAME → trust
-          4. DOM result → fallback
+        Merge three detection sources.
+
+        Business authority stays with WS. Console/DOM can still influence the
+        observer's degraded view, but only when the trigger policy explicitly
+        allows it.
         """
-        # WS says finished → done
         if ws_state == ObserverState.FINISHED:
             if dom_state != ObserverState.FINISHED:
                 logger.info(f"[Observer:{self.board_id}] merge: WS=FINISHED overrides DOM={dom_state.value}")
             return ObserverState.FINISHED
 
-        # Console says finished → done
-        if console_state == ObserverState.FINISHED:
-            if dom_state != ObserverState.FINISHED:
-                logger.info(f"[Observer:{self.board_id}] merge: CONSOLE=FINISHED overrides DOM={dom_state.value}")
-            return ObserverState.FINISHED
-
-        # WS says in_game → trust
         if ws_state == ObserverState.IN_GAME:
             return ObserverState.IN_GAME
 
-        # No WS/console data → DOM fallback
+        if console_state == ObserverState.FINISHED:
+            if self._trigger_policy.allow_console_finish_authority:
+                if dom_state != ObserverState.FINISHED:
+                    logger.info(f"[Observer:{self.board_id}] merge: CONSOLE=FINISHED overrides DOM={dom_state.value}")
+                return ObserverState.FINISHED
+            logger.info(f"[Observer:{self.board_id}] merge: CONSOLE=FINISHED kept diagnostic-only")
+
+        if dom_state == ObserverState.FINISHED and not self._trigger_policy.allow_dom_finish_authority:
+            logger.info(f"[Observer:{self.board_id}] merge: DOM=FINISHED kept diagnostic-only")
+            return ObserverState.IDLE if self._stable_state == ObserverState.IN_GAME else dom_state
+
         return dom_state
 
     def _set_state(self, state: ObserverState):
@@ -2154,6 +2167,7 @@ class ObserverManager:
             d["session_generation"] = obs._session_generation
             d["desired_state"] = self.get_desired_state(board_id)
             d["close_reason"] = self._close_reasons.get(board_id, "")
+            d["trigger_policy"] = obs.export_trigger_policy()
             return d
         d = ObserverStatus(board_id=board_id).to_dict()
         d["lifecycle"] = "closed"
@@ -2172,6 +2186,7 @@ class ObserverManager:
         on_game_started=None,
         on_game_ended=None,
         headless: bool = False,
+        trigger_config: Optional[dict] = None,
     ):
         # v3.2.4: Block open if a close is in progress for this board
         obs_existing = self._observers.get(board_id)
@@ -2205,6 +2220,7 @@ class ObserverManager:
                     on_game_started=on_game_started,
                     on_game_ended=on_game_ended,
                     headless=headless,
+                    trigger_config=trigger_config,
                 )
                 # Propagate close_reason from observer to manager
                 # (auth_required sets close_reason on the instance, not via close())
