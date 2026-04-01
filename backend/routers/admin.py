@@ -83,7 +83,7 @@ async def get_revenue_summary(
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get revenue summary for the last N days"""
+    """Get booked revenue for closed sessions in the last N days."""
     start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
     result = await db.execute(
@@ -93,19 +93,35 @@ async def get_revenue_summary(
     )
     sessions = result.scalars().all()
 
+    boards_result = await db.execute(select(Board))
+    boards_map = {board.id: board for board in boards_result.scalars().all()}
+
     by_date = {}
+    by_board = {}
+    total_revenue = 0.0
+    total_sessions = 0
+
     for s in sessions:
-        date_str = s.started_at.strftime("%Y-%m-%d")
-        if date_str not in by_date:
-            by_date[date_str] = {"total": 0.0, "count": 0, "by_board": {}}
-        by_date[date_str]["total"] += s.price_total
-        by_date[date_str]["count"] += 1
+        date_str = s.started_at.strftime("%Y-%m-%d") if s.started_at else "unknown"
+        board = boards_map.get(s.board_id)
+        board_name = board.name if board else (getattr(board, "board_id", None) or "Unknown")
+        price_total = float(s.price_total or 0)
+
+        bucket = by_date.setdefault(date_str, {"total": 0.0, "count": 0, "by_board": {}})
+        bucket["total"] += price_total
+        bucket["count"] += 1
+        bucket["by_board"][board_name] = bucket["by_board"].get(board_name, 0.0) + price_total
+
+        by_board[board_name] = by_board.get(board_name, 0.0) + price_total
+        total_revenue += price_total
+        total_sessions += 1
 
     return {
         "period_days": days,
-        "total_revenue": sum(d["total"] for d in by_date.values()),
-        "total_sessions": sum(d["count"] for d in by_date.values()),
-        "by_date": by_date
+        "total_revenue": total_revenue,
+        "total_sessions": total_sessions,
+        "by_date": by_date,
+        "by_board": by_board,
     }
 
 

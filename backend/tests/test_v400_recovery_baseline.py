@@ -1,8 +1,17 @@
 """
-v4.0.0 Recovery Baseline Tests
-Tests for the restored v3.3.1-hotfix2 baseline.
-All central server / licensing / portal features have been REMOVED.
-Only local admin + kiosk + board control + autodarts + settings + revenue remain.
+Legacy recovery/preview smoke tests.
+
+Important:
+- this file is preserved as historical context
+- it is not the authoritative local-core release gate anymore
+- some assumptions here reflect an older recovery snapshot rather than the current
+  documented architecture
+
+For the current protected local-core validation subset, see docs/TESTING.md and:
+- backend/tests/test_phase34_autodarts_triggers.py
+- backend/tests/test_phase34_credits_pricing.py
+- backend/tests/test_phase56_stability_installation.py
+- backend/tests/test_phase789_local_core_validation.py
 """
 import pytest
 import requests

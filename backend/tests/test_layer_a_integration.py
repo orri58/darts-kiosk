@@ -1,13 +1,11 @@
 """
-Layer A Integration Tests - Darts Kiosk System
+Legacy Layer A integration smoke tests.
 
-Tests for:
-1. LOCAL CORE UNCHANGED: Auth, boards, settings (tests 1-5)
-2. CENTRAL PROXY HEALTH: Central server connectivity (test 6)
-3. CENTRAL AUTH: Portal login (test 7)
-4. CENTRAL DASHBOARD: Dashboard data (test 8)
-5. CENTRAL DEVICES: Device list with heartbeat data (test 9)
-6. LAYER A SECURITY: Write operations blocked (tests 10-11)
+These remain useful as historical or deployment-specific checks when explicitly
+working on the optional adapter ring, but they are not the main validation gate
+for the protected local core.
+
+See docs/TESTING.md for the current authoritative local-core subset.
 """
 import os
 import pytest
