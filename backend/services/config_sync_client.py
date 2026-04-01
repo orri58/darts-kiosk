@@ -44,6 +44,7 @@ class ConfigSyncClient:
         self._api_key: Optional[str] = None
         self._device_id: Optional[str] = None
         self._running = False
+        self._task: Optional[asyncio.Task] = None
         self._sync_lock = asyncio.Lock()
         self._current_config: dict = {}
         self._config_version: int = 0
@@ -232,11 +233,15 @@ class ConfigSyncClient:
         return min(backoff, _MAX_BACKOFF)
 
     async def start(self):
-        if self._running or not self.is_configured:
+        if self._running:
+            return
+        if not self.is_configured:
             return
         self._running = True
+        self._task = asyncio.create_task(self._run_loop())
         logger.info(f"[CONFIG-SYNC] Starting sync loop (base_interval={_BASE_INTERVAL}s)")
 
+    async def _run_loop(self):
         # Initial sync
         await self.sync_now()
 
@@ -244,13 +249,19 @@ class ConfigSyncClient:
             interval = self._compute_interval()
             if self._consecutive_errors > 0:
                 logger.debug(f"[CONFIG-SYNC] Next sync in {interval}s (backoff, errors={self._consecutive_errors})")
-            await asyncio.sleep(interval)
+            try:
+                await asyncio.sleep(interval)
+            except asyncio.CancelledError:
+                break
             if not self._running:
                 break
             await self.sync_now()
 
     def stop(self):
         self._running = False
+        if self._task:
+            self._task.cancel()
+            self._task = None
         logger.info("[CONFIG-SYNC] Stopped")
 
 

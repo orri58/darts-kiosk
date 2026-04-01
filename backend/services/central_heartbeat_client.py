@@ -6,6 +6,7 @@ Completely non-blocking. Fails silently if central is unreachable.
 Device continues normal operation regardless of central server status.
 """
 import asyncio
+from dataclasses import asdict, is_dataclass
 import logging
 import os
 from datetime import datetime, timezone
@@ -24,6 +25,7 @@ class CentralHeartbeatClient:
         self._max_interval = 300
         self._current_interval = self._base_interval
         self._consecutive_failures = 0
+        self._last_result_ok = None
 
     @property
     def central_url(self):
@@ -47,17 +49,27 @@ class CentralHeartbeatClient:
     def _get_health(self):
         try:
             from backend.services.health_monitor import health_monitor
-            status = health_monitor.get_status()
+            status = health_monitor.get_health()
+            if is_dataclass(status):
+                status = asdict(status)
+            observer = status.get("observer_metrics") or {}
+            agent_status = status.get("agent_status") or {}
             return {
-                "scheduler": status.get("scheduler_running"),
-                "backup": status.get("backup_running"),
-                "boards_total": status.get("boards_total", 0),
-                "boards_active": status.get("boards_active", 0),
+                "status": status.get("status"),
+                "uptime_seconds": status.get("uptime_seconds"),
+                "scheduler_running": status.get("scheduler_running"),
+                "backup_service_running": status.get("backup_service_running"),
+                "observer_total_events": observer.get("total_events", 0),
+                "observer_success_rate": observer.get("success_rate", 0),
+                "agents_total": len(agent_status),
+                "agents_online": sum(1 for item in agent_status.values() if item.get("is_online")),
             }
         except Exception:
             return {}
 
     async def start(self):
+        if self._running:
+            return
         if not self.enabled:
             logger.info("[HEARTBEAT] Disabled — CENTRAL_SERVER_URL or CENTRAL_API_KEY not set")
             return
@@ -95,17 +107,25 @@ class CentralHeartbeatClient:
                 result = await self._send_heartbeat()
                 self._consecutive_failures = 0
                 self._current_interval = self._base_interval
-                logger.info(f"[HEARTBEAT] OK -> device_status={result.get('device_status', '?')}")
+                if self._last_result_ok is not True:
+                    logger.info(f"[HEARTBEAT] OK -> device_status={result.get('device_status', '?')}")
+                else:
+                    logger.debug(f"[HEARTBEAT] OK -> device_status={result.get('device_status', '?')}")
+                self._last_result_ok = True
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 self._consecutive_failures += 1
                 self._current_interval = min(
                     self._base_interval * (2 ** min(self._consecutive_failures, 5)),
                     self._max_interval,
                 )
-                logger.warning(
-                    f"[HEARTBEAT] Failed ({self._consecutive_failures}x): {type(e).__name__}: {e} "
-                    f"-> retry in {self._current_interval}s"
-                )
+                if self._last_result_ok is not False or self._consecutive_failures <= 3 or self._consecutive_failures % 5 == 0:
+                    logger.warning(
+                        f"[HEARTBEAT] Failed ({self._consecutive_failures}x): {type(e).__name__}: {e} "
+                        f"-> retry in {self._current_interval}s"
+                    )
+                self._last_result_ok = False
             await asyncio.sleep(self._current_interval)
 
 

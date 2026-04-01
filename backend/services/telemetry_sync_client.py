@@ -30,6 +30,10 @@ class TelemetrySyncClient:
         self._heartbeat_interval = 60  # seconds
         self._flush_interval = 300  # 5 minutes
         self._max_batch_size = 100
+        self._heartbeat_task = None
+        self._flush_task = None
+        self._last_heartbeat_ok = None
+        self._consecutive_heartbeat_failures = 0
 
     def configure(self, central_url: str, api_key: str, version: str = "unknown"):
         self._central_url = central_url.rstrip("/") if central_url else None
@@ -69,18 +73,31 @@ class TelemetrySyncClient:
         if self._running:
             return
         self._running = True
-        asyncio.create_task(self._heartbeat_loop())
-        asyncio.create_task(self._flush_loop())
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        self._flush_task = asyncio.create_task(self._flush_loop())
         logger.info("[TELEMETRY] Background sync started")
 
     async def stop(self):
         self._running = False
+        for task in (self._heartbeat_task, self._flush_task):
+            if task:
+                task.cancel()
+        for task in (self._heartbeat_task, self._flush_task):
+            if task:
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._heartbeat_task = None
+        self._flush_task = None
 
     async def _heartbeat_loop(self):
         """Send heartbeat every 60s."""
         while self._running:
             try:
                 await self._send_heartbeat()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.debug(f"[TELEMETRY] Heartbeat failed (non-fatal): {e}")
             await asyncio.sleep(self._heartbeat_interval)
@@ -88,9 +105,14 @@ class TelemetrySyncClient:
     async def _flush_loop(self):
         """Flush pending events every 5 minutes."""
         while self._running:
-            await asyncio.sleep(self._flush_interval)
+            try:
+                await asyncio.sleep(self._flush_interval)
+            except asyncio.CancelledError:
+                break
             try:
                 await self._flush_events()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.debug(f"[TELEMETRY] Flush failed (non-fatal): {e}")
 
@@ -122,7 +144,12 @@ class TelemetrySyncClient:
                     headers={"X-License-Key": self._api_key},
                 )
                 if resp.status_code == 200:
-                    logger.debug("[TELEMETRY] Heartbeat OK")
+                    self._consecutive_heartbeat_failures = 0
+                    if self._last_heartbeat_ok is not True:
+                        logger.info("[TELEMETRY] Heartbeat OK")
+                    else:
+                        logger.debug("[TELEMETRY] Heartbeat OK")
+                    self._last_heartbeat_ok = True
                     # v3.13.0: Clear suspended state if central accepts us again
                     try:
                         from backend.services.central_rejection_handler import handle_central_reactivation
@@ -149,6 +176,8 @@ class TelemetrySyncClient:
                         pass
                 elif resp.status_code == 403:
                     # v3.13.0: Device deactivated/blocked centrally
+                    self._consecutive_heartbeat_failures += 1
+                    self._last_heartbeat_ok = False
                     logger.warning(f"[TELEMETRY] Heartbeat REJECTED (403): {resp.text[:200]}")
                     try:
                         from backend.services.central_rejection_handler import handle_central_rejection
@@ -156,9 +185,16 @@ class TelemetrySyncClient:
                     except Exception:
                         pass
                 else:
-                    logger.debug(f"[TELEMETRY] Heartbeat {resp.status_code}")
+                    self._consecutive_heartbeat_failures += 1
+                    self._last_heartbeat_ok = False
+                    logger.warning(f"[TELEMETRY] Heartbeat HTTP {resp.status_code}")
         except Exception as e:
-            logger.debug(f"[TELEMETRY] Heartbeat error: {e}")
+            self._consecutive_heartbeat_failures += 1
+            if self._last_heartbeat_ok is not False:
+                logger.warning(f"[TELEMETRY] Heartbeat error: {e}")
+            else:
+                logger.debug(f"[TELEMETRY] Heartbeat error: {e}")
+            self._last_heartbeat_ok = False
 
     @staticmethod
     def _collect_health_snapshot() -> dict:

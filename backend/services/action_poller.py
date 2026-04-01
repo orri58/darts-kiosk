@@ -50,6 +50,7 @@ class ActionPoller:
         self._api_key: Optional[str] = None
         self._device_id: Optional[str] = None
         self._running = False
+        self._task: Optional[asyncio.Task] = None
         self._poll_lock = asyncio.Lock()
         # OrderedDict: action_id → {"status": "done"/"failed", "at": iso, "type": str}
         self._history: OrderedDict = OrderedDict()
@@ -128,16 +129,22 @@ class ActionPoller:
     # ── Lifecycle ──
 
     async def start(self):
-        if self._running or not self.is_configured:
+        if self._running:
+            return
+        if not self.is_configured:
             if not self.is_configured:
                 logger.info("[ACTION-POLL] Skipping start — not configured")
             return
         self._running = True
+        self._task = asyncio.create_task(self._run_loop())
         logger.info(f"[ACTION-POLL] Started (interval={_POLL_INTERVAL}s)")
 
+    async def _run_loop(self):
         while self._running:
             try:
                 await self._poll_once()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 self._consecutive_errors += 1
                 self._last_error = str(e)
@@ -146,6 +153,9 @@ class ActionPoller:
 
     def stop(self):
         self._running = False
+        if self._task:
+            self._task.cancel()
+            self._task = None
         logger.info("[ACTION-POLL] Stopped")
 
     async def trigger_poll(self):
@@ -599,7 +609,7 @@ class ActionPoller:
                 from backend.services.ws_manager import board_ws
             except ImportError:
                 from services.ws_manager import board_ws
-            await board_ws.broadcast({"type": "board_update", "board_id": board.board_id, "status": board.status})
+            await board_ws.broadcast("board_update", {"board_id": board.board_id, "status": board.status})
         except Exception:
             pass
 
@@ -645,7 +655,7 @@ class ActionPoller:
                 from backend.services.ws_manager import board_ws
             except ImportError:
                 from services.ws_manager import board_ws
-            await board_ws.broadcast({"type": "board_update", "board_id": board.board_id, "status": board.status})
+            await board_ws.broadcast("board_update", {"board_id": board.board_id, "status": board.status})
         except Exception:
             pass
 

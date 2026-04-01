@@ -46,6 +46,7 @@ class OfflineQueue:
         self._queue: list = []
         self._seen_keys: set = set()   # for fast dedup lookups
         self._running = False
+        self._task: Optional[asyncio.Task] = None
         self._drain_lock = asyncio.Lock()
         self._drain_event = asyncio.Event()
         # stats
@@ -284,7 +285,7 @@ class OfflineQueue:
         if self._running or not self.is_configured:
             return
         self._running = True
-        asyncio.create_task(self._drain_loop())
+        self._task = asyncio.create_task(self._drain_loop())
         logger.info(f"[OFFLINE-Q] Started (interval={_DRAIN_INTERVAL}s, pending={len(self._queue)})")
 
     async def _drain_loop(self):
@@ -297,9 +298,13 @@ class OfflineQueue:
                     self._drain_event.clear()
                 except asyncio.TimeoutError:
                     pass  # Periodic drain
+                except asyncio.CancelledError:
+                    break
 
                 if self._queue:
                     await self.drain()
+            except asyncio.CancelledError:
+                break
             except Exception as e:
                 logger.error(f"[OFFLINE-Q] Drain loop error (non-fatal): {e}")
                 await asyncio.sleep(10)  # Brief pause on unexpected error
@@ -307,6 +312,9 @@ class OfflineQueue:
     def stop(self):
         self._running = False
         self._drain_event.set()  # Wake up loop to exit
+        if self._task:
+            self._task.cancel()
+            self._task = None
         self._save()  # Final persist
         logger.info(f"[OFFLINE-Q] Stopped (pending={len(self._queue)})")
 
