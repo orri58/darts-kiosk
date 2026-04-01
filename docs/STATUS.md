@@ -1,82 +1,107 @@
 # Status
 
-## Honest status after Phase 3 / Phase 4
+## Current state after Phase 5 / Phase 6
 
-The repo still has the cleaner split between the **stable local product** and the **optional central/licensing ring**, but the local lifecycle logic is now substantially stricter than it was in Phase 2.
+The project is now materially better for **local-first board operation** than it was at the end of Phase 4.
 
-### Stable local product
-These are the flows the codebase is actively protecting:
-- local admin auth
-- local board/session persistence
-- local unlock / extend / lock
-- observer-first Autodarts flow
-- centralized local `finalize_match()` lifecycle
-- configurable Autodarts trigger policy with authoritative / assistive / diagnostic split
-- `per_game`
-- `per_player` in backend lifecycle/accounting logic
-- `per_time`
-- local settings
-- local revenue/reports based on `Session.price_total`
-- local WS + polling fallback
+### What is in place
+- local core remains the primary runtime path
+- central adapter ring is still optional and stays out of the way when disabled/unreachable
+- observer/session/credits flow from Phase 3/4 remains covered by targeted tests
+- Windows bring-up now has a clearer operator path
+- local smoke tooling exists for repeatable post-install checks
 
-### Newly enforced guardrails
-- central/portal surfaces are **not** on the default runtime path anymore
-- observer-mode unlock requires a configured `autodarts_target_url`
-- strong WS finish frames are billing/finalization authority; DOM/console are not
-- assistive finish hints (`gameshot match`, `matchshot`) stay pending until confirmed
-- delete/reset handling is stricter and requires a qualified channel + prior active match
-- call-staff UI is hidden by default
-- match-result QR sharing only appears on true session end, not mid-session keep-alive
+## Phase 5 delivered
 
----
+### Stability hardening
+Implemented:
+- fixed remote-action WebSocket board updates to use the real `board_ws.broadcast(event, data)` signature
+- fixed central heartbeat health payload collection so it uses `health_monitor.get_health()` instead of a non-existent `get_status()` call
+- converted optional background clients to real background-task startup patterns instead of potentially trapping callers inside endless loops:
+  - `ActionPoller`
+  - `ConfigSyncClient`
+  - `OfflineQueue`
+  - `TelemetrySyncClient`
+- improved shutdown/cancellation behavior for optional background loops
+- reduced central logging noise while still logging state transitions and repeated failures
 
-## What is optional now
+### Operational stability impact
+Result:
+- local runtime is less likely to get wedged by optional central/background services
+- remote board-control actions no longer hit an avoidable broadcast-path bug
+- central heartbeat now sends an actual health snapshot instead of silently falling back to `{}`
 
-These are no longer treated as baseline runtime behavior:
-- Layer A heartbeat startup
-- `/api/central/*` proxy surface
-- `/portal` routes/UI
+## Phase 6 delivered
 
-They exist behind explicit feature gates:
-- backend: `ENABLE_CENTRAL_ADAPTERS`
-- frontend: `REACT_APP_ENABLE_PORTAL_SURFACE`
+### Installation / ops
+Added or updated:
+- `docs/INSTALLATION.md`
+- `docs/RUNBOOK.md`
+- `release/windows/README.md`
+- `release/windows/smoke_test.bat`
+- `scripts/local_smoke.py`
 
-Default posture: **local-only runtime**.
+Improved Windows scripts:
+- `start.bat` now reads `BOARD_ID` from `backend\.env`
+- `setup_profile.bat` now reads `BOARD_ID` from `backend\.env`
+- `stop.bat` and `start.bat` now kill Chrome processes by profile path instead of unreliable window-title matching
 
----
+### Why that matters
+Before this, the Windows helper flow was half-true and half-vibes.
+Now there is at least a reproducible story for:
+- prerequisites
+- board assignment
+- Autodarts profile setup
+- start/stop
+- smoke validation
+- logs/troubleshooting
 
-## What remains incomplete / not operator-stable
+## Validation completed
 
-### Hidden or degraded on purpose
-- local admin/operator UI still does not fully surface the new `per_player` backend flow
-- local admin/operator UI does not yet expose the `autodarts_triggers` policy editor
-- call-staff flow
-- portal/central visibility as a default operator path
+Ran successfully:
 
-### Still on disk but not current product truth
-- device-side licensing stack
-- central sync clients
-- telemetry/action/ws push clients
-- `central_server/*`
-- legacy operator/portal residue not mounted in the default flow
+```bash
+. .venv/bin/activate && python -m pytest -q \
+  backend/tests/test_phase56_stability_installation.py \
+  backend/tests/test_phase34_autodarts_triggers.py \
+  backend/tests/test_phase34_credits_pricing.py
+```
 
----
+Result:
+- `14 passed`
 
-## Known constraints
+This validates:
+- phase 5 lifecycle hardening for config sync/action poller startup
+- fixed board-update broadcast signature
+- central heartbeat health snapshot path
+- previously delivered Phase 3/4 Autodarts trigger + credit/session logic still passing
 
-1. Revenue is still booking-at-session-sale, not a dedicated payments ledger.
-2. Autodarts integration is still a browser observer around `play.autodarts.io`, not an official documented backend API integration.
-3. `per_player` is now real backend behavior, but its polished operator UI/sales flow is not finished yet.
-4. Trigger policy config exists in backend settings/API, but is not yet surfaced in admin/superadmin UI.
-5. Central/licensing code still needs a later adapter-by-adapter reintegration pass if it is ever brought back.
+## What is still not fully proven
 
----
+Honest version:
+- no physical Windows board PC bring-up was executed in this environment
+- no live Autodarts account/session was exercised here
+- no end-to-end browser automation proof was run against a real local backend from the Windows scripts
+- legacy tests that import optional runtime deps directly still depend on the local Python environment having those packages installed
 
-## Recommended operating assumption
+## Remaining risk / next sensible work
 
-Treat the product as:
-- **production candidate:** local observer-first kiosk/admin system
-- **optional lab mode:** central visibility / portal surfaces
-- **not production-ready:** licensing / central control reactivation beyond the current guarded seams
+### Still worth doing
+- real hardware validation on one Windows board PC
+- one end-to-end Autodarts session test with a real persistent Chrome profile
+- optional CI/environment normalization so runtime deps like `httpx` are always present in the dev test venv
+- broader observability dashboarding if central telemetry becomes more important later
 
-That is the most accurate description of the repo today.
+### Not recommended
+- re-coupling local session flow to central availability
+- making operator bring-up depend on central registration before local smoke passes
+
+## Bottom line
+
+For local operation, this is now in a much better place:
+- less crashy around optional background services
+- cleaner Windows bring-up path
+- better runbook/docs
+- targeted stability fixes landed and tested
+
+It is **closer to production-ready for local board use**, but it still needs one real machine validation pass before anyone should call it “done done.”
