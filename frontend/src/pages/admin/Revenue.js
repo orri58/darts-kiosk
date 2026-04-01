@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { TrendingUp, RefreshCw, Euro, Calendar, Target } from 'lucide-react';
+import { Calendar, RefreshCw, Target, TrendingUp, Wallet } from 'lucide-react';
+import { BarChart, Bar, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
+import { AdminPage, AdminSection, AdminStatCard, AdminStatsGrid, AdminStatusPill } from '../../components/admin/AdminShell';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -20,7 +20,7 @@ export default function AdminRevenue() {
     setLoading(true);
     try {
       const response = await axios.get(`${API}/revenue/summary?days=${days}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       setData(response.data);
     } catch (error) {
@@ -34,12 +34,27 @@ export default function AdminRevenue() {
     fetchRevenue();
   }, [fetchRevenue]);
 
-  // Prepare chart data
-  const chartData = data?.by_date ? Object.entries(data.by_date).map(([date, info]) => ({
-    date: date.slice(5), // MM-DD format
-    total: info.total,
-    count: info.count
-  })).reverse() : [];
+  const chartData = useMemo(() => {
+    return data?.by_date
+      ? Object.entries(data.by_date)
+          .map(([date, info]) => ({
+            date,
+            shortDate: date.slice(5),
+            total: info.total,
+            count: info.count,
+          }))
+          .reverse()
+      : [];
+  }, [data]);
+
+  const topBoards = useMemo(() => {
+    return Object.entries(data?.by_board || {})
+      .map(([name, revenue]) => ({ name, revenue }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5);
+  }, [data]);
+
+  const averagePerSession = data?.total_sessions > 0 ? data.total_revenue / data.total_sessions : 0;
 
   if (loading) {
     return (
@@ -50,164 +65,110 @@ export default function AdminRevenue() {
   }
 
   return (
-    <div data-testid="admin-revenue">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('revenue')}</h1>
-          <p className="text-zinc-500">Einnahmen-Übersicht</p>
-        </div>
-        <div className="flex gap-2">
-          {[7, 14, 30].map((d) => (
+    <AdminPage
+      eyebrow="Venue revenue"
+      title={t('revenue')}
+      description="Sauberer Blick auf gebuchte lokale Sessions — inklusive Board-Verteilung, Tagesverlauf und Durchschnittswerten statt nur einer einsamen Balkengrafik."
+      actions={
+        <div className="flex flex-wrap gap-2">
+          {[7, 14, 30].map((value) => (
             <Button
-              key={d}
-              variant={days === d ? 'default' : 'outline'}
-              onClick={() => setDays(d)}
-              className={days === d ? 'bg-amber-500 text-black' : 'border-zinc-700 text-zinc-400'}
+              key={value}
+              variant={days === value ? 'default' : 'outline'}
+              onClick={() => setDays(value)}
+              className={days === value ? 'bg-amber-500 text-black hover:bg-amber-400' : 'border-zinc-700 text-zinc-300 hover:text-white'}
             >
-              {d} Tage
+              {value} Tage
             </Button>
           ))}
+          <Button onClick={fetchRevenue} variant="outline" className="border-zinc-700 text-zinc-300 hover:text-white">
+            <RefreshCw className="w-4 h-4 mr-2" /> Aktualisieren
+          </Button>
         </div>
-      </div>
+      }
+    >
+      <AdminStatsGrid>
+        <AdminStatCard icon={Wallet} label="Gebuchter Umsatz" value={`${(data?.total_revenue || 0).toFixed(2)} €`} hint={`Zeitraum: ${days} Tage`} tone="emerald" />
+        <AdminStatCard icon={Target} label="Abgeschlossene Sessions" value={data?.total_sessions || 0} hint="Nur beendete / expirte / abgebrochene Sessions" tone="amber" />
+        <AdminStatCard icon={TrendingUp} label="Ø pro Session" value={`${averagePerSession.toFixed(2)} €`} hint="Lokaler Venue-Durchschnitt" tone="blue" />
+        <AdminStatCard icon={Calendar} label="Aktive Tage" value={chartData.length} hint="Tage mit gebuchtem Umsatz im Fenster" tone="violet" />
+      </AdminStatsGrid>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-sm bg-amber-500/20 flex items-center justify-center">
-                <Euro className="w-6 h-6 text-amber-500" />
-              </div>
-              <div>
-                <p className="text-sm text-zinc-500 uppercase">Gesamtumsatz</p>
-                <p className="text-3xl font-mono font-bold text-white" data-testid="total-revenue">
-                  {(data?.total_revenue || 0).toFixed(2)} €
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-sm bg-emerald-500/20 flex items-center justify-center">
-                <Target className="w-6 h-6 text-emerald-500" />
-              </div>
-              <div>
-                <p className="text-sm text-zinc-500 uppercase">Sessions</p>
-                <p className="text-3xl font-mono font-bold text-white" data-testid="total-sessions">
-                  {data?.total_sessions || 0}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-sm bg-blue-500/20 flex items-center justify-center">
-                <TrendingUp className="w-6 h-6 text-blue-500" />
-              </div>
-              <div>
-                <p className="text-sm text-zinc-500 uppercase">Durchschnitt/Session</p>
-                <p className="text-3xl font-mono font-bold text-white">
-                  {data?.total_sessions > 0 
-                    ? (data.total_revenue / data.total_sessions).toFixed(2) 
-                    : '0.00'} €
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Chart */}
-      <Card className="bg-zinc-900 border-zinc-800">
-        <CardHeader>
-          <CardTitle className="text-white flex items-center gap-2">
-            <Calendar className="w-5 h-5 text-amber-500" />
-            Umsatz pro Tag
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div className="grid gap-6 xl:grid-cols-[1.35fr,0.65fr]">
+        <AdminSection title="Umsatz pro Tag" description="Wie sich die gebuchten Umsätze im gewählten Fenster verteilen.">
           {chartData.length > 0 ? (
-            <div className="h-[300px]">
+            <div className="h-[340px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-                  <XAxis 
-                    dataKey="date" 
-                    stroke="#71717a"
-                    tick={{ fill: '#71717a', fontSize: 12 }}
-                  />
-                  <YAxis 
-                    stroke="#71717a"
-                    tick={{ fill: '#71717a', fontSize: 12 }}
-                    tickFormatter={(value) => `${value}€`}
-                  />
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: '#18181b', 
+                  <XAxis dataKey="shortDate" stroke="#71717a" tick={{ fill: '#71717a', fontSize: 12 }} />
+                  <YAxis stroke="#71717a" tick={{ fill: '#71717a', fontSize: 12 }} tickFormatter={(value) => `${value}€`} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#09090b',
                       border: '1px solid #27272a',
-                      borderRadius: '4px'
+                      borderRadius: '16px',
                     }}
                     labelStyle={{ color: '#e4e4e7' }}
                     itemStyle={{ color: '#f59e0b' }}
-                    formatter={(value) => [`${value.toFixed(2)} €`, 'Umsatz']}
+                    formatter={(value, name) => [name === 'count' ? value : `${Number(value).toFixed(2)} €`, name === 'count' ? 'Sessions' : 'Umsatz']}
+                    labelFormatter={(label, payload) => payload?.[0]?.payload?.date || label}
                   />
-                  <Bar 
-                    dataKey="total" 
-                    fill="#f59e0b" 
-                    radius={[4, 4, 0, 0]}
-                  />
+                  <Bar dataKey="total" fill="#f59e0b" radius={[8, 8, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-[300px] flex items-center justify-center text-zinc-500">
-              <div className="text-center">
-                <TrendingUp className="w-16 h-16 mx-auto mb-4 text-zinc-700" />
-                <p>Keine Umsatzdaten im gewählten Zeitraum</p>
-              </div>
+            <div className="flex h-[340px] items-center justify-center rounded-3xl border border-dashed border-zinc-800 bg-zinc-950/50 text-zinc-500">
+              Keine Umsatzdaten im gewählten Zeitraum.
             </div>
           )}
-        </CardContent>
-      </Card>
+        </AdminSection>
 
-      {/* Daily Breakdown */}
-      {chartData.length > 0 && (
-        <Card className="bg-zinc-900 border-zinc-800 mt-6">
-          <CardHeader>
-            <CardTitle className="text-white text-lg">Tagesübersicht</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              {chartData.slice().reverse().map((day) => (
-                <div 
-                  key={day.date} 
-                  className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm border border-zinc-800"
-                >
-                  <div className="flex items-center gap-3">
-                    <Calendar className="w-4 h-4 text-zinc-600" />
-                    <span className="text-zinc-300 font-mono">{day.date}</span>
+        <div className="space-y-6">
+          <AdminSection title="Top Boards" description="Welche Boards den größten Anteil tragen.">
+            {topBoards.length > 0 ? (
+              <div className="space-y-3">
+                {topBoards.map((board, index) => (
+                  <div key={board.name} className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm text-zinc-500">Platz {index + 1}</p>
+                        <p className="font-medium text-white">{board.name}</p>
+                      </div>
+                      <AdminStatusPill tone={index === 0 ? 'emerald' : 'neutral'}>{board.revenue.toFixed(2)} €</AdminStatusPill>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-6">
-                    <span className="text-sm text-zinc-500">
-                      {day.count} Sessions
-                    </span>
-                    <span className="text-amber-500 font-mono font-bold">
-                      {day.total.toFixed(2)} €
-                    </span>
-                  </div>
-                </div>
-              ))}
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-500">Noch keine Board-Umsätze im aktuellen Fenster.</p>
+            )}
+          </AdminSection>
+
+          <AdminSection title="Operator-Hinweis" description="Was diese Ansicht absichtlich nicht tut.">
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4 text-sm leading-6 text-zinc-400">
+              Diese Revenue-Ansicht bleibt lokal und bewusst pragmatisch: sie zeigt gebuchte Sessionumsätze pro Venue-Fenster. Tiefere Abrechnung, Lizenz- oder Zentralsync-Themen gehören später in einen separaten Layer — nicht hier mitten in die Tresen-UI.
             </div>
-          </CardContent>
-        </Card>
+          </AdminSection>
+        </div>
+      </div>
+
+      {chartData.length > 0 && (
+        <AdminSection title="Tagesliste" description="Schnelle Nachkontrolle ohne CSV-Export.">
+          <div className="space-y-3">
+            {chartData.slice().reverse().map((day) => (
+              <div key={day.date} className="flex flex-col gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/60 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="font-medium text-white">{day.date}</p>
+                  <p className="text-sm text-zinc-500">{day.count} Sessions</p>
+                </div>
+                <AdminStatusPill tone="amber">{day.total.toFixed(2)} €</AdminStatusPill>
+              </div>
+            ))}
+          </div>
+        </AdminSection>
       )}
-    </div>
+    </AdminPage>
   );
 }

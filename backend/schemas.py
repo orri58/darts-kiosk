@@ -58,6 +58,8 @@ class BoardResponse(BaseModel):
     board_id: str
     name: str
     location: Optional[str]
+    autodarts_target_url: Optional[str] = None
+    agent_api_base_url: Optional[str] = None
     status: str
     last_heartbeat_at: Optional[datetime]
     is_master: bool

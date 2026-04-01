@@ -33,9 +33,16 @@ async def list_boards(user: User = Depends(get_current_user), db: AsyncSession =
     result = await db.execute(select(Board).order_by(Board.board_id))
     boards = result.scalars().all()
     return [BoardResponse(
-        id=b.id, board_id=b.board_id, name=b.name, location=b.location,
-        status=b.status, last_heartbeat_at=b.last_heartbeat_at,
-        is_master=b.is_master, created_at=b.created_at
+        id=b.id,
+        board_id=b.board_id,
+        name=b.name,
+        location=b.location,
+        autodarts_target_url=b.autodarts_target_url,
+        agent_api_base_url=b.agent_api_base_url,
+        status=b.status,
+        last_heartbeat_at=b.last_heartbeat_at,
+        is_master=b.is_master,
+        created_at=b.created_at,
     ) for b in boards]
 
 
@@ -50,9 +57,16 @@ async def get_board(board_id: str, user: User = Depends(get_current_user), db: A
 
     return {
         "board": BoardResponse(
-            id=board.id, board_id=board.board_id, name=board.name, location=board.location,
-            status=board.status, last_heartbeat_at=board.last_heartbeat_at,
-            is_master=board.is_master, created_at=board.created_at
+            id=board.id,
+            board_id=board.board_id,
+            name=board.name,
+            location=board.location,
+            autodarts_target_url=board.autodarts_target_url,
+            agent_api_base_url=board.agent_api_base_url,
+            status=board.status,
+            last_heartbeat_at=board.last_heartbeat_at,
+            is_master=board.is_master,
+            created_at=board.created_at,
         ),
         "active_session": SessionResponse(
             id=session.id, board_id=session.board_id, pricing_mode=session.pricing_mode,
@@ -86,9 +100,16 @@ async def create_board(data: BoardCreate, admin: User = Depends(require_admin), 
     await log_audit(db, admin, "create_board", "board", board.id, {"board_id": data.board_id})
 
     return BoardResponse(
-        id=board.id, board_id=board.board_id, name=board.name, location=board.location,
-        status=board.status, last_heartbeat_at=board.last_heartbeat_at,
-        is_master=board.is_master, created_at=board.created_at
+        id=board.id,
+        board_id=board.board_id,
+        name=board.name,
+        location=board.location,
+        autodarts_target_url=board.autodarts_target_url,
+        agent_api_base_url=board.agent_api_base_url,
+        status=board.status,
+        last_heartbeat_at=board.last_heartbeat_at,
+        is_master=board.is_master,
+        created_at=board.created_at,
     )
 
 
@@ -114,9 +135,16 @@ async def update_board(board_id: str, data: BoardUpdate, admin: User = Depends(r
     await log_audit(db, admin, "update_board", "board", board.id)
 
     return BoardResponse(
-        id=board.id, board_id=board.board_id, name=board.name, location=board.location,
-        status=board.status, last_heartbeat_at=board.last_heartbeat_at,
-        is_master=board.is_master, created_at=board.created_at
+        id=board.id,
+        board_id=board.board_id,
+        name=board.name,
+        location=board.location,
+        autodarts_target_url=board.autodarts_target_url,
+        agent_api_base_url=board.agent_api_base_url,
+        status=board.status,
+        last_heartbeat_at=board.last_heartbeat_at,
+        is_master=board.is_master,
+        created_at=board.created_at,
     )
 
 

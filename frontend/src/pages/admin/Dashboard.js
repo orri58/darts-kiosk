@@ -1,48 +1,71 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
-import { 
-  Target, 
-  Lock, 
-  Unlock, 
-  Play, 
-  Wifi, 
-  WifiOff, 
-  Clock, 
-  Coins,
-  RefreshCw,
-  Plus,
-  Minus,
+import {
+  AlertTriangle,
   ArrowUpCircle,
-  X,
+  BellOff,
+  Clock3,
+  ExternalLink,
   FileText,
+  Lock,
+  Play,
+  Plus,
+  RefreshCw,
   Settings,
-  BellOff
+  Target,
+  TrendingUp,
+  Unlock,
+  Wifi,
+  WifiOff,
+  X,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
 import { useBoardWS } from '../../hooks/useBoardWS';
+import {
+  AdminEmptyState,
+  AdminLinkTile,
+  AdminMiniAction,
+  AdminPage,
+  AdminSection,
+  AdminStatCard,
+  AdminStatsGrid,
+  AdminStatusPill,
+} from '../../components/admin/AdminShell';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const STATUS_STYLES = {
-  locked: { bg: 'bg-zinc-700/30', text: 'text-zinc-400', border: 'border-zinc-700', icon: Lock },
-  unlocked: { bg: 'bg-amber-500/20', text: 'text-amber-400', border: 'border-amber-500/50', icon: Unlock },
-  in_game: { bg: 'bg-emerald-500/20', text: 'text-emerald-400', border: 'border-emerald-500/50', icon: Play },
-  offline: { bg: 'bg-red-500/20', text: 'text-red-400', border: 'border-red-500/50', icon: WifiOff },
+  locked: { tone: 'neutral', icon: Lock, label: 'Gesperrt' },
+  unlocked: { tone: 'amber', icon: Unlock, label: 'Freigeschaltet' },
+  in_game: { tone: 'emerald', icon: Play, label: 'Im Spiel' },
+  offline: { tone: 'red', icon: WifiOff, label: 'Offline' },
 };
+
+function formatRemaining(session) {
+  if (!session) return 'Keine aktive Session';
+  if (session.pricing_mode === 'per_game') {
+    return `${session.credits_remaining} / ${session.credits_total} Spiele übrig`;
+  }
+  if (session.pricing_mode === 'per_time' && session.expires_at) {
+    const diffMs = Math.max(0, new Date(session.expires_at).getTime() - Date.now());
+    const minutes = Math.ceil(diffMs / 60000);
+    return `${minutes} min Restzeit`;
+  }
+  return 'Aktive Session';
+}
 
 export default function AdminDashboard() {
   const { pricing } = useSettings();
@@ -50,6 +73,7 @@ export default function AdminDashboard() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const [boards, setBoards] = useState([]);
+  const [boardDetails, setBoardDetails] = useState({});
   const [loading, setLoading] = useState(true);
   const [observerStatuses, setObserverStatuses] = useState({});
   const [selectedBoard, setSelectedBoard] = useState(null);
@@ -57,69 +81,79 @@ export default function AdminDashboard() {
   const [showExtendDialog, setShowExtendDialog] = useState(false);
   const [updateNotification, setUpdateNotification] = useState(null);
   const [showChangelog, setShowChangelog] = useState(false);
-  
-  // Unlock form state
+
   const [unlockMode, setUnlockMode] = useState('per_game');
   const [unlockCredits, setUnlockCredits] = useState(3);
   const [unlockMinutes, setUnlockMinutes] = useState(30);
-  const [unlockPlayers, setUnlockPlayers] = useState(1);
+  const [unlockPlayers, setUnlockPlayers] = useState(2);
 
-  // Fetch boards
   const fetchBoards = useCallback(async () => {
     try {
-      const response = await axios.get(`${API}/boards`, {
-        headers: { Authorization: `Bearer ${token}` }
+      const headers = { Authorization: `Bearer ${token}` };
+      const response = await axios.get(`${API}/boards`, { headers });
+      setBoards(response.data || []);
+
+      const [detailsEntries, observerResult] = await Promise.all([
+        Promise.all(
+          (response.data || []).map(async (board) => {
+            try {
+              const detailRes = await axios.get(`${API}/boards/${board.board_id}`, { headers });
+              return [board.board_id, detailRes.data.active_session || null];
+            } catch {
+              return [board.board_id, null];
+            }
+          })
+        ),
+        axios.get(`${API}/kiosk/observers/all`).catch(() => null),
+      ]);
+
+      setBoardDetails(Object.fromEntries(detailsEntries));
+      const observerMap = {};
+      (observerResult?.data?.observers || []).forEach((item) => {
+        observerMap[item.board_id] = item;
       });
-      setBoards(response.data);
-      // Fetch observer statuses for all boards
-      try {
-        const obsRes = await axios.get(`${API}/kiosk/observers/all`);
-        const map = {};
-        (obsRes.data.observers || []).forEach(o => { map[o.board_id] = o; });
-        setObserverStatuses(map);
-      } catch { /* observer endpoint may not exist yet */ }
+      setObserverStatuses(observerMap);
     } catch (error) {
       console.error('Failed to fetch boards:', error);
+      toast.error('Boards konnten nicht geladen werden');
     } finally {
       setLoading(false);
     }
   }, [token]);
 
-  // ---- WebSocket for real-time updates ----
-  const onWsEvent = useCallback((event, data) => {
-    if (event === 'board_status' || event === 'session_extended' || event === 'credit_update') {
-      fetchBoards();
-    }
-  }, [fetchBoards]);
+  const onWsEvent = useCallback(
+    (event) => {
+      if (['board_status', 'session_extended', 'credit_update', 'session_state'].includes(event)) {
+        fetchBoards();
+      }
+    },
+    [fetchBoards]
+  );
   const { connected: wsConnected } = useBoardWS(onWsEvent);
 
   useEffect(() => {
     fetchBoards();
-    // Fallback poll every 30s only if WS is disconnected
     const interval = setInterval(() => {
       if (!wsConnected) fetchBoards();
     }, 30000);
     return () => clearInterval(interval);
   }, [fetchBoards, wsConnected]);
 
-  // Fetch update notification
   useEffect(() => {
     const fetchNotification = async () => {
       try {
         const res = await axios.get(`${API}/updates/notification`, {
-          headers: { Authorization: `Bearer ${token}` }
+          headers: { Authorization: `Bearer ${token}` },
         });
         const data = res.data;
         if (!data.update_available) {
           setUpdateNotification(null);
           return;
         }
-        // Permanently dismissed for this version
         if (data.dismissed_version === data.latest_version) {
           setUpdateNotification(null);
           return;
         }
-        // Snoozed for this version and not yet expired
         if (data.snoozed_version === data.latest_version && data.snooze_until) {
           if (new Date(data.snooze_until) > new Date()) {
             setUpdateNotification(null);
@@ -127,11 +161,14 @@ export default function AdminDashboard() {
           }
         }
         setUpdateNotification(data);
-      } catch { /* silent */ }
+      } catch {
+        /* ignore */
+      }
     };
+
     fetchNotification();
-    const iv = setInterval(fetchNotification, 300000);
-    return () => clearInterval(iv);
+    const interval = setInterval(fetchNotification, 300000);
+    return () => clearInterval(interval);
   }, [token]);
 
   const dismissNotification = async () => {
@@ -142,7 +179,9 @@ export default function AdminDashboard() {
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
-    } catch { /* silent */ }
+    } catch {
+      /* ignore */
+    }
     setUpdateNotification(null);
   };
 
@@ -154,11 +193,12 @@ export default function AdminDashboard() {
         {},
         { headers: { Authorization: `Bearer ${token}` } }
       );
-    } catch { /* silent */ }
+    } catch {
+      /* ignore */
+    }
     setUpdateNotification(null);
   };
 
-  // Calculate price
   const calculatePrice = () => {
     if (unlockMode === 'per_game') {
       return unlockCredits * (pricing?.per_game?.price_per_credit || 2.0);
@@ -171,22 +211,23 @@ export default function AdminDashboard() {
     return 0;
   };
 
-  // Unlock board
   const handleUnlock = async () => {
     if (!selectedBoard) return;
-    
+
     try {
-      await axios.post(`${API}/boards/${selectedBoard.board_id}/unlock`, {
-        pricing_mode: unlockMode,
-        credits: unlockMode === 'per_game' ? unlockCredits : null,
-        minutes: unlockMode === 'per_time' ? unlockMinutes : null,
-        players_count: unlockPlayers,
-        price_total: calculatePrice()
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
-      toast.success(`${selectedBoard.name} freigeschaltet!`);
+      await axios.post(
+        `${API}/boards/${selectedBoard.board_id}/unlock`,
+        {
+          pricing_mode: unlockMode,
+          credits: unlockMode === 'per_game' ? unlockCredits : null,
+          minutes: unlockMode === 'per_time' ? unlockMinutes : null,
+          players_count: unlockPlayers,
+          price_total: calculatePrice(),
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      toast.success(`${selectedBoard.name} freigeschaltet`);
       setShowUnlockDialog(false);
       fetchBoards();
     } catch (error) {
@@ -194,11 +235,10 @@ export default function AdminDashboard() {
     }
   };
 
-  // Lock board
   const handleLock = async (board) => {
     try {
       await axios.post(`${API}/boards/${board.board_id}/lock`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
       });
       toast.success(`${board.name} gesperrt`);
       fetchBoards();
@@ -207,18 +247,18 @@ export default function AdminDashboard() {
     }
   };
 
-  // Extend session
   const handleExtend = async () => {
     if (!selectedBoard) return;
-    
+
     try {
-      await axios.post(`${API}/boards/${selectedBoard.board_id}/extend`, {
-        credits: unlockMode === 'per_game' ? unlockCredits : null,
-        minutes: unlockMode === 'per_time' ? unlockMinutes : null,
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      
+      await axios.post(
+        `${API}/boards/${selectedBoard.board_id}/extend`,
+        {
+          credits: unlockMode === 'per_game' ? unlockCredits : null,
+          minutes: unlockMode === 'per_time' ? unlockMinutes : null,
+        },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
       toast.success(`Session für ${selectedBoard.name} verlängert`);
       setShowExtendDialog(false);
       fetchBoards();
@@ -232,17 +272,30 @@ export default function AdminDashboard() {
     setUnlockMode(pricing?.mode === 'per_time' ? 'per_time' : 'per_game');
     setUnlockCredits(pricing?.per_game?.default_credits || 3);
     setUnlockMinutes(30);
-    setUnlockPlayers(1);
+    setUnlockPlayers(2);
     setShowUnlockDialog(true);
   };
 
   const openExtendDialog = (board) => {
+    const session = boardDetails[board.board_id];
     setSelectedBoard(board);
-    setUnlockMode('per_game');
+    setUnlockMode(session?.pricing_mode === 'per_time' ? 'per_time' : 'per_game');
     setUnlockCredits(1);
     setUnlockMinutes(15);
     setShowExtendDialog(true);
   };
+
+  const metrics = useMemo(() => {
+    const total = boards.length;
+    const live = boards.filter((board) => board.status !== 'locked' && board.status !== 'offline').length;
+    const inGame = boards.filter((board) => board.status === 'in_game').length;
+    const offline = boards.filter((board) => board.status === 'offline').length;
+    const observerIssues = Object.values(observerStatuses).filter(
+      (observer) => observer?.state === 'error' || observer?.last_error
+    ).length;
+
+    return { total, live, inGame, offline, observerIssues };
+  }, [boards, observerStatuses]);
 
   if (loading) {
     return (
@@ -253,384 +306,282 @@ export default function AdminDashboard() {
   }
 
   return (
-    <div data-testid="admin-dashboard">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('dashboard')}</h1>
-          <p className="text-zinc-500 flex items-center gap-2">
-            {t('board_overview')}
-            {wsConnected
-              ? <span className="inline-flex items-center gap-1 text-xs text-emerald-500" data-testid="ws-status-connected"><Wifi className="w-3 h-3" /> Live</span>
-              : <span className="inline-flex items-center gap-1 text-xs text-zinc-600" data-testid="ws-status-polling"><WifiOff className="w-3 h-3" /> Polling</span>
-            }
-          </p>
-        </div>
-        <Button
-          onClick={fetchBoards}
-          variant="outline"
-          className="border-zinc-700 text-zinc-400 hover:text-white"
-        >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          {t('refresh')}
-        </Button>
-      </div>
+    <AdminPage
+      eyebrow="Local operations"
+      title={t('dashboard')}
+      description="Live-Überblick für Venue-Betrieb: Board-Status, Session-Kontext, Observer-Auffälligkeiten und die direkten Eingriffe, die man am Tresen wirklich braucht."
+      actions={
+        <>
+          <AdminMiniAction icon={wsConnected ? Wifi : WifiOff} onClick={fetchBoards}>
+            {wsConnected ? 'Live verbunden' : 'Polling aktiv'}
+          </AdminMiniAction>
+          <Button onClick={fetchBoards} variant="outline" className="border-zinc-700 text-zinc-300 hover:text-white">
+            <RefreshCw className="w-4 h-4 mr-2" />
+            {t('refresh')}
+          </Button>
+        </>
+      }
+    >
+      <AdminStatsGrid>
+        <AdminStatCard icon={Target} label="Boards gesamt" value={metrics.total} hint="Alle lokal bekannten Spielplätze" tone="amber" />
+        <AdminStatCard icon={Unlock} label="Bereit / aktiv" value={metrics.live} hint="Freigeschaltet oder gerade im Spiel" tone="emerald" />
+        <AdminStatCard icon={Play} label="Aktive Matches" value={metrics.inGame} hint="Boards mit laufendem Spiel" tone="blue" />
+        <AdminStatCard icon={AlertTriangle} label="Auffälligkeiten" value={metrics.offline + metrics.observerIssues} hint={`${metrics.offline} offline · ${metrics.observerIssues} Observer`} tone={metrics.offline + metrics.observerIssues > 0 ? 'red' : 'neutral'} />
+      </AdminStatsGrid>
 
-      {/* Update Notification Banner */}
       {updateNotification && (
-        <div
-          className="mb-6 p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-sm flex items-center justify-between gap-4"
-          data-testid="update-notification-banner"
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <ArrowUpCircle className="w-6 h-6 text-emerald-400 flex-shrink-0" />
-            <div className="min-w-0">
-              <p className="text-emerald-400 font-medium">
-                Neue Version verfuegbar: v{updateNotification.latest_version}
-              </p>
-              {updateNotification.latest_name && (
-                <p className="text-sm text-zinc-400 truncate">{updateNotification.latest_name}</p>
+        <AdminSection>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between" data-testid="update-notification-banner">
+            <div className="flex items-start gap-3 min-w-0">
+              <div className="mt-0.5 flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-400">
+                <ArrowUpCircle className="h-5 w-5" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="font-medium text-emerald-300">Neue Version verfügbar: v{updateNotification.latest_version}</p>
+                  <AdminStatusPill tone="emerald">Update</AdminStatusPill>
+                </div>
+                <p className="mt-1 text-sm text-zinc-400">{updateNotification.latest_name || 'Neue Release Notes vorhanden.'}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {updateNotification.latest_body && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowChangelog((value) => !value)}
+                  className="border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/10"
+                  data-testid="update-show-changelog-btn"
+                >
+                  <FileText className="w-3 h-3 mr-1" /> Release Notes
+                </Button>
               )}
+              <Button size="sm" onClick={() => navigate('/admin/system')} className="bg-emerald-600 hover:bg-emerald-500 text-white" data-testid="update-go-to-updates-btn">
+                <Settings className="w-3 h-3 mr-1" /> Update starten
+              </Button>
+              <Button variant="outline" size="sm" onClick={snoozeNotification} className="border-zinc-700 text-zinc-300 hover:text-white" data-testid="update-snooze-btn">
+                <BellOff className="w-3 h-3 mr-1" /> Später
+              </Button>
+              <Button variant="ghost" size="icon" onClick={dismissNotification} className="text-zinc-500 hover:text-zinc-300 h-8 w-8" data-testid="update-dismiss-btn">
+                <X className="w-4 h-4" />
+              </Button>
             </div>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {updateNotification.latest_body && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowChangelog(!showChangelog)}
-                className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
-                data-testid="update-show-changelog-btn"
-              >
-                <FileText className="w-3 h-3 mr-1" /> Release Notes
-              </Button>
-            )}
-            <Button
-              size="sm"
-              onClick={() => navigate('/admin/system')}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
-              data-testid="update-go-to-updates-btn"
-            >
-              <Settings className="w-3 h-3 mr-1" /> Update starten
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={snoozeNotification}
-              className="border-zinc-700 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800"
-              data-testid="update-snooze-btn"
-            >
-              <BellOff className="w-3 h-3 mr-1" /> Spaeter erinnern
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={dismissNotification}
-              className="text-zinc-500 hover:text-zinc-300 h-8 w-8"
-              data-testid="update-dismiss-btn"
-              title="Dauerhaft ausblenden"
-            >
-              <X className="w-4 h-4" />
-            </Button>
-          </div>
-        </div>
+          {showChangelog && updateNotification.latest_body && (
+            <div className="mt-5 rounded-2xl border border-zinc-800 bg-zinc-950/80 p-4" data-testid="update-changelog-preview">
+              <p className="text-xs uppercase tracking-[0.24em] text-zinc-500 mb-2">Release Notes</p>
+              <pre className="max-h-56 overflow-y-auto whitespace-pre-wrap text-sm leading-6 text-zinc-400 font-sans">{updateNotification.latest_body}</pre>
+            </div>
+          )}
+        </AdminSection>
       )}
 
-      {/* Changelog Preview */}
-      {showChangelog && updateNotification?.latest_body && (
-        <div className="mb-6 p-4 bg-zinc-900 border border-zinc-800 rounded-sm" data-testid="update-changelog-preview">
-          <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Release Notes - v{updateNotification.latest_version}</p>
-          <pre className="text-sm text-zinc-400 whitespace-pre-wrap font-sans leading-relaxed max-h-48 overflow-y-auto">
-            {updateNotification.latest_body}
-          </pre>
-        </div>
-      )}
+      <div className="grid gap-6 xl:grid-cols-[1.4fr,0.8fr]">
+        <AdminSection title="Board-Übersicht" description="Jedes Board mit Status, Session-Kontext und Direktaktionen für den Operator.">
+          {boards.length === 0 ? (
+            <AdminEmptyState
+              icon={Target}
+              title="Noch keine Boards vorhanden"
+              description="Lege zuerst mindestens ein Board an, damit Unlocks, Kiosk und lokale Umsatzlogik sinnvoll greifen."
+              action={
+                <Button onClick={() => navigate('/admin/boards')} className="bg-amber-500 text-black hover:bg-amber-400">
+                  <Plus className="w-4 h-4 mr-2" /> Boards öffnen
+                </Button>
+              }
+            />
+          ) : (
+            <div className="space-y-4">
+              {boards.map((board) => {
+                const status = STATUS_STYLES[board.status] || STATUS_STYLES.locked;
+                const StatusIcon = status.icon;
+                const session = boardDetails[board.board_id];
+                const observer = observerStatuses[board.board_id];
+                const kioskHref = `/kiosk/${board.board_id}`;
 
-      {/* Board Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        {boards.map((board) => {
-          const statusStyle = STATUS_STYLES[board.status] || STATUS_STYLES.locked;
-          const StatusIcon = statusStyle.icon;
-          
-          return (
-            <Card key={board.id} className={`bg-zinc-900 border-2 ${statusStyle.border} transition-all`} data-testid={`board-card-${board.board_id}`}>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-sm ${statusStyle.bg} flex items-center justify-center`}>
-                      <Target className={`w-5 h-5 ${statusStyle.text}`} />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg text-white">{board.name}</CardTitle>
-                      <p className="text-xs text-zinc-500">{board.board_id}</p>
-                    </div>
-                  </div>
-                  <div className={`flex items-center gap-2 px-3 py-1 rounded-sm ${statusStyle.bg}`}>
-                    <StatusIcon className={`w-4 h-4 ${statusStyle.text}`} />
-                    <span className={`text-xs uppercase font-medium ${statusStyle.text}`}>
-                      {board.status === 'in_game' ? t('in_game_status') : 
-                       board.status === 'unlocked' ? t('unlocked_status') :
-                       board.status === 'offline' ? t('offline_status') : t('locked_status')}
-                    </span>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {/* Location */}
-                {board.location && (
-                  <p className="text-sm text-zinc-500">
-                    <span className="text-zinc-600">{t('location')}:</span> {board.location}
-                  </p>
-                )}
-
-                {/* Observer Status */}
-                {(() => {
-                  const obs = observerStatuses[board.board_id];
-                  if (!obs || obs.state === 'closed') return null;
-                  const stateColors = {
-                    idle: 'text-amber-400',
-                    in_game: 'text-emerald-400',
-                    finished: 'text-blue-400',
-                    unknown: 'text-zinc-400',
-                    error: 'text-red-400',
-                  };
-                  return (
-                    <div className="bg-zinc-800/50 rounded-sm p-2 text-xs space-y-1" data-testid={`observer-status-${board.board_id}`}>
-                      <div className="flex items-center justify-between">
-                        <span className="text-zinc-500">Observer</span>
-                        <span className={`uppercase font-medium ${stateColors[obs.state] || 'text-zinc-400'}`}>
-                          {obs.state}
-                        </span>
-                      </div>
-                      {obs.games_observed > 0 && (
-                        <div className="flex items-center justify-between">
-                          <span className="text-zinc-500">Spiele beobachtet</span>
-                          <span className="text-zinc-300">{obs.games_observed}</span>
+                return (
+                  <div key={board.id} className="rounded-3xl border border-zinc-800 bg-zinc-900/60 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid={`board-card-${board.board_id}`}>
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-xl font-semibold text-white">{board.name}</p>
+                          <AdminStatusPill tone={status.tone}>
+                            <StatusIcon className="w-3 h-3" /> {status.label}
+                          </AdminStatusPill>
+                          {board.is_master && <AdminStatusPill tone="amber">Master</AdminStatusPill>}
+                          {observer?.state && observer.state !== 'closed' && (
+                            <AdminStatusPill tone={observer.state === 'error' ? 'red' : observer.state === 'in_game' ? 'emerald' : 'blue'}>
+                              Observer {observer.state}
+                            </AdminStatusPill>
+                          )}
                         </div>
-                      )}
-                      {obs.last_error && (
-                        <p className="text-red-400 truncate" title={obs.last_error}>
-                          {obs.last_error}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })()}
+                        <p className="mt-1 text-sm text-zinc-500 font-mono">{board.board_id}</p>
+                        <div className="mt-3 grid gap-2 text-sm text-zinc-400 md:grid-cols-2">
+                          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-3 py-2">
+                            <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-600">Standort</p>
+                            <p className="mt-1 text-zinc-200">{board.location || 'Nicht hinterlegt'}</p>
+                          </div>
+                          <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-3 py-2">
+                            <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-600">Session-Kontext</p>
+                            <p className="mt-1 text-zinc-200">{session ? (session.pricing_mode === 'per_time' ? 'Zeitbasiert' : 'Spielbasiert') : 'Keine aktive Session'}</p>
+                            <p className="text-xs text-zinc-500 mt-1">{formatRemaining(session)}</p>
+                          </div>
+                        </div>
+                        {observer?.last_error && (
+                          <div className="mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-100">
+                            <span className="font-medium">Observer-Hinweis:</span> {observer.last_error}
+                          </div>
+                        )}
+                      </div>
 
-                {/* Action Buttons */}
-                <div className="flex gap-2">
-                  {board.status === 'locked' ? (
-                    <Button
-                      onClick={() => openUnlockDialog(board)}
-                      data-testid={`unlock-btn-${board.board_id}`}
-                      className="flex-1 bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading tracking-wider"
-                    >
-                      <Unlock className="w-4 h-4 mr-2" />
-                      {t('unlock_btn')}
-                    </Button>
-                  ) : (
-                    <>
-                      <Button
-                        onClick={() => openExtendDialog(board)}
-                        data-testid={`extend-btn-${board.board_id}`}
-                        variant="outline"
-                        className="flex-1 border-amber-500/50 text-amber-500 hover:bg-amber-500/20"
-                      >
-                        <Plus className="w-4 h-4 mr-2" />
-                        {t('extend_btn')}
-                      </Button>
-                      <Button
-                        onClick={() => handleLock(board)}
-                        data-testid={`lock-btn-${board.board_id}`}
-                        variant="outline"
-                        className="flex-1 border-red-500/50 text-red-500 hover:bg-red-500/20"
-                      >
-                        <Lock className="w-4 h-4 mr-2" />
-                        {t('lock_btn')}
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+                      <div className="flex flex-col gap-2 lg:min-w-[220px]">
+                        <Button asChild variant="outline" className="justify-between border-zinc-700 text-zinc-200 hover:text-white">
+                          <a href={kioskHref} target="_blank" rel="noreferrer">
+                            Kiosk öffnen <ExternalLink className="w-4 h-4" />
+                          </a>
+                        </Button>
+                        {board.status === 'locked' ? (
+                          <Button onClick={() => openUnlockDialog(board)} data-testid={`unlock-btn-${board.board_id}`} className="bg-amber-500 hover:bg-amber-400 text-black">
+                            <Unlock className="w-4 h-4 mr-2" /> Freischalten
+                          </Button>
+                        ) : (
+                          <>
+                            <Button onClick={() => openExtendDialog(board)} data-testid={`extend-btn-${board.board_id}`} variant="outline" className="border-amber-500/40 text-amber-300 hover:bg-amber-500/10">
+                              <Plus className="w-4 h-4 mr-2" /> Verlängern
+                            </Button>
+                            <Button onClick={() => handleLock(board)} data-testid={`lock-btn-${board.board_id}`} variant="outline" className="border-red-500/40 text-red-300 hover:bg-red-500/10">
+                              <Lock className="w-4 h-4 mr-2" /> Sperren
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </AdminSection>
+
+        <div className="space-y-6">
+          <AdminSection title="Schnellzugriffe" description="Weniger Suchen, mehr Operator-Flow.">
+            <div className="space-y-3">
+              <AdminLinkTile icon={TrendingUp} title="Revenue" description="Tagesumsatz, Board-Verteilung und Verlauf im Venue-Modus prüfen." onClick={() => navigate('/admin/revenue')} tone="emerald" cta="Zur Umsatzansicht" />
+              <AdminLinkTile icon={FileText} title="Reports" description="Sessionlisten, Abrechnungsfenster und CSV-Export für die Nacharbeit." onClick={() => navigate('/admin/reports')} tone="blue" cta="Zu Reports" />
+              <AdminLinkTile icon={Settings} title="Settings" description="Branding, Pricing, Trigger-Policy und Kiosk-Verhalten konsolidiert pflegen." onClick={() => navigate('/admin/settings')} tone="amber" cta="Zu Settings" />
+            </div>
+          </AdminSection>
+
+          <AdminSection title="Betriebsstatus" description="Lokal-first Signals für die Lageeinschätzung.">
+            <div className="space-y-3 text-sm">
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 flex items-center justify-between">
+                <span className="text-zinc-400">Realtime-Transport</span>
+                <AdminStatusPill tone={wsConnected ? 'emerald' : 'amber'}>{wsConnected ? 'WebSocket live' : 'Polling fallback'}</AdminStatusPill>
+              </div>
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 flex items-center justify-between">
+                <span className="text-zinc-400">Offline Boards</span>
+                <span className="font-semibold text-white">{metrics.offline}</span>
+              </div>
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 flex items-center justify-between">
+                <span className="text-zinc-400">Observer Issues</span>
+                <span className="font-semibold text-white">{metrics.observerIssues}</span>
+              </div>
+            </div>
+          </AdminSection>
+        </div>
       </div>
 
-      {/* Unlock Dialog */}
       <Dialog open={showUnlockDialog} onOpenChange={setShowUnlockDialog}>
-        <DialogContent className="bg-zinc-900 border-zinc-800">
+        <DialogContent className="bg-zinc-950 border-zinc-800 text-white sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle className="font-heading uppercase tracking-wider text-white">
+            <DialogTitle className="font-heading uppercase tracking-[0.12em] text-white">
               {selectedBoard?.name} freischalten
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-6 py-4">
-            {/* Mode Selection */}
-            <div className="space-y-2">
-              <label className="text-sm text-zinc-500 uppercase tracking-wider">Abrechnungsart</label>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  onClick={() => setUnlockMode('per_game')}
-                  data-testid="mode-per-game"
-                  className={`p-3 rounded-sm border-2 transition-all ${
-                    unlockMode === 'per_game'
-                      ? 'border-amber-500 bg-amber-500/20 text-amber-500'
-                      : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
-                  }`}
-                >
-                  <Coins className="w-5 h-5 mx-auto mb-1" />
-                  <span className="text-xs uppercase">Pro Spiel</span>
-                </button>
-                <button
-                  onClick={() => setUnlockMode('per_time')}
-                  data-testid="mode-per-time"
-                  className={`p-3 rounded-sm border-2 transition-all ${
-                    unlockMode === 'per_time'
-                      ? 'border-amber-500 bg-amber-500/20 text-amber-500'
-                      : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
-                  }`}
-                >
-                  <Clock className="w-5 h-5 mx-auto mb-1" />
-                  <span className="text-xs uppercase">Pro Zeit</span>
-                </button>
-              </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <button
+                type="button"
+                onClick={() => setUnlockMode('per_game')}
+                data-testid="mode-per-game"
+                className={`rounded-2xl border p-4 text-left transition ${unlockMode === 'per_game' ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:border-zinc-700'}`}
+              >
+                <p className="font-medium">Pro Spiel</p>
+                <p className="mt-1 text-sm text-zinc-500">Direkt für Credits / Spiele verkaufen.</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setUnlockMode('per_time')}
+                data-testid="mode-per-time"
+                className={`rounded-2xl border p-4 text-left transition ${unlockMode === 'per_time' ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:border-zinc-700'}`}
+              >
+                <p className="font-medium">Pro Zeit</p>
+                <p className="mt-1 text-sm text-zinc-500">Sinnvoll für offene Spielphasen mit Timer.</p>
+              </button>
             </div>
 
-            {/* Credits/Time/Players Input */}
-            {unlockMode === 'per_game' && (
-              <div className="space-y-2">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">Anzahl Spiele</label>
-                <div className="flex items-center gap-4">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setUnlockCredits(Math.max(1, unlockCredits - 1))}
-                    className="h-12 w-12 border-zinc-700"
-                  >
-                    <Minus className="w-5 h-5" />
-                  </Button>
-                  <Input
-                    type="number"
-                    value={unlockCredits}
-                    onChange={(e) => setUnlockCredits(parseInt(e.target.value) || 1)}
-                    min="1"
-                    data-testid="credits-input"
-                    className="input-industrial text-center text-2xl h-12"
-                  />
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setUnlockCredits(unlockCredits + 1)}
-                    className="h-12 w-12 border-zinc-700"
-                  >
-                    <Plus className="w-5 h-5" />
-                  </Button>
+            <div className="grid gap-4 md:grid-cols-3">
+              {unlockMode === 'per_game' ? (
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+                  <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Spiele</label>
+                  <Input type="number" min="1" value={unlockCredits} onChange={(e) => setUnlockCredits(parseInt(e.target.value || '1', 10))} data-testid="credits-input" className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
                 </div>
-              </div>
-            )}
-
-            {unlockMode === 'per_time' && (
-              <div className="space-y-2">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">Zeit (Minuten)</label>
-                <div className="grid grid-cols-3 gap-2">
-                  {[30, 60, 90].map((mins) => (
-                    <button
-                      key={mins}
-                      onClick={() => setUnlockMinutes(mins)}
-                      className={`p-4 rounded-sm border-2 text-xl font-mono transition-all ${
-                        unlockMinutes === mins
-                          ? 'border-amber-500 bg-amber-500/20 text-amber-500'
-                          : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
-                      }`}
-                    >
-                      {mins} min
-                    </button>
-                  ))}
+              ) : (
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+                  <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Minuten</label>
+                  <Input type="number" min="15" step="15" value={unlockMinutes} onChange={(e) => setUnlockMinutes(parseInt(e.target.value || '15', 10))} className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
                 </div>
+              )}
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+                <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Spielerzahl</label>
+                <Input type="number" min="1" max="8" value={unlockPlayers} onChange={(e) => setUnlockPlayers(parseInt(e.target.value || '1', 10))} data-testid="players-input" className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
               </div>
-            )}
-            {/* Price Display */}
-            <div className="bg-zinc-800 rounded-sm p-4 text-center">
-              <p className="text-sm text-zinc-500 uppercase mb-2">Gesamtpreis</p>
-              <p className="text-4xl font-mono font-bold text-amber-500" data-testid="total-price">
-                {calculatePrice().toFixed(2)} €
-              </p>
+              <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
+                <label className="text-xs uppercase tracking-[0.24em] text-amber-300">Gesamtpreis</label>
+                <p className="mt-3 text-3xl font-semibold text-white" data-testid="total-price">{calculatePrice().toFixed(2)} €</p>
+                <p className="mt-1 text-sm text-amber-100/70">Direkt aus lokalem Pricing abgeleitet.</p>
+              </div>
             </div>
           </div>
 
           <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setShowUnlockDialog(false)}
-              className="border-zinc-700"
-            >
-              Abbrechen
-            </Button>
-            <Button
-              onClick={handleUnlock}
-              data-testid="confirm-unlock-btn"
-              className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading"
-            >
-              Freischalten
-            </Button>
+            <Button variant="outline" onClick={() => setShowUnlockDialog(false)} className="border-zinc-700 text-zinc-300">Abbrechen</Button>
+            <Button onClick={handleUnlock} data-testid="confirm-unlock-btn" className="bg-amber-500 hover:bg-amber-400 text-black">Freischalten</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Extend Dialog */}
       <Dialog open={showExtendDialog} onOpenChange={setShowExtendDialog}>
-        <DialogContent className="bg-zinc-900 border-zinc-800">
+        <DialogContent className="bg-zinc-950 border-zinc-800 text-white sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle className="font-heading uppercase tracking-wider text-white">
-              Session verlängern: {selectedBoard?.name}
+            <DialogTitle className="font-heading uppercase tracking-[0.12em] text-white">
+              Session verlängern · {selectedBoard?.name}
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-6 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">+ Spiele</label>
-                <Input
-                  type="number"
-                  value={unlockCredits}
-                  onChange={(e) => setUnlockCredits(parseInt(e.target.value) || 0)}
-                  min="0"
-                  className="input-industrial text-center text-xl"
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">+ Minuten</label>
-                <Input
-                  type="number"
-                  value={unlockMinutes}
-                  onChange={(e) => setUnlockMinutes(parseInt(e.target.value) || 0)}
-                  min="0"
-                  className="input-industrial text-center text-xl"
-                />
-              </div>
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4 text-sm text-zinc-400">
+              {selectedBoard ? formatRemaining(boardDetails[selectedBoard.board_id]) : 'Keine Session ausgewählt'}
             </div>
+            {unlockMode === 'per_game' ? (
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+                <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Zusätzliche Spiele</label>
+                <Input type="number" min="0" value={unlockCredits} onChange={(e) => setUnlockCredits(parseInt(e.target.value || '0', 10))} className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+                <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Zusätzliche Minuten</label>
+                <Input type="number" min="0" step="15" value={unlockMinutes} onChange={(e) => setUnlockMinutes(parseInt(e.target.value || '0', 10))} className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
+              </div>
+            )}
           </div>
 
           <DialogFooter className="gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setShowExtendDialog(false)}
-              className="border-zinc-700"
-            >
-              Abbrechen
-            </Button>
-            <Button
-              onClick={handleExtend}
-              data-testid="confirm-extend-btn"
-              className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading"
-            >
-              Verlängern
-            </Button>
+            <Button variant="outline" onClick={() => setShowExtendDialog(false)} className="border-zinc-700 text-zinc-300">Abbrechen</Button>
+            <Button onClick={handleExtend} data-testid="confirm-extend-btn" className="bg-amber-500 hover:bg-amber-400 text-black">Verlängern</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </div>
+    </AdminPage>
   );
 }
