@@ -177,3 +177,44 @@ async def test_abort_before_authoritative_start_does_not_charge(isolated_kiosk_e
     assert board.status == BoardStatus.UNLOCKED.value
     assert session is not None
     assert session.credits_remaining == 3
+
+
+@pytest.mark.asyncio
+async def test_per_game_abort_after_authoritative_start_consumes_one_credit(isolated_kiosk_env):
+    await _create_session(
+        isolated_kiosk_env,
+        PricingMode.PER_GAME.value,
+        credits_total=2,
+        credits_remaining=2,
+        players_count=2,
+        players=["A", "B"],
+    )
+
+    await kiosk_router._on_game_started(isolated_kiosk_env.board.board_id, "match_start_state_active")
+    result = await kiosk_router.finalize_match(isolated_kiosk_env.board.board_id, "match_abort_delete")
+
+    board, session = await _load_session(isolated_kiosk_env)
+    assert result["should_lock"] is False
+    assert board.status == BoardStatus.UNLOCKED.value
+    assert session is not None
+    assert session.credits_remaining == 1
+
+
+@pytest.mark.asyncio
+async def test_per_player_abort_after_authoritative_start_keeps_single_charge(isolated_kiosk_env):
+    await _create_session(
+        isolated_kiosk_env,
+        PricingMode.PER_PLAYER.value,
+        credits_total=3,
+        credits_remaining=3,
+        players_count=3,
+        players=["A", "B", "C"],
+    )
+
+    await kiosk_router._on_game_started(isolated_kiosk_env.board.board_id, "match_start_state_active")
+    result = await kiosk_router.finalize_match(isolated_kiosk_env.board.board_id, "match_abort_delete")
+
+    board, session = await _load_session(isolated_kiosk_env)
+    assert result["should_lock"] is True
+    assert board.status == BoardStatus.LOCKED.value
+    assert session is None

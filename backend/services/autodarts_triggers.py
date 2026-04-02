@@ -152,7 +152,7 @@ def _as_tuple(value: Any, fallback: tuple[str, ...]) -> tuple[str, ...]:
 
 
 DEFAULT_TRIGGER_POLICY = {
-    "authoritative_start": ["match_start_throw", "match_start_turn_start"],
+    "authoritative_start": ["match_start_state_active", "match_start_throw", "match_start_turn_start"],
     "authoritative_finish": ["match_end_state_finished", "match_end_game_finished"],
     "authoritative_abort": ["match_abort_delete"],
     "assistive_finish": ["match_end_gameshot_match", "match_finished_matchshot"],
@@ -167,6 +167,15 @@ DEFAULT_TRIGGER_POLICY = {
 
 TRIGGER_SIGNAL_GROUPS = {
     "authoritative_start": [
+        {
+            "interpretation": "match_start_state_active",
+            "label": "Lobby/match state active",
+            "description": "State=active/running auf qualifiziertem Lobby-/Match-Kanal. Gilt als echter Match-Start.",
+            "source": "autodarts websocket state",
+            "role": "authoritative",
+            "action": "start",
+            "group": "authoritative_start",
+        },
         {
             "interpretation": "match_start_throw",
             "label": "First throw detected",

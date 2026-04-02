@@ -60,8 +60,9 @@ _last_finalized_match: dict = {}  # board_id -> match_id (prevents duplicate cre
 def _should_deduct_credit(trigger: str) -> bool:
     """Compatibility helper for finalize-time credit deductions.
 
-    Only authoritative finishes and manual staff ends consume a finalize-time
-    credit. Abort/delete paths never deduct here; per-player charging happens at
+    Authoritative finishes and manual staff ends consume a finalize-time
+    credit. Abort/delete only consume here after an already-confirmed match
+    start (board already in-game); per-player charging still happens at
     authoritative start-of-play instead.
     """
     return trigger in {"finished", "manual", "match_end_state_finished", "match_end_game_finished"}
@@ -233,7 +234,11 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                                 "credits_remaining": 0, "board_status": board.status}
 
                     # ── Finalize-time capacity + billing ──
-                    finalize_decision = finalize_session_consumption(session, trigger)
+                    finalize_decision = finalize_session_consumption(
+                        session,
+                        trigger,
+                        board_status=board.status,
+                    )
                     credits_before = finalize_decision.credits_before
                     credit_after = finalize_decision.credits_after
                     credits_remaining = credit_after

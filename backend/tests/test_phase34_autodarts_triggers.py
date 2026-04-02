@@ -19,11 +19,23 @@ def observer():
 def test_trigger_policy_classifies_authoritative_and_assistive_finish_signals():
     policy = build_trigger_policy()
 
+    start_state = policy.classify_ws("match_start_state_active", "autodarts.lobbies.abc.state")
     confirmed = policy.classify_ws("match_end_state_finished", "autodarts.matches.abc.state")
     assistive = policy.classify_ws("match_end_gameshot_match", "autodarts.matches.abc.game-events")
 
+    assert start_state.authority == TriggerAuthority.AUTHORITATIVE
     assert confirmed.authority == TriggerAuthority.AUTHORITATIVE
     assert assistive.authority == TriggerAuthority.ASSISTIVE
+
+
+def test_state_active_is_classified_as_authoritative_match_start(observer):
+    interpretation = observer._classify_frame(
+        '{"state":"active"}',
+        "autodarts.lobbies.match-1.state",
+        {"state": "active"},
+    )
+
+    assert interpretation == "match_start_state_active"
 
 
 def test_assistive_finish_signal_is_pending_only(observer, monkeypatch):

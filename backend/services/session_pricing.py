@@ -82,10 +82,14 @@ def should_record_match_completion(trigger: str) -> bool:
     return trigger in AUTHORITATIVE_FINISH_TRIGGERS
 
 
-def should_charge_on_finalize(session: Any, trigger: str) -> bool:
+def should_charge_on_finalize(session: Any, trigger: str, board_status: str | None = None) -> bool:
     if getattr(session, "pricing_mode", None) != PricingMode.PER_GAME.value:
         return False
-    return trigger in AUTHORITATIVE_FINISH_TRIGGERS
+    if trigger in AUTHORITATIVE_FINISH_TRIGGERS:
+        return True
+    if trigger in ABORT_TRIGGERS:
+        return board_status == BoardStatus.IN_GAME.value
+    return False
 
 
 def has_remaining_capacity(session: Any, now: datetime | None = None) -> bool:
@@ -101,10 +105,15 @@ def has_remaining_capacity(session: Any, now: datetime | None = None) -> bool:
     return int(getattr(session, "credits_remaining", 0) or 0) > 0
 
 
-def finalize_session_consumption(session: Any, trigger: str, now: datetime | None = None) -> FinalizeDecision:
+def finalize_session_consumption(
+    session: Any,
+    trigger: str,
+    now: datetime | None = None,
+    board_status: str | None = None,
+) -> FinalizeDecision:
     credits_before = int(getattr(session, "credits_remaining", 0) or 0)
     consume_units = 0
-    if should_charge_on_finalize(session, trigger):
+    if should_charge_on_finalize(session, trigger, board_status=board_status):
         consume_units = 1
         session.credits_remaining = max(0, credits_before - consume_units)
     credits_after = int(getattr(session, "credits_remaining", 0) or 0)

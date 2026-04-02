@@ -1220,6 +1220,7 @@ class AutodartsObserver:
         Classify a WS frame based on Autodarts lifecycle signals.
 
         Match START signals (authoritative):
+          - state = "active" / "running" on qualified match/lobby channels
           - event = "turn_start"
           - event = "throw"
 
@@ -1239,6 +1240,11 @@ class AutodartsObserver:
         event = self._extract_event(payload)
 
         # ── MATCH START ──
+        state_value = self._deep_get_state(payload)
+        if state_value in {'active', 'running'} and (
+            'autodarts.lobbies.' in chan_lower or 'autodarts.matches.' in chan_lower or 'autodarts.boards.' in chan_lower
+        ):
+            return "match_start_state_active"
         if event == 'turn_start':
             return "match_start_turn_start"
         if event == 'throw':
