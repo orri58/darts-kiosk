@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { useBoardWS } from '../hooks/useBoardWS';
+import { useSettings } from '../context/SettingsContext';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -12,6 +13,7 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
  */
 export default function CreditsOverlay() {
   const { boardId } = useParams();
+  const { theme } = useSettings();
   const [data, setData] = useState(null);
   const [flash, setFlash] = useState(false);
   const intervalRef = useRef(null);
@@ -119,25 +121,25 @@ export default function CreditsOverlay() {
         data-testid="credits-overlay"
         style={{
           background: isPendingGate
-            ? 'rgba(127, 29, 29, 0.94)'
+            ? 'rgb(var(--color-accent-rgb) / 0.2)'
             : isLastGame
-            ? 'rgba(127, 29, 29, 0.92)'
-            : 'rgba(9, 9, 11, 0.88)',
+            ? 'rgb(var(--color-accent-rgb) / 0.18)'
+            : 'rgb(var(--color-bg-rgb) / 0.88)',
           backdropFilter: 'blur(12px)',
           WebkitBackdropFilter: 'blur(12px)',
-          borderRadius: 10,
+          borderRadius: 16,
           padding: isLastGame ? '14px 20px' : '12px 18px',
-          color: '#fff',
+          color: 'var(--color-text)',
           minWidth: 160,
           border: isPendingGate
-            ? '1.5px solid rgba(248, 113, 113, 0.7)'
+            ? '1.5px solid rgb(var(--color-accent-rgb) / 0.55)'
             : isLastGame
-            ? '1.5px solid rgba(239, 68, 68, 0.6)'
-            : '1px solid rgba(255, 255, 255, 0.08)',
+            ? '1.5px solid rgb(var(--color-accent-rgb) / 0.45)'
+            : '1px solid rgb(var(--color-border-rgb) / 0.82)',
           boxShadow: isPendingGate
-            ? '0 4px 24px rgba(248, 113, 113, 0.35), 0 0 0 1px rgba(248, 113, 113, 0.14)'
+            ? '0 4px 24px rgb(var(--color-accent-rgb) / 0.28), 0 0 0 1px rgb(var(--color-accent-rgb) / 0.12)'
             : isLastGame
-            ? '0 4px 24px rgba(239, 68, 68, 0.3), 0 0 0 1px rgba(239, 68, 68, 0.1)'
+            ? '0 4px 24px rgb(var(--color-accent-rgb) / 0.24), 0 0 0 1px rgb(var(--color-accent-rgb) / 0.12)'
             : '0 4px 24px rgba(0, 0, 0, 0.5)',
           transition: 'all 0.3s ease',
           transform: flash ? 'scale(1.05)' : 'scale(1)',
@@ -158,12 +160,12 @@ export default function CreditsOverlay() {
                 fontWeight: 800,
                 textTransform: 'uppercase',
                 letterSpacing: 1.8,
-                color: '#fecaca',
+                color: theme.accentForeground,
               }}>
                 Credits fehlen
               </span>
             </div>
-            <div style={{ fontSize: 11, color: '#fee2e2', textAlign: 'center', lineHeight: 1.45 }}>
+            <div style={{ fontSize: 11, color: theme.text, textAlign: 'center', lineHeight: 1.45 }}>
               Match braucht {data.required_units ?? 0}, verfügbar {credits}. Es fehlen {data.credits_shortage ?? 0}.
             </div>
           </div>
@@ -183,7 +185,7 @@ export default function CreditsOverlay() {
                 fontWeight: 800,
                 textTransform: 'uppercase',
                 letterSpacing: 2,
-                color: '#fca5a5',
+                color: 'var(--color-accent)',
               }}>
                 LETZTES SPIEL
               </span>
@@ -191,7 +193,7 @@ export default function CreditsOverlay() {
             {data.upsell_message && (
               <div data-testid="upsell-message" style={{
                 fontSize: 11,
-                color: '#fecaca',
+                color: 'var(--color-text)',
                 textAlign: 'center',
                 lineHeight: 1.4,
                 opacity: 0.9,
@@ -202,7 +204,7 @@ export default function CreditsOverlay() {
             {data.upsell_pricing && (
               <div data-testid="upsell-pricing" style={{
                 fontSize: 10,
-                color: '#fca5a5',
+                color: 'var(--color-primary)',
                 textAlign: 'center',
                 marginTop: 4,
                 fontWeight: 600,
@@ -216,14 +218,14 @@ export default function CreditsOverlay() {
         ) : isTimeMode ? (
           /* === TIME MODE === */
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isTimeLow ? '#f59e0b' : '#71717a'} strokeWidth="2.5" strokeLinecap="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={isTimeLow ? 'var(--color-primary)' : 'var(--color-text-muted)'} strokeWidth="2.5" strokeLinecap="round">
               <circle cx="12" cy="12" r="10" />
               <path d="M12 6v6l4 2" />
             </svg>
             <div>
               <div style={{
                 fontSize: 10,
-                color: '#71717a',
+                color: 'var(--color-text-muted)',
                 textTransform: 'uppercase',
                 letterSpacing: 1.5,
                 marginBottom: 2,
@@ -234,7 +236,7 @@ export default function CreditsOverlay() {
                 fontSize: 22,
                 fontWeight: 700,
                 fontVariantNumeric: 'tabular-nums',
-                color: isTimeLow ? '#f59e0b' : '#fff',
+                color: isTimeLow ? 'var(--color-primary)' : 'var(--color-text)',
                 lineHeight: 1,
               }}>
                 {formatTime(timeLeft)}
@@ -244,7 +246,7 @@ export default function CreditsOverlay() {
         ) : (
           /* === CREDIT MODE === */
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={credits <= 1 ? '#f59e0b' : '#71717a'} strokeWidth="2.5" strokeLinecap="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={credits <= 1 ? 'var(--color-primary)' : 'var(--color-text-muted)'} strokeWidth="2.5" strokeLinecap="round">
               <circle cx="12" cy="5" r="3" />
               <line x1="12" y1="8" x2="12" y2="16" />
               <path d="M9 20l3-4 3 4" />
@@ -252,7 +254,7 @@ export default function CreditsOverlay() {
             <div>
               <div style={{
                 fontSize: 10,
-                color: '#71717a',
+                color: 'var(--color-text-muted)',
                 textTransform: 'uppercase',
                 letterSpacing: 1.5,
                 marginBottom: 2,
@@ -263,7 +265,7 @@ export default function CreditsOverlay() {
                 fontSize: 22,
                 fontWeight: 700,
                 fontVariantNumeric: 'tabular-nums',
-                color: credits <= 1 ? '#f59e0b' : '#fff',
+                color: credits <= 1 ? 'var(--color-primary)' : 'var(--color-text)',
                 lineHeight: 1,
                 transition: 'color 0.3s ease',
               }}>
@@ -279,7 +281,7 @@ export default function CreditsOverlay() {
         width: 6,
         height: 6,
         borderRadius: '50%',
-        background: connected ? '#22c55e' : '#ef4444',
+        background: connected ? '#22c55e' : theme.error,
         marginTop: 6,
         marginLeft: 8,
         opacity: 0.6,

@@ -97,9 +97,9 @@ function App() {
           theme="dark"
           toastOptions={{
             style: {
-              background: 'hsl(240 6% 10%)',
-              border: '1px solid hsl(240 3.7% 15.9%)',
-              color: 'hsl(0 0% 89%)',
+              background: 'rgb(var(--color-surface-rgb) / 0.96)',
+              border: '1px solid rgb(var(--color-border-rgb) / 0.9)',
+              color: 'var(--color-text)',
             },
           }}
         />

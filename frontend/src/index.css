@@ -98,10 +98,23 @@ html, body, #root {
 
 body {
   font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-  background-color: hsl(var(--background));
-  color: hsl(var(--foreground));
+  background-color: var(--color-bg);
+  color: var(--color-text);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color 180ms ease, color 180ms ease;
+}
+
+a,
+button,
+input,
+textarea,
+select {
+  transition:
+    color 160ms ease,
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease;
 }
 
 /* Typography Classes */
@@ -273,6 +286,22 @@ body {
   opacity: 0.08;
   pointer-events: none;
   z-index: 0;
+}
+
+.theme-panel {
+  border-color: rgb(var(--color-border-rgb) / 0.82);
+  background: rgb(var(--color-surface-rgb) / 0.76);
+  color: var(--color-text);
+}
+
+.theme-panel-muted {
+  border-color: rgb(var(--color-border-rgb) / 0.72);
+  background: rgb(var(--color-surface-rgb) / 0.56);
+  color: rgb(var(--color-text-rgb) / 0.88);
+}
+
+.theme-primary-glow {
+  box-shadow: 0 18px 42px rgb(var(--color-bg-rgb) / 0.38), 0 0 0 1px rgb(var(--color-primary-rgb) / 0.14);
 }
 
 /* Layer Base */

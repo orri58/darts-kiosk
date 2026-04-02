@@ -1,5 +1,6 @@
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
+import { applyPaletteToDocument, buildThemeTokens } from '../lib/theme';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -61,21 +62,25 @@ export function SettingsProvider({ children }) {
         axios.get(`${API}/settings/pwa`).catch(() => ({ data: null })),
         axios.get(`${API}/settings/lockscreen-qr`).catch(() => ({ data: null })),
       ]);
-      
-      setBranding(brandingRes.data);
+
+      const nextBranding = brandingRes.data || {};
+      const nextPalettes = palettesRes.data || [];
+      setBranding(nextBranding);
       setPricing(pricingRes.data);
-      setPalettes(palettesRes.data);
+      setPalettes(nextPalettes);
       if (textsRes.data) setKioskTexts(prev => ({ ...prev, ...textsRes.data }));
       if (pwaRes.data) setPwaConfig(prev => ({ ...prev, ...pwaRes.data }));
       if (qrRes.data) setLockscreenQr(prev => ({ ...prev, ...qrRes.data }));
 
       // Set document title from branding (except on /kiosk pages which use fixed title for Win32)
       if (!window.location.pathname.startsWith('/kiosk')) {
-        document.title = brandingRes.data.cafe_name || 'Darts Kiosk';
+        document.title = nextBranding.cafe_name || 'Darts Kiosk';
       }
-      // Update manifest theme color
-      const metaTheme = document.querySelector('meta[name="theme-color"]');
-      if (metaTheme && pwaRes.data?.theme_color) metaTheme.content = pwaRes.data.theme_color;
+
+      const activePalette = nextPalettes.find((palette) => palette.id === nextBranding.palette_id) || nextPalettes[0];
+      if (activePalette) {
+        applyPaletteToDocument(activePalette, { themeColor: pwaRes.data?.theme_color });
+      }
     } catch (error) {
       console.error('Failed to fetch settings:', error);
     } finally {
@@ -87,21 +92,44 @@ export function SettingsProvider({ children }) {
     fetchSettings();
   }, [fetchSettings]);
 
-  // Apply palette CSS variables when palette changes
   useEffect(() => {
-    if (palettes.length > 0 && branding.palette_id) {
-      const palette = palettes.find(p => p.id === branding.palette_id);
-      if (palette) {
-        const root = document.documentElement;
-        root.style.setProperty('--color-bg', palette.colors.bg);
-        root.style.setProperty('--color-surface', palette.colors.surface);
-        root.style.setProperty('--color-primary', palette.colors.primary);
-        root.style.setProperty('--color-secondary', palette.colors.secondary);
-        root.style.setProperty('--color-accent', palette.colors.accent);
-        root.style.setProperty('--color-text', palette.colors.text);
-      }
+    const path = window.location.pathname;
+    if (path.startsWith('/admin/settings')) {
+      return undefined;
     }
-  }, [palettes, branding.palette_id]);
+
+    const isLiveSurface = path.startsWith('/kiosk') || path.startsWith('/overlay') || path.startsWith('/public');
+    const refreshInterval = isLiveSurface ? 10000 : 45000;
+    const refresh = () => {
+      if (document.visibilityState === 'visible') {
+        fetchSettings();
+      }
+    };
+
+    const interval = window.setInterval(refresh, refreshInterval);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [fetchSettings]);
+
+  const activePalette = useMemo(
+    () => palettes.find((palette) => palette.id === branding.palette_id) || palettes[0] || null,
+    [palettes, branding.palette_id]
+  );
+
+  const theme = useMemo(() => buildThemeTokens(activePalette), [activePalette]);
+
+  // Apply palette CSS variables when palette or theme color changes
+  useEffect(() => {
+    if (activePalette) {
+      applyPaletteToDocument(activePalette, { themeColor: pwaConfig?.theme_color });
+    }
+  }, [activePalette, pwaConfig?.theme_color]);
 
   const updateBranding = async (newBranding) => {
     const response = await axios.put(`${API}/settings/branding`, { value: newBranding });
@@ -122,7 +150,7 @@ export function SettingsProvider({ children }) {
   };
 
   const getCurrentPalette = () => {
-    return palettes.find(p => p.id === branding.palette_id) || palettes[0];
+    return activePalette;
   };
 
   return (
@@ -134,6 +162,7 @@ export function SettingsProvider({ children }) {
       pwaConfig,
       lockscreenQr,
       loading,
+      theme,
       updateBranding,
       updatePricing,
       updatePalettes,
