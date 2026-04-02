@@ -51,13 +51,22 @@ const STATUS_STYLES = {
   locked: { tone: 'neutral', icon: Lock, label: 'Gesperrt' },
   unlocked: { tone: 'amber', icon: Unlock, label: 'Freigeschaltet' },
   in_game: { tone: 'emerald', icon: Play, label: 'Im Spiel' },
+  blocked_pending: { tone: 'red', icon: AlertTriangle, label: 'Wartet auf Credits' },
   offline: { tone: 'red', icon: WifiOff, label: 'Offline' },
 };
 
-function formatRemaining(session) {
+function formatRemaining(session, boardStatus) {
   if (!session) return 'Keine aktive Session';
   if (session.pricing_mode === 'per_game') {
     return `${session.credits_remaining} / ${session.credits_total} Spiele übrig`;
+  }
+  if (session.pricing_mode === 'per_player') {
+    const requiredPlayers = session.players_count || session.players?.length || 1;
+    const shortage = Math.max(0, requiredPlayers - (session.credits_remaining || 0));
+    if (boardStatus === 'blocked_pending') {
+      return `${session.credits_remaining} Credits da, ${shortage} fehlen für ${requiredPlayers} Spieler`;
+    }
+    return `${session.credits_remaining} Credits Rest · ${requiredPlayers} Spieler im Match`;
   }
   if (session.pricing_mode === 'per_time' && session.expires_at) {
     const diffMs = Math.max(0, new Date(session.expires_at).getTime() - Date.now());
@@ -422,8 +431,8 @@ export default function AdminDashboard() {
                           </div>
                           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-3 py-2">
                             <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-600">Session-Kontext</p>
-                            <p className="mt-1 text-zinc-200">{session ? (session.pricing_mode === 'per_time' ? 'Zeitbasiert' : 'Spielbasiert') : 'Keine aktive Session'}</p>
-                            <p className="text-xs text-zinc-500 mt-1">{formatRemaining(session)}</p>
+                            <p className="mt-1 text-zinc-200">{session ? (session.pricing_mode === 'per_time' ? 'Zeitbasiert' : session.pricing_mode === 'per_player' ? 'Spielerbasiert' : 'Spielbasiert') : 'Keine aktive Session'}</p>
+                            <p className="text-xs text-zinc-500 mt-1">{formatRemaining(session, board.status)}</p>
                           </div>
                         </div>
                         {observer?.last_error && (

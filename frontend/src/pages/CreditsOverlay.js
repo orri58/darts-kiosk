@@ -93,6 +93,7 @@ export default function CreditsOverlay() {
 
   const isLastGame = data.is_last_game;
   const isTimeMode = data.pricing_mode === 'per_time';
+  const isPendingGate = data.pending_credit_gate;
   const credits = data.credits_remaining ?? 0;
   const timeLeft = data.time_remaining_seconds;
 
@@ -117,7 +118,9 @@ export default function CreditsOverlay() {
       <div
         data-testid="credits-overlay"
         style={{
-          background: isLastGame
+          background: isPendingGate
+            ? 'rgba(127, 29, 29, 0.94)'
+            : isLastGame
             ? 'rgba(127, 29, 29, 0.92)'
             : 'rgba(9, 9, 11, 0.88)',
           backdropFilter: 'blur(12px)',
@@ -126,17 +129,45 @@ export default function CreditsOverlay() {
           padding: isLastGame ? '14px 20px' : '12px 18px',
           color: '#fff',
           minWidth: 160,
-          border: isLastGame
+          border: isPendingGate
+            ? '1.5px solid rgba(248, 113, 113, 0.7)'
+            : isLastGame
             ? '1.5px solid rgba(239, 68, 68, 0.6)'
             : '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: isLastGame
+          boxShadow: isPendingGate
+            ? '0 4px 24px rgba(248, 113, 113, 0.35), 0 0 0 1px rgba(248, 113, 113, 0.14)'
+            : isLastGame
             ? '0 4px 24px rgba(239, 68, 68, 0.3), 0 0 0 1px rgba(239, 68, 68, 0.1)'
             : '0 4px 24px rgba(0, 0, 0, 0.5)',
           transition: 'all 0.3s ease',
           transform: flash ? 'scale(1.05)' : 'scale(1)',
         }}
       >
-        {isLastGame ? (
+        {isPendingGate ? (
+          <div data-testid="pending-credit-warning">
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              marginBottom: 6,
+            }}>
+              <span style={{ fontSize: 18 }}>&#9888;</span>
+              <span style={{
+                fontSize: 14,
+                fontWeight: 800,
+                textTransform: 'uppercase',
+                letterSpacing: 1.8,
+                color: '#fecaca',
+              }}>
+                Credits fehlen
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: '#fee2e2', textAlign: 'center', lineHeight: 1.45 }}>
+              Match braucht {data.required_units ?? 0}, verfügbar {credits}. Es fehlen {data.credits_shortage ?? 0}.
+            </div>
+          </div>
+        ) : isLastGame ? (
           /* === LETZTES SPIEL WARNING + UPSELL === */
           <div data-testid="last-game-warning">
             <div style={{

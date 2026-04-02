@@ -9,6 +9,7 @@ import LockedScreen from './LockedScreen';
 import SetupScreen from './SetupScreen';
 import ObserverActiveScreen from './ObserverActiveScreen';
 import InGameScreen from './InGameScreen';
+import CreditBlockedScreen from './CreditBlockedScreen';
 import MatchResultScreen from './MatchResultScreen';
 import ErrorScreen from './ErrorScreen';
 import { CALL_STAFF_ENABLED } from '../../runtimeFeatures';
@@ -20,6 +21,7 @@ const STATES = {
   SETUP: 'setup',
   IN_GAME: 'in_game',
   OBSERVER_ACTIVE: 'observer_active',
+  BLOCKED_PENDING: 'blocked_pending',
   FINISHED: 'finished',
   ERROR: 'error'
 };
@@ -29,13 +31,6 @@ export default function KioskLayout() {
   const { branding, pricing, loading: settingsLoading } = useSettings();
   const { play: playSound } = useSoundManager(boardId);
 
-  const handleWsEvent = useCallback((event, data) => {
-    if (event === 'sound_event' && data?.board_id === boardId) {
-      playSound(data.event);
-    }
-  }, [boardId, playSound]);
-  useBoardWS(handleWsEvent);
-  
   const [kioskState, setKioskState] = useState(STATES.LOCKED);
   const [session, setSession] = useState(null);
   const [autodartsMode, setAutodartsMode] = useState(null);
@@ -65,6 +60,9 @@ export default function KioskLayout() {
         case 'locked':
           setKioskState(STATES.LOCKED);
           break;
+        case 'blocked_pending':
+          setKioskState(STATES.BLOCKED_PENDING);
+          break;
         case 'unlocked':
           setKioskState(isObserver ? STATES.OBSERVER_ACTIVE : STATES.SETUP);
           break;
@@ -81,6 +79,18 @@ export default function KioskLayout() {
       setLoading(false);
     }
   }, [boardId]);
+
+  const handleWsEvent = useCallback((event, data) => {
+    if (event === 'sound_event' && data?.board_id === boardId) {
+      playSound(data.event);
+      return;
+    }
+
+    if (data?.board_id === boardId && ['board_status', 'session_state', 'session_extended', 'credit_update', 'kiosk_refresh'].includes(event)) {
+      fetchBoardStatus();
+    }
+  }, [boardId, fetchBoardStatus, playSound]);
+  useBoardWS(handleWsEvent);
 
   useEffect(() => {
     fetchBoardStatus();
@@ -213,6 +223,14 @@ export default function KioskLayout() {
           observerState={observerState}
           observerError={observerError}
           onEndGame={handleEndGame}
+          onCallStaff={CALL_STAFF_ENABLED ? handleCallStaff : null}
+        />
+      )}
+
+      {kioskState === STATES.BLOCKED_PENDING && (
+        <CreditBlockedScreen
+          branding={branding}
+          session={session}
           onCallStaff={CALL_STAFF_ENABLED ? handleCallStaff : null}
         />
       )}
