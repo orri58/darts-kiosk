@@ -5,6 +5,7 @@
 This pass focused on **operator-facing local product quality** before deeper licensing/central work:
 - admin information architecture and navigation cleanup
 - dashboard / boards / revenue / settings usability upgrades
+- reports / discovery / health / system maintenance surface cleanup
 - guarded trigger-policy UI on top of the existing backend foundation
 - kiosk surface polish for locked / in-game / result / observer-fallback states
 
@@ -126,6 +127,50 @@ Updated kiosk surfaces:
 - **Setup screen**
   - added explicit setup flow + summary block so players/operators have context while configuring a match
 
+### 9) Reports page brought onto the new admin surface
+
+Reports is now framed as **local bookkeeping / session export**, not vague “accounting magic”:
+- shared admin shell / hierarchy / stats treatment
+- clearer filter framing and scope explanation
+- board revenue ranking + report-status side panels
+- better session table with readable mode/status labels
+- explicit reminder that browser view is capped while CSV remains the full export path
+
+Practical operator fix included:
+- custom date filters now send full-day boundaries (`00:00:00` → `23:59:59`) instead of effectively truncating the selected end date at midnight
+
+Honesty fix included:
+- copy now states clearly that this is based on **local session records**, not central finance or licensing reconciliation
+
+### 10) Discovery page reframed as local LAN pairing, not fleet management
+
+Discovery now matches the refreshed admin language and is more honest about scope:
+- top-level framing as **LAN discovery / pairing**
+- clearer status cards for visible agents / pairings / stale devices / scan stats
+- cleaner discovered-agent cards with network identity, freshness, and pairing affordance
+- dedicated trust-relationship section with direct unpair action
+- explicit explanation that this page only covers local mDNS visibility + trust, not WAN/tailnet fleet control
+
+### 11) Health page rebuilt around actual runtime signals
+
+The old page still carried mismatched/legacy assumptions. It now reflects the backend more accurately:
+- uses real `observer_metrics`, `agent_status`, and `recent_errors`
+- separates runtime diagnosis from system maintenance
+- adds runtime service cards, agent reachability, observer diagnostics, and recent error buffers
+- demotes backup handling to read-only posture info and points operators to System for management
+
+Important correctness fixes:
+- removed misleading reliance on non-existent `automation_metrics`
+- screenshot loading now uses authenticated blob fetches and the correct backend path model instead of a broken direct `/api/api/...` style URL
+
+### 12) System page aligned with the refreshed admin hierarchy
+
+System remains the “heavy” maintenance surface, but it now reads like part of the same product:
+- shared admin shell / stats cards / maintenance framing
+- explicit distinction: **Health = diagnosis**, **System = intervention / artifacts**
+- host / backups / logs / update lanes described more clearly so the page does not pretend every install has full auto-update richness
+- log surface explicitly described as application-log tailing, not a full OS journal UI
+
 ---
 
 ## Design principles used
@@ -154,13 +199,12 @@ Updated kiosk surfaces:
 
 ## Remaining UI gaps
 
-These are intentionally left for later passes, not forgotten:
+At this point the obvious local admin roughness is mostly gone. Remaining gaps are narrower:
 
-1. **Admin reports / system surfaces** still carry some older layout patterns and could be brought onto the new admin shell more fully.
-2. **Discovery / health / system** still have some legacy spacing and state treatment.
-3. **Setup flow** could still benefit from deeper restructuring if we later want a true step wizard with clearer operator vs player modes.
-4. A real **superadmin-only review/diff flow** for trigger-policy changes does not exist yet; for now the local admin UI stays deliberately constrained.
-5. Central/licensing-facing surfaces should be cleaned later so they do not visually compete with the now stronger local operator product.
+1. **Live-machine validation** is now the main missing proof: real Windows board PCs, real Autodarts sessions, and touch-device operator passes.
+2. **Setup flow** could still become a truer step wizard if we later want a clearer operator vs player split.
+3. A real **superadmin-only review/diff flow** for trigger-policy changes does not exist yet; for now the local admin UI stays deliberately constrained.
+4. Some **central / licensing / portal** surfaces may still need a similar cleanup pass later so they do not visually lag behind the now-stronger local operator product.
 
 ---
 
@@ -168,8 +212,14 @@ These are intentionally left for later passes, not forgotten:
 
 Validated here:
 - frontend production build succeeded
+- frontend production build succeeded again after the reports / discovery / system / health cleanup
 - trigger-policy backend tests passed after new validation logic
 - trigger metadata + board response shape were smoke-checked by direct import/runtime checks
+
+Additional frontend correctness notes from this batch:
+- health page now matches the real health endpoint shape (`observer_metrics`, `agent_status`, `recent_errors`)
+- report date-range filtering now behaves more like operators expect for end-of-day exports
+- screenshot previews use authenticated blob loading instead of unauthenticated direct image requests
 
 Limits in this sandbox:
 - broader backend suite is currently constrained by missing environment dependencies in the provided venv (`httpx`, `requests` in some tests)
@@ -180,5 +230,5 @@ Limits in this sandbox:
 ## Recommendation for next pass
 
 Highest-value next UI step:
-- bring **Reports / Discovery / System / Health** onto the same polished admin surface language
-- then do a short real-device operator pass (tablet + kiosk screen + admin laptop) to tighten touch targets, copy, and action ordering
+- do a short real-device operator pass (tablet + kiosk screen + admin laptop) to tighten touch targets, copy, and action ordering
+- then validate the now-cleaner admin/kiosk surfaces against a real Windows + Autodarts setup instead of continuing cosmetic-only work

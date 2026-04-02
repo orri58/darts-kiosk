@@ -15,17 +15,25 @@ That said, this is **not yet fully production-proven**.
 A new operator-facing polish pass has now landed on top of the local core:
 - admin navigation was reorganized around real venue tasks
 - dashboard / boards / revenue / settings were upgraded for clearer day-to-day operation
+- reports / discovery / health / system were brought onto the same admin surface language and reframed more honestly
 - kiosk locked / in-game / result / observer-fallback screens were made more coherent and production-like
 - trigger-policy configuration now has a guarded admin UI plus backend validation/metadata support
 - board API responses were corrected to expose Autodarts target / agent endpoint fields needed by the admin board editor
 
+Notable correctness fixes in this batch:
+- reports now treat custom end dates as end-of-day instead of effectively midnight cutoffs
+- health now reflects the actual backend health payload (`observer_metrics`, `agent_status`, `recent_errors`) instead of stale/incorrect assumptions
+- authenticated screenshot previews in health now work through blob loading rather than broken direct image URLs
+
 What was validated in this pass:
 - `frontend` production build completed successfully after the UI changes
+- `frontend` production build completed successfully again after the reports / discovery / health / system cleanup
 - `backend/tests/test_phase34_autodarts_triggers.py` passed (`8 passed`)
 - trigger metadata + board response schema changes were smoke-checked by direct runtime imports
 
 Known validation limit for this pass:
 - wider backend test subsets in this sandbox still hit missing environment dependencies in the provided venv (`httpx`, `requests`) before full collection, so broader reruns are still environment-blocked here
+- one unrelated existing frontend lint warning remains in `src/pages/admin/SetupWizard.js` (`react-hooks/exhaustive-deps`); it predates this batch and does not block production build output here
 
 The missing proof is outside this sandbox:
 - no real Windows board PC validation here
@@ -119,7 +127,7 @@ Minimum live checklist:
 
 ## Current recommendation
 
-The next highest-value step is not more architecture prose.
+The next highest-value step is not more architecture prose and probably not another cosmetic admin pass either.
 
 It is one disciplined live validation pass on a real Windows board PC with a real Autodarts session, while collecting:
 - `data/logs/app.log`
