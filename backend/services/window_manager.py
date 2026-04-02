@@ -346,17 +346,27 @@ def _win32_foreground_autodarts():
             title = buf.value
             title_lower = title.lower()
 
-            # Target: Chrome/Autodarts windows that are NOT the kiosk
-            is_chrome = 'chrome' in title_lower or 'autodarts' in title_lower
+            # Prefer actual Autodarts play windows, not arbitrary Chrome windows.
+            score = 0
+            if 'autodarts' in title_lower:
+                score += 3
+            if 'dart zone' in title_lower:
+                score += 3
+            if 'play.autodarts' in title_lower:
+                score += 3
+            if 'google chrome' in title_lower:
+                score += 1
             is_kiosk = KIOSK_WINDOW_TITLE.lower() in title_lower
 
-            if is_chrome and not is_kiosk:
-                targets.append((hwnd, title))
+            if score > 0 and not is_kiosk:
+                targets.append((score, hwnd, title))
             return True
 
         user32.EnumWindows(WNDENUMPROC(callback), 0)
 
-        for hwnd, title in targets:
+        targets.sort(key=lambda item: item[0], reverse=True)
+
+        for _score, hwnd, title in targets[:1]:
             logger.info(f"[WindowMgr] AUTODARTS_WINDOW_FOREGROUND: forcing foreground '{title}'")
             # SW_RESTORE handles both minimized and normal state
             user32.ShowWindow(hwnd, SW_RESTORE)

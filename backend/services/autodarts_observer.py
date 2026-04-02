@@ -2064,6 +2064,37 @@ class AutodartsObserver:
                         self._exit_polls = 0
                         self._exit_saw_finished = False
 
+                    elif stable == ObserverState.IN_GAME and effective_raw == ObserverState.IDLE and self._credit_consumed and not self._finalized:
+                        logger.info(
+                            f"[Observer:{self.board_id}] === TRANSITION: in_game -> idle (abort fallback finalize) ==="
+                        )
+                        self._finalized = True
+                        try:
+                            result = await self._dispatch_finalize("match_abort_delete", source="idle_transition_abort_fallback")
+                            if result is not None:
+                                if result.get("should_teardown"):
+                                    stop_reason = "finalize_teardown"
+                                    break
+                                self._finalized = False
+                                self._finalize_dispatching = False
+                                self._credit_consumed = False
+                                self._authoritative_start_emitted = False
+                                self._last_started_match_id = None
+                                self._abort_detected = False
+                                self._exit_polls = 0
+                                self._exit_saw_finished = False
+                                self._ws_state.reset()
+                                self._stable_state = ObserverState.IDLE
+                                self._set_state(ObserverState.IDLE)
+                                logger.info(f"[Observer:{self.board_id}] READY_FOR_NEXT_GAME (idle abort fallback)")
+                                continue
+                        except Exception as e:
+                            logger.error(
+                                f"[Observer:{self.board_id}] idle abort fallback finalize failed: {e}",
+                                exc_info=True,
+                            )
+                            self._finalized = False
+
                     elif stable == ObserverState.FINISHED and effective_raw == ObserverState.IDLE:
                         # Player dismissed results and returned to lobby.
                         # Do NOT trigger finalize_match again — that was already done
