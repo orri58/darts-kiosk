@@ -1431,6 +1431,19 @@ class AutodartsObserver:
         if 'matchshot' in raw_lower and 'gameshot' not in raw_lower:
             return "match_finished_matchshot"
 
+        # ── MATCH ABORT / DISAPPEAR: explicit match-not-found error on match topic ──
+        if payload and isinstance(payload, dict):
+            payload_error = payload.get('error')
+            topic = payload.get('topic')
+            if (
+                isinstance(payload_error, str)
+                and payload_error.lower() == 'match not found'
+                and isinstance(topic, str)
+                and '.state' in topic
+                and ('autodarts.matches' in chan_lower or 'autodarts.matches' in raw_lower)
+            ):
+                return "match_abort_delete"
+
         # ── POST-MATCH: delete event ──
         if event == 'delete':
             return "match_reset_delete"

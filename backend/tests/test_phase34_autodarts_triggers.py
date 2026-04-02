@@ -53,6 +53,23 @@ def test_extract_match_id_falls_back_to_payload_match_id(observer):
     assert match_id == "019d4f60-fa34-7130-b354-5fb5b5a7c718"
 
 
+def test_match_not_found_state_error_is_classified_as_abort(observer):
+    payload = {
+        "channel": "autodarts.matches",
+        "topic": "019d4fa3-bbb9-7619-a0ca-6375e523b044.state",
+        "error": "match not found",
+        "type": "error",
+    }
+
+    interpretation = observer._classify_frame(
+        '{"channel":"autodarts.matches","topic":"019d4fa3-bbb9-7619-a0ca-6375e523b044.state","error":"match not found","type":"error"}',
+        "autodarts.matches",
+        payload,
+    )
+
+    assert interpretation == "match_abort_delete"
+
+
 def test_assistive_finish_signal_is_pending_only(observer, monkeypatch):
     scheduled = []
     monkeypatch.setattr(observer, "_schedule_immediate_finalize", lambda trigger, match_id: scheduled.append((trigger, match_id)))
