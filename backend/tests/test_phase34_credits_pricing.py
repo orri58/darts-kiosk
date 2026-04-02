@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from backend.database import Base
 from backend.models import Board, BoardStatus, PricingMode, Session, SessionStatus
+from backend.routers import boards as boards_router
 from backend.routers import kiosk as kiosk_router
+from backend.schemas import ExtendRequest
 from backend.services import window_manager
 
 
@@ -30,6 +32,7 @@ async def isolated_kiosk_env(tmp_path, monkeypatch):
     monkeypatch.setattr(kiosk_router, "AsyncSessionLocal", session_factory)
     monkeypatch.setattr(kiosk_router, "return_to_kiosk_ui", _noop_async)
     monkeypatch.setattr(kiosk_router.board_ws, "broadcast", _noop_async)
+    monkeypatch.setattr(boards_router.board_ws, "broadcast", _noop_async)
     monkeypatch.setattr(kiosk_router.observer_manager, "get", lambda board_id: None)
     monkeypatch.setattr(kiosk_router.observer_manager, "set_desired_state", lambda board_id, state: None)
     monkeypatch.setattr(kiosk_router.observer_manager, "get_desired_state", lambda board_id: "running")
@@ -45,6 +48,7 @@ async def isolated_kiosk_env(tmp_path, monkeypatch):
         return default
 
     monkeypatch.setattr(kiosk_router, "get_or_create_setting", fake_get_or_create_setting)
+    monkeypatch.setattr(boards_router, "log_audit", _noop_async)
 
     async with session_factory() as db:
         board = Board(board_id="BOARD-PHASE34", name="Phase 34", status=BoardStatus.UNLOCKED.value)
@@ -83,6 +87,22 @@ async def _load_session(env):
         return board, session
 
 
+def _fake_observer_context(monkeypatch, players_count: int, players: list[str]):
+    fake_observer = SimpleNamespace(
+        lifecycle_state=SimpleNamespace(value="running"),
+        _context=None,
+        _close_reason="",
+        _ws_state=SimpleNamespace(last_match_id="match-test"),
+        _page_alive=lambda: False,
+        _navigate_to_home=_noop_async,
+        export_match_context=lambda: {
+            "players_count": players_count,
+            "players": players,
+        }
+    )
+    monkeypatch.setattr(kiosk_router.observer_manager, "get", lambda board_id: fake_observer)
+
+
 @pytest.mark.asyncio
 async def test_per_player_authoritative_start_charges_one_credit(isolated_kiosk_env):
     await _create_session(
@@ -118,6 +138,101 @@ async def test_per_player_authoritative_start_charges_three_players(isolated_kio
     _, session = await _load_session(isolated_kiosk_env)
     assert session.credits_total == 3
     assert session.credits_remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_authoritative_player_count_charges_detected_players_when_credits_are_enough(isolated_kiosk_env, monkeypatch):
+    await _create_session(
+        isolated_kiosk_env,
+        PricingMode.PER_PLAYER.value,
+        credits_total=4,
+        credits_remaining=4,
+        players_count=2,
+        players=["Configured A", "Configured B"],
+    )
+    _fake_observer_context(monkeypatch, 3, ["Alice", "Bob", "Cara"])
+
+    await kiosk_router._on_game_started(isolated_kiosk_env.board.board_id, "match_start_state_active")
+
+    board, session = await _load_session(isolated_kiosk_env)
+    assert board.status == BoardStatus.IN_GAME.value
+    assert session.players_count == 3
+    assert session.players == ["Alice", "Bob", "Cara"]
+    assert session.credits_remaining == 1
+
+
+@pytest.mark.asyncio
+async def test_authoritative_player_count_shortage_enters_blocked_pending_without_charge(isolated_kiosk_env, monkeypatch):
+    await _create_session(
+        isolated_kiosk_env,
+        PricingMode.PER_PLAYER.value,
+        credits_total=2,
+        credits_remaining=2,
+        players_count=2,
+        players=["Configured A", "Configured B"],
+    )
+    _fake_observer_context(monkeypatch, 4, ["Alice", "Bob", "Cara", "Dora"])
+
+    await kiosk_router._on_game_started(isolated_kiosk_env.board.board_id, "match_start_state_active")
+
+    board, session = await _load_session(isolated_kiosk_env)
+    assert board.status == BoardStatus.BLOCKED_PENDING.value
+    assert session.players_count == 4
+    assert session.players == ["Alice", "Bob", "Cara", "Dora"]
+    assert session.credits_remaining == 2
+
+
+@pytest.mark.asyncio
+async def test_staff_top_up_resolves_blocked_pending_and_consumes_charge_once(isolated_kiosk_env, monkeypatch):
+    await _create_session(
+        isolated_kiosk_env,
+        PricingMode.PER_PLAYER.value,
+        credits_total=2,
+        credits_remaining=2,
+        players_count=2,
+        players=["Configured A", "Configured B"],
+    )
+    _fake_observer_context(monkeypatch, 4, ["Alice", "Bob", "Cara", "Dora"])
+
+    await kiosk_router._on_game_started(isolated_kiosk_env.board.board_id, "match_start_state_active")
+
+    async with isolated_kiosk_env.session_factory() as db:
+        await boards_router.extend_session(
+            isolated_kiosk_env.board.board_id,
+            ExtendRequest(credits=2),
+            user=SimpleNamespace(id="staff-1", username="staff"),
+            db=db,
+        )
+        await db.commit()
+
+    board, session = await _load_session(isolated_kiosk_env)
+    assert board.status == BoardStatus.IN_GAME.value
+    assert session.players_count == 4
+    assert session.credits_total == 4
+    assert session.credits_remaining == 0
+
+
+@pytest.mark.asyncio
+async def test_match_abort_while_blocked_pending_returns_to_unlocked_without_charge(isolated_kiosk_env, monkeypatch):
+    await _create_session(
+        isolated_kiosk_env,
+        PricingMode.PER_PLAYER.value,
+        credits_total=2,
+        credits_remaining=2,
+        players_count=2,
+        players=["Configured A", "Configured B"],
+    )
+    _fake_observer_context(monkeypatch, 4, ["Alice", "Bob", "Cara", "Dora"])
+
+    await kiosk_router._on_game_started(isolated_kiosk_env.board.board_id, "match_start_state_active")
+    result = await kiosk_router.finalize_match(isolated_kiosk_env.board.board_id, "match_abort_delete")
+
+    board, session = await _load_session(isolated_kiosk_env)
+    assert result["should_lock"] is False
+    assert board.status == BoardStatus.UNLOCKED.value
+    assert session is not None
+    assert session.players_count == 4
+    assert session.credits_remaining == 2
 
 
 @pytest.mark.asyncio

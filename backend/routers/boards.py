@@ -19,11 +19,35 @@ from backend.dependencies import (
 )
 from backend.runtime_features import AUTODARTS_MODE, observer_mode_requires_target, supports_local_pricing_mode
 from backend.services.ws_manager import board_ws
-from backend.services.session_pricing import initial_credit_seed
+from backend.services.session_pricing import initial_credit_seed, apply_authoritative_start_charge
 from backend.routers.kiosk import start_observer_for_board, stop_observer_for_board
 from backend.services.autodarts_observer import observer_manager
 
 router = APIRouter()
+
+
+def _session_state_payload(board_id: str, board_status: str, session, charge=None) -> dict:
+    payload = {
+        "board_id": board_id,
+        "board_status": board_status,
+        "pricing_mode": getattr(session, "pricing_mode", None),
+        "credits_remaining": int(getattr(session, "credits_remaining", 0) or 0),
+        "credits_total": int(getattr(session, "credits_total", 0) or 0),
+        "players_count": int(getattr(session, "players_count", 0) or 0),
+        "players": list(getattr(session, "players", None) or []),
+        "pending_credit_gate": board_status == BoardStatus.BLOCKED_PENDING.value,
+    }
+    if charge is not None:
+        required_units = int(getattr(charge, "required_units", 0) or 0)
+        payload.update(
+            {
+                "required_units": required_units,
+                "charged_units": int(getattr(charge, "units", 0) or 0),
+                "credits_shortage": max(0, required_units - payload["credits_remaining"]),
+                "start_gate_reason": getattr(charge, "reason", None),
+            }
+        )
+    return payload
 
 
 # ===== Board CRUD =====
@@ -270,14 +294,33 @@ async def extend_session(board_id: str, data: ExtendRequest, user: User = Depend
         else:
             session.expires_at = datetime.now(timezone.utc) + timedelta(minutes=data.minutes)
 
+    pending_gate_resolved = False
+    pending_gate_charge = None
+    if board.status == BoardStatus.BLOCKED_PENDING.value and session.pricing_mode == PricingMode.PER_PLAYER.value:
+        pending_gate_charge = apply_authoritative_start_charge(session, board.status)
+        if pending_gate_charge.accepted and not pending_gate_charge.blocked:
+            board.status = BoardStatus.IN_GAME.value
+            pending_gate_resolved = True
+
     await db.flush()
     await log_audit(db, user, "extend_session", "session", session.id, {
         "board_id": board_id,
         "credits": data.credits,
-        "minutes": data.minutes
+        "minutes": data.minutes,
+        "pending_gate_resolved": pending_gate_resolved,
     })
 
     await board_ws.broadcast("session_extended", {"board_id": board_id, "credits": data.credits, "minutes": data.minutes})
+    await board_ws.broadcast("session_state", _session_state_payload(board_id, board.status, session, pending_gate_charge))
+
+    if pending_gate_resolved:
+        await board_ws.broadcast("board_status", {"board_id": board_id, "status": BoardStatus.IN_GAME.value})
+        await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "start"})
+        try:
+            from backend.services.window_manager import ensure_autodarts_foreground
+            await ensure_autodarts_foreground()
+        except Exception:
+            pass
 
     return SessionResponse(
         id=session.id, board_id=session.board_id, pricing_mode=session.pricing_mode,

@@ -20,10 +20,14 @@ ABORT_TRIGGERS = frozenset({"aborted", "match_abort_delete"})
 
 @dataclass(frozen=True)
 class ChargeDecision:
+    accepted: bool
     charged: bool
+    blocked: bool
     units: int
+    required_units: int
     credits_before: int
     credits_after: int
+    players_count: int
     reason: str
 
 
@@ -55,27 +59,64 @@ def initial_credit_seed(pricing_mode: str, credits: int | None, players_count: i
     return units, units
 
 
-def apply_authoritative_start_charge(session: Any, board_status: str) -> ChargeDecision:
+def sync_authoritative_players(
+    session: Any,
+    players_count: int | None = None,
+    players: list[str] | None = None,
+) -> int:
+    cleaned_players = [str(name).strip() for name in (players or []) if str(name).strip()]
+    if cleaned_players:
+        session.players = cleaned_players
+        session.players_count = len(cleaned_players)
+        return len(cleaned_players)
+    if players_count and int(players_count) > 0:
+        session.players_count = int(players_count)
+    return resolve_players_count(session)
+
+
+def apply_authoritative_start_charge(
+    session: Any,
+    board_status: str,
+    players_count: int | None = None,
+    players: list[str] | None = None,
+) -> ChargeDecision:
     credits_before = int(getattr(session, "credits_remaining", 0) or 0)
+    resolved_players = sync_authoritative_players(session, players_count=players_count, players=players)
+
     if getattr(session, "pricing_mode", None) != PricingMode.PER_PLAYER.value:
-        return ChargeDecision(False, 0, credits_before, credits_before, "pricing_mode_not_start_billed")
+        return ChargeDecision(True, False, False, 0, 0, credits_before, credits_before, resolved_players, "pricing_mode_not_start_billed")
     if board_status == BoardStatus.IN_GAME.value:
-        return ChargeDecision(False, 0, credits_before, credits_before, "board_already_in_game")
+        return ChargeDecision(True, False, False, 0, resolved_players, credits_before, credits_before, resolved_players, "board_already_in_game")
 
-    billable_players = resolve_players_count(session)
-    credits_total = int(getattr(session, "credits_total", 0) or 0)
-    if credits_total != billable_players and credits_before == credits_total:
-        session.credits_total = billable_players
-        session.credits_remaining = billable_players
-        credits_before = billable_players
+    billable_players = max(1, int(resolved_players or 1))
 
-    if credits_before <= 0:
-        return ChargeDecision(False, 0, credits_before, credits_before, "already_charged_or_no_capacity")
+    if credits_before < billable_players:
+        return ChargeDecision(
+            False,
+            False,
+            True,
+            0,
+            billable_players,
+            credits_before,
+            credits_before,
+            billable_players,
+            "insufficient_credits_for_authoritative_players",
+        )
 
-    units = min(credits_before, billable_players)
+    units = billable_players
     credits_after = max(0, credits_before - units)
     session.credits_remaining = credits_after
-    return ChargeDecision(True, units, credits_before, credits_after, "per_player_authoritative_start")
+    return ChargeDecision(
+        True,
+        True,
+        False,
+        units,
+        billable_players,
+        credits_before,
+        credits_after,
+        billable_players,
+        "per_player_authoritative_start",
+    )
 
 
 def should_record_match_completion(trigger: str) -> bool:

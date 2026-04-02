@@ -145,3 +145,38 @@ def test_trigger_policy_metadata_exposes_presets_and_catalog():
     assert {preset["id"] for preset in metadata["presets"]} == {"strict_ws", "console_recovery", "dom_last_resort"}
     assert any(item["interpretation"] == "match_start_throw" for item in metadata["signal_catalog"])
     assert metadata["locked_fields"]["delete_channel_prefixes"] == ["autodarts.matches.", "autodarts.boards."]
+
+
+def test_payload_player_snapshot_extracts_players_from_match_payload(observer):
+    count, players = observer._payload_player_snapshot(
+        {
+            "data": {
+                "match": {
+                    "players": [
+                        {"id": "p1", "nickname": "Alice"},
+                        {"id": "p2", "nickname": "Bob"},
+                        {"id": "p3", "nickname": "Cara"},
+                    ]
+                }
+            }
+        }
+    )
+
+    assert count == 3
+    assert players == ["Alice", "Bob", "Cara"]
+
+
+def test_payload_player_snapshot_extracts_players_from_team_lobby_payload(observer):
+    count, players = observer._payload_player_snapshot(
+        {
+            "lobby": {
+                "teams": [
+                    {"players": [{"user": {"id": "u1", "nickname": "Alice"}}]},
+                    {"players": [{"user": {"id": "u2", "nickname": "Bob"}}, {"user": {"id": "u3", "nickname": "Cara"}}]},
+                ]
+            }
+        }
+    )
+
+    assert count == 3
+    assert players == ["Alice", "Bob", "Cara"]

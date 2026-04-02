@@ -121,6 +121,64 @@ async def return_to_kiosk_ui(board_id: str, should_lock: bool):
     logger.info("[KIOSK_UI] return_to_kiosk_ui done")
 
 
+async def _show_pending_credit_gate(board_id: str):
+    """Bring the kiosk back on top so the pending-credit overlay is actually visible."""
+    logger.info(f"[KIOSK_UI] show_pending_credit_gate start board={board_id}")
+    try:
+        from backend.services.window_manager import minimize_observer_window, restore_kiosk_window, force_kiosk_foreground
+        await minimize_observer_window()
+        await asyncio.sleep(0.2)
+        await restore_kiosk_window()
+        await asyncio.sleep(0.2)
+        await force_kiosk_foreground()
+    except Exception as e:
+        logger.warning(f"[KIOSK_UI] show_pending_credit_gate failed: {e}")
+
+
+async def _resume_autodarts_after_pending_credit_gate(board_id: str):
+    """Once credits are sufficient again, hand control back to Autodarts."""
+    logger.info(f"[KIOSK_UI] resume_autodarts_after_pending_credit_gate start board={board_id}")
+    try:
+        from backend.services.window_manager import ensure_autodarts_foreground
+        await ensure_autodarts_foreground()
+    except Exception as e:
+        logger.warning(f"[KIOSK_UI] resume_autodarts_after_pending_credit_gate failed: {e}")
+
+
+def _observer_match_context(board_id: str) -> dict:
+    obs = observer_manager.get(board_id)
+    if obs and hasattr(obs, "export_match_context"):
+        try:
+            return obs.export_match_context() or {}
+        except Exception as exc:
+            logger.warning(f"[Observer->Kiosk] export_match_context failed board={board_id}: {exc}")
+    return {}
+
+
+def _session_state_payload(board_id: str, board_status: str, session, charge=None) -> dict:
+    payload = {
+        "board_id": board_id,
+        "board_status": board_status,
+        "pricing_mode": getattr(session, "pricing_mode", None),
+        "credits_remaining": int(getattr(session, "credits_remaining", 0) or 0),
+        "credits_total": int(getattr(session, "credits_total", 0) or 0),
+        "players_count": int(getattr(session, "players_count", 0) or 0),
+        "players": list(getattr(session, "players", None) or []),
+        "pending_credit_gate": board_status == BoardStatus.BLOCKED_PENDING.value,
+    }
+    if charge is not None:
+        required_units = int(getattr(charge, "required_units", 0) or 0)
+        payload.update(
+            {
+                "required_units": required_units,
+                "charged_units": int(getattr(charge, "units", 0) or 0),
+                "credits_shortage": max(0, required_units - payload["credits_remaining"]),
+                "start_gate_reason": getattr(charge, "reason", None),
+            }
+        )
+    return payload
+
+
 # =====================================================================
 # Central finalization (v2.5.0)
 # =====================================================================
@@ -594,6 +652,10 @@ async def _on_game_started(board_id: str, trigger: str = "observer_start"):
     _finalized.pop(board_id, None)
     _last_finalized_match.pop(board_id, None)
     try:
+        charge = None
+        board_status = BoardStatus.IN_GAME.value
+        session_state_payload = None
+        observer_context = _observer_match_context(board_id)
         async with AsyncSessionLocal() as db:
             async with db.begin():
                 result = await db.execute(select(Board).where(Board.board_id == board_id))
@@ -604,16 +666,31 @@ async def _on_game_started(board_id: str, trigger: str = "observer_start"):
                 if not session:
                     return
 
-                charge = apply_authoritative_start_charge(session, board.status)
-                board.status = BoardStatus.IN_GAME.value
+                charge = apply_authoritative_start_charge(
+                    session,
+                    board.status,
+                    players_count=observer_context.get("players_count"),
+                    players=observer_context.get("players") or None,
+                )
+                board.status = BoardStatus.BLOCKED_PENDING.value if charge.blocked else BoardStatus.IN_GAME.value
+                board_status = board.status
+                session_state_payload = _session_state_payload(board_id, board.status, session, charge)
 
                 logger.info(
                     f"[Observer->Kiosk] start_charge board={board_id} trigger={trigger} "
-                    f"pricing_mode={session.pricing_mode} charged={charge.charged} units={charge.units} "
+                    f"pricing_mode={session.pricing_mode} charged={charge.charged} blocked={charge.blocked} "
+                    f"units={charge.units}/{charge.required_units} players_count={charge.players_count} "
                     f"credits_before={charge.credits_before} credits_after={charge.credits_after} "
                     f"reason={charge.reason}"
                 )
-        await board_ws.broadcast("board_status", {"board_id": board_id, "status": "in_game"})
+        await board_ws.broadcast("board_status", {"board_id": board_id, "status": board_status})
+        if session_state_payload:
+            await board_ws.broadcast("session_state", session_state_payload)
+
+        if charge and charge.blocked:
+            await _show_pending_credit_gate(board_id)
+            return
+
         await board_ws.broadcast("sound_event", {"board_id": board_id, "event": "start"})
     except Exception as e:
         logger.error(f"[Observer->Kiosk] Error on game start: {e}", exc_info=True)
@@ -853,7 +930,7 @@ async def get_overlay_data(board_id: str, db: AsyncSession = Depends(get_db)):
     board = result.scalar_one_or_none()
     if not board:
         return {"visible": False}
-    if board.status not in (BoardStatus.UNLOCKED.value, BoardStatus.IN_GAME.value):
+    if board.status not in (BoardStatus.UNLOCKED.value, BoardStatus.IN_GAME.value, BoardStatus.BLOCKED_PENDING.value):
         return {"visible": False, "board_status": board.status}
     session = await get_active_session_for_board(db, board.id)
     if not session:
@@ -865,6 +942,9 @@ async def get_overlay_data(board_id: str, db: AsyncSession = Depends(get_db)):
     is_last = False
     if session.pricing_mode == PricingMode.PER_GAME.value:
         is_last = (session.credits_remaining or 0) <= 0
+    pending_credit_gate = board.status == BoardStatus.BLOCKED_PENDING.value and session.pricing_mode == PricingMode.PER_PLAYER.value
+    required_units = int(session.players_count or 0)
+    credits_shortage = max(0, required_units - int(session.credits_remaining or 0)) if pending_credit_gate else 0
     upsell_message = ""
     upsell_pricing = ""
     if is_last and session.pricing_mode != PricingMode.PER_TIME.value:
@@ -881,6 +961,9 @@ async def get_overlay_data(board_id: str, db: AsyncSession = Depends(get_db)):
         "time_remaining_seconds": time_remaining,
         "observer_state": observer_manager.get_status(board_id).get("state"),
         "is_last_game": is_last,
+        "pending_credit_gate": pending_credit_gate,
+        "required_units": required_units if pending_credit_gate else None,
+        "credits_shortage": credits_shortage,
         "session_id": session.id,
         "upsell_message": upsell_message,
         "upsell_pricing": upsell_pricing,

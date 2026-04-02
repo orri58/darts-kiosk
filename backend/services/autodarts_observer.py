@@ -37,7 +37,7 @@ import time
 import logging
 import threading
 from collections import deque
-from typing import Optional, Dict, Callable
+from typing import Optional, Dict, Callable, Any
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -177,6 +177,8 @@ class WSEventState:
     frames_received: int = 0
     match_relevant_frames: int = 0
     finish_trigger: Optional[str] = None  # Authoritative finish trigger only
+    last_players_count: Optional[int] = None
+    last_players: list[str] = field(default_factory=list)
 
     def reset(self):
         self.match_active = False
@@ -189,6 +191,8 @@ class WSEventState:
         self.last_start_trigger = None
         self.pending_finish_trigger = None
         self.finish_trigger = None
+        self.last_players_count = None
+        self.last_players = []
 
 
 @dataclass
@@ -1163,6 +1167,125 @@ class AutodartsObserver:
         m = re.search(r'autodarts\.matches\.([a-f0-9-]+)', channel, re.IGNORECASE)
         return m.group(1) if m else None
 
+    def _payload_player_snapshot(self, payload: Any) -> tuple[Optional[int], list[str]]:
+        names: list[str] = []
+        identifiers: set[str] = set()
+        player_context_keys = {
+            'players', 'player', 'participants', 'participant', 'competitors', 'competitor',
+            'members', 'member', 'teams', 'team', 'opponents', 'opponent'
+        }
+
+        def _normalize_name(value: Any) -> Optional[str]:
+            if value is None:
+                return None
+            text = str(value).strip()
+            return text or None
+
+        def _identity_from_dict(node: dict, from_player_context: bool = False) -> tuple[Optional[str], Optional[str]]:
+            nested_user = node.get('user') if isinstance(node.get('user'), dict) else None
+            explicit_player_hint = from_player_context or bool(
+                nested_user
+                or any(key in node for key in ('nickname', 'username', 'playerName', 'playerId', 'player_id', 'userId', 'user_id', 'memberId', 'member_id'))
+            )
+            if not explicit_player_hint:
+                return None, None
+
+            name = None
+            for key in ('nickname', 'displayName', 'display_name', 'name', 'username', 'label', 'playerName'):
+                name = _normalize_name(node.get(key))
+                if name:
+                    break
+            if not name and nested_user:
+                for key in ('nickname', 'displayName', 'display_name', 'name', 'username'):
+                    name = _normalize_name(nested_user.get(key))
+                    if name:
+                        break
+
+            ident = None
+            for key in ('id', 'playerId', 'player_id', 'userId', 'user_id', 'memberId', 'member_id'):
+                value = node.get(key)
+                if value is not None:
+                    ident = str(value).strip()
+                    if ident:
+                        break
+            if not ident and nested_user:
+                for key in ('id', 'userId', 'user_id'):
+                    value = nested_user.get(key)
+                    if value is not None:
+                        ident = str(value).strip()
+                        if ident:
+                            break
+
+            return name, ident
+
+        def _collect_candidate(candidate: Any, from_player_context: bool = False):
+            if isinstance(candidate, dict):
+                name, ident = _identity_from_dict(candidate, from_player_context=from_player_context)
+                if name or ident:
+                    dedupe_key = ident or f"name:{(name or '').lower()}"
+                    if dedupe_key and dedupe_key not in identifiers:
+                        identifiers.add(dedupe_key)
+                        if name:
+                            names.append(name)
+                    return
+            elif isinstance(candidate, str):
+                name = _normalize_name(candidate)
+                if name:
+                    dedupe_key = f"name:{name.lower()}"
+                    if dedupe_key not in identifiers:
+                        identifiers.add(dedupe_key)
+                        names.append(name)
+
+        def _walk(node: Any, key_hint: Optional[str] = None, depth: int = 0):
+            if depth > 8 or node is None:
+                return
+
+            if isinstance(node, dict):
+                _collect_candidate(node, from_player_context=key_hint in player_context_keys)
+                for key, value in node.items():
+                    lower_key = str(key).lower()
+                    if lower_key in player_context_keys:
+                        _walk(value, lower_key, depth + 1)
+                        continue
+                    if lower_key in {'data', 'body', 'match', 'lobby', 'game', 'currentmatch', 'current_match', 'board'}:
+                        _walk(value, lower_key, depth + 1)
+                        continue
+                    if isinstance(value, (dict, list)):
+                        _walk(value, lower_key, depth + 1)
+                return
+
+            if isinstance(node, list):
+                if key_hint in player_context_keys:
+                    for item in node:
+                        if key_hint in {'teams', 'team'} and isinstance(item, dict):
+                            nested_found = False
+                            for nested_key in ('players', 'members', 'participants', 'opponents'):
+                                if nested_key in item:
+                                    nested_found = True
+                                    _walk(item.get(nested_key), nested_key, depth + 1)
+                            if not nested_found:
+                                _collect_candidate(item, from_player_context=True)
+                        else:
+                            _collect_candidate(item, from_player_context=True)
+                            _walk(item, key_hint, depth + 1)
+                    return
+
+                for item in node:
+                    _walk(item, key_hint, depth + 1)
+
+        _walk(payload)
+        if identifiers:
+            return len(identifiers), names
+        return None, []
+
+    def export_match_context(self) -> dict:
+        ws = self._ws_state
+        return {
+            'match_id': ws.last_match_id,
+            'players_count': ws.last_players_count,
+            'players': list(ws.last_players or []),
+        }
+
     def _extract_event(self, payload) -> str:
         """Extract event name from payload (checks nested levels)."""
         if not payload:
@@ -1318,6 +1441,11 @@ class AutodartsObserver:
         match_id = self._extract_match_id(channel)
         if match_id:
             ws.last_match_id = match_id
+
+        players_count, players = self._payload_player_snapshot(payload)
+        if players_count:
+            ws.last_players_count = players_count
+            ws.last_players = players
 
         if decision.action == TriggerAction.START and decision.is_authoritative:
             ws.last_start_trigger = interpretation

@@ -28,6 +28,7 @@ class BoardStatus(str, enum.Enum):
     LOCKED = "locked"
     UNLOCKED = "unlocked"
     IN_GAME = "in_game"
+    BLOCKED_PENDING = "blocked_pending"
     OFFLINE = "offline"
 
 
