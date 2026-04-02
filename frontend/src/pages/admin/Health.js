@@ -1,30 +1,61 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { toast } from 'sonner';
-import { 
-  Activity, 
-  RefreshCw, 
-  Server, 
-  Database, 
-  Clock, 
-  CheckCircle, 
-  XCircle, 
+import {
+  Activity,
   AlertTriangle,
+  Camera,
+  CheckCircle,
+  Clock,
+  HardDrive,
+  RefreshCw,
+  Server,
+  ShieldCheck,
   Wifi,
   WifiOff,
-  Camera,
-  Download,
-  Trash2,
-  RotateCcw,
-  HardDrive
+  XCircle,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
+import {
+  AdminEmptyState,
+  AdminLinkTile,
+  AdminPage,
+  AdminSection,
+  AdminStatCard,
+  AdminStatsGrid,
+  AdminStatusPill,
+} from '../../components/admin/AdminShell';
 
-const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+const API_ROOT = process.env.REACT_APP_BACKEND_URL;
+const API = `${API_ROOT}/api`;
+
+const HEALTH_META = {
+  healthy: { label: 'Gesund', tone: 'emerald', icon: CheckCircle },
+  degraded: { label: 'Degradiert', tone: 'amber', icon: AlertTriangle },
+  unhealthy: { label: 'Kritisch', tone: 'red', icon: XCircle },
+};
+
+function formatDateTime(value) {
+  if (!value) return '–';
+  return new Date(value).toLocaleString('de-DE', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function formatUptime(seconds) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
 
 export default function AdminHealth() {
   const { token } = useAuth();
@@ -32,25 +63,28 @@ export default function AdminHealth() {
   const [health, setHealth] = useState(null);
   const [backups, setBackups] = useState(null);
   const [screenshots, setScreenshots] = useState([]);
+  const [screenshotUrls, setScreenshotUrls] = useState({});
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
+
+  const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const fetchHealth = useCallback(async () => {
     try {
       const [healthRes, backupsRes, screenshotsRes] = await Promise.all([
-        axios.get(`${API}/health/detailed`, { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get(`${API}/backups`, { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get(`${API}/health/screenshots`, { headers: { Authorization: `Bearer ${token}` } })
+        axios.get(`${API}/health/detailed`, { headers }),
+        axios.get(`${API}/backups`, { headers }),
+        axios.get(`${API}/health/screenshots`, { headers }),
       ]);
+
       setHealth(healthRes.data);
       setBackups(backupsRes.data);
-      setScreenshots(screenshotsRes.data);
+      setScreenshots(screenshotsRes.data || []);
     } catch (error) {
       console.error('Failed to fetch health:', error);
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [headers]);
 
   useEffect(() => {
     fetchHealth();
@@ -58,81 +92,62 @@ export default function AdminHealth() {
     return () => clearInterval(interval);
   }, [fetchHealth]);
 
-  const createBackup = async () => {
-    setCreating(true);
-    try {
-      await axios.post(`${API}/backups/create`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      toast.success('Backup erstellt');
-      fetchHealth();
-    } catch (error) {
-      toast.error('Backup fehlgeschlagen');
-    } finally {
-      setCreating(false);
-    }
-  };
+  useEffect(() => {
+    let cancelled = false;
+    let urlsToRevoke = [];
 
-  const downloadBackup = async (filename) => {
-    try {
-      const response = await axios.get(`${API}/backups/download/${filename}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        responseType: 'blob'
-      });
-      
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = url;
-      link.setAttribute('download', filename);
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-    } catch (error) {
-      toast.error('Download fehlgeschlagen');
-    }
-  };
+    const loadImages = async () => {
+      if (!screenshots.length) {
+        setScreenshotUrls({});
+        return;
+      }
 
-  const deleteBackup = async (filename) => {
-    if (!window.confirm(`Backup "${filename}" wirklich löschen?`)) return;
-    
-    try {
-      await axios.delete(`${API}/backups/${filename}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      toast.success('Backup gelöscht');
-      fetchHealth();
-    } catch (error) {
-      toast.error('Löschen fehlgeschlagen');
-    }
-  };
+      const entries = await Promise.all(
+        screenshots.map(async (screenshot) => {
+          try {
+            const response = await axios.get(`${API_ROOT}${screenshot.path}`, {
+              headers,
+              responseType: 'blob',
+            });
+            const url = URL.createObjectURL(response.data);
+            urlsToRevoke.push(url);
+            return [screenshot.filename, url];
+          } catch {
+            return [screenshot.filename, null];
+          }
+        })
+      );
 
-  const formatUptime = (seconds) => {
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${mins}m`;
-    return `${mins}m`;
-  };
+      if (!cancelled) {
+        setScreenshotUrls(
+          Object.fromEntries(entries.filter(([, url]) => Boolean(url)))
+        );
+      }
+    };
 
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'healthy': return 'text-emerald-500';
-      case 'degraded': return 'text-amber-500';
-      case 'unhealthy': return 'text-red-500';
-      default: return 'text-zinc-500';
-    }
-  };
+    loadImages();
 
-  const getStatusIcon = (status) => {
-    switch (status) {
-      case 'healthy': return <CheckCircle className="w-6 h-6 text-emerald-500" />;
-      case 'degraded': return <AlertTriangle className="w-6 h-6 text-amber-500" />;
-      case 'unhealthy': return <XCircle className="w-6 h-6 text-red-500" />;
-      default: return <Activity className="w-6 h-6 text-zinc-500" />;
-    }
-  };
+    return () => {
+      cancelled = true;
+      urlsToRevoke.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [screenshots, headers]);
+
+  const metrics = useMemo(() => {
+    const agents = Object.entries(health?.agent_status || {});
+    const offlineAgents = agents.filter(([, agent]) => !agent.is_online).length;
+    const recentBackups = backups?.backups || [];
+
+    return {
+      agents,
+      offlineAgents,
+      observerSuccessRate: health?.observer_metrics?.success_rate || 0,
+      observerEvents: health?.observer_metrics?.total_events || 0,
+      recentErrors: health?.recent_errors || [],
+      latestBackup: recentBackups[0] || null,
+      backupCount: backups?.stats?.total_backups || 0,
+    };
+  }, [health, backups]);
 
   if (loading) {
     return (
@@ -142,302 +157,277 @@ export default function AdminHealth() {
     );
   }
 
+  const meta = HEALTH_META[health?.status] || {
+    label: health?.status || 'Unbekannt',
+    tone: 'neutral',
+    icon: Activity,
+  };
+  const StatusIcon = meta.icon;
+
   return (
-    <div data-testid="admin-health">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('system_health')}</h1>
-          <p className="text-zinc-500">Überwachung und Backups</p>
+    <AdminPage
+      eyebrow="Runtime health"
+      title={t('health') || t('system_health')}
+      description="Diagnoseoberfläche für Laufzeit-Signale: Services, Agent-Erreichbarkeit, Observer-Fehler und Artefakte. Für Backups, Logs und Neustarts ist die System-Seite zuständig."
+      actions={
+        <div className="flex flex-wrap gap-2">
+          {health?.last_check && (
+            <AdminStatusPill tone="blue">
+              <Clock className="w-3 h-3" /> geprüft {formatDateTime(health.last_check)}
+            </AdminStatusPill>
+          )}
+          <Button
+            onClick={fetchHealth}
+            variant="outline"
+            className="border-zinc-700 text-zinc-300 hover:text-white"
+          >
+            <RefreshCw className="w-4 h-4 mr-2" /> Aktualisieren
+          </Button>
         </div>
-        <Button
-          onClick={fetchHealth}
-          variant="outline"
-          className="border-zinc-700 text-zinc-400 hover:text-white"
-        >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Aktualisieren
-        </Button>
-      </div>
+      }
+    >
+      <AdminStatsGrid>
+        <AdminStatCard
+          icon={StatusIcon}
+          label="Gesamtstatus"
+          value={meta.label}
+          hint="Abgeleitet aus Observer- und Agent-Signalen"
+          tone={meta.tone}
+        />
+        <AdminStatCard
+          icon={Clock}
+          label="Uptime"
+          value={formatUptime(health?.uptime_seconds || 0)}
+          hint={health?.start_time ? `Seit ${formatDateTime(health.start_time)}` : 'Seit letztem Prozessstart'}
+          tone="blue"
+        />
+        <AdminStatCard
+          icon={WifiOff}
+          label="Offline Agents"
+          value={metrics.offlineAgents}
+          hint={`${metrics.agents.length} Agent-Ziele überwacht`}
+          tone={metrics.offlineAgents > 0 ? 'red' : 'emerald'}
+        />
+        <AdminStatCard
+          icon={Activity}
+          label="Observer Erfolgsrate"
+          value={`${metrics.observerSuccessRate.toFixed(0)}%`}
+          hint={`${metrics.observerEvents} erfasste Observer-Events`}
+          tone={metrics.observerSuccessRate >= 80 ? 'emerald' : metrics.observerEvents > 0 ? 'amber' : 'neutral'}
+        />
+      </AdminStatsGrid>
 
-      {/* Status Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        {/* Overall Status */}
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              {getStatusIcon(health?.status)}
-              <div>
-                <p className="text-sm text-zinc-500 uppercase">System Status</p>
-                <p className={`text-2xl font-bold uppercase ${getStatusColor(health?.status)}`}>
-                  {health?.status || 'Unknown'}
-                </p>
+      <div className="grid gap-6 xl:grid-cols-[1.15fr,0.85fr]">
+        <div className="space-y-6">
+          <AdminSection title="Runtime-Dienste" description="Was der laufende Prozess selbst über Scheduler, Backup-Service und Observer meldet.">
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-white">Session Scheduler</p>
+                    <p className="text-xs text-zinc-500">Auto-Lock und Expiry-Prüfung</p>
+                  </div>
+                  <AdminStatusPill tone={health?.scheduler_running ? 'emerald' : 'red'}>
+                    {health?.scheduler_running ? 'Läuft' : 'Gestoppt'}
+                  </AdminStatusPill>
+                </div>
+              </div>
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-white">Backup-Service</p>
+                    <p className="text-xs text-zinc-500">Geplanter DB-Backup-Worker</p>
+                  </div>
+                  <AdminStatusPill tone={health?.backup_service_running ? 'emerald' : 'red'}>
+                    {health?.backup_service_running ? 'Läuft' : 'Gestoppt'}
+                  </AdminStatusPill>
+                </div>
               </div>
             </div>
-          </CardContent>
-        </Card>
 
-        {/* Uptime */}
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <Clock className="w-6 h-6 text-blue-500" />
-              <div>
-                <p className="text-sm text-zinc-500 uppercase">Uptime</p>
-                <p className="text-2xl font-mono font-bold text-white">
-                  {formatUptime(health?.uptime_seconds || 0)}
-                </p>
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/60 p-5">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-lg font-semibold text-white">Observer-Diagnostik</p>
+                <AdminStatusPill tone={metrics.observerSuccessRate >= 80 ? 'emerald' : metrics.observerEvents > 0 ? 'amber' : 'neutral'}>
+                  {metrics.observerSuccessRate.toFixed(1)}%
+                </AdminStatusPill>
               </div>
-            </div>
-          </CardContent>
-        </Card>
 
-        {/* Automation Success Rate */}
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <Activity className="w-6 h-6 text-amber-500" />
-              <div>
-                <p className="text-sm text-zinc-500 uppercase">Automation</p>
-                <p className="text-2xl font-mono font-bold text-white">
-                  {health?.automation_metrics?.success_rate?.toFixed(0) || 0}%
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Backups */}
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-6">
-            <div className="flex items-center gap-4">
-              <HardDrive className="w-6 h-6 text-purple-500" />
-              <div>
-                <p className="text-sm text-zinc-500 uppercase">Backups</p>
-                <p className="text-2xl font-mono font-bold text-white">
-                  {backups?.stats?.total_backups || 0}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      <Tabs defaultValue="services" className="space-y-6">
-        <TabsList className="bg-zinc-900 border border-zinc-800 p-1">
-          <TabsTrigger value="services" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
-            <Server className="w-4 h-4 mr-2" />
-            Services
-          </TabsTrigger>
-          <TabsTrigger value="agents" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
-            <Wifi className="w-4 h-4 mr-2" />
-            Agents
-          </TabsTrigger>
-          <TabsTrigger value="backups" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
-            <Database className="w-4 h-4 mr-2" />
-            Backups
-          </TabsTrigger>
-          <TabsTrigger value="errors" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
-            <Camera className="w-4 h-4 mr-2" />
-            Fehler-Screenshots
-          </TabsTrigger>
-        </TabsList>
-
-        {/* Services Tab */}
-        <TabsContent value="services">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white">Hintergrund-Services</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Scheduler */}
-              <div className="flex items-center justify-between p-4 bg-zinc-800/50 rounded-sm">
-                <div className="flex items-center gap-3">
-                  <Clock className="w-5 h-5 text-zinc-500" />
-                  <div>
-                    <p className="text-white font-medium">Session Scheduler</p>
-                    <p className="text-sm text-zinc-500">Auto-Lock & Expiry Check</p>
-                  </div>
+              <div className="mt-4 grid gap-3 md:grid-cols-4">
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-600">Events gesamt</p>
+                  <p className="mt-2 text-2xl font-semibold text-white">{health?.observer_metrics?.total_events || 0}</p>
                 </div>
-                <div className={`flex items-center gap-2 px-3 py-1 rounded-sm ${health?.scheduler_running ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                  {health?.scheduler_running ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-                  <span className="text-sm">{health?.scheduler_running ? 'Running' : 'Stopped'}</span>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-600">Erfolgreich</p>
+                  <p className="mt-2 text-2xl font-semibold text-emerald-400">{health?.observer_metrics?.successful || 0}</p>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-600">Fehlgeschlagen</p>
+                  <p className="mt-2 text-2xl font-semibold text-red-400">{health?.observer_metrics?.failed || 0}</p>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-600">Letzter Erfolg</p>
+                  <p className="mt-2 text-sm text-zinc-200">{formatDateTime(health?.observer_metrics?.last_success)}</p>
                 </div>
               </div>
 
-              {/* Backup Service */}
-              <div className="flex items-center justify-between p-4 bg-zinc-800/50 rounded-sm">
-                <div className="flex items-center gap-3">
-                  <HardDrive className="w-5 h-5 text-zinc-500" />
-                  <div>
-                    <p className="text-white font-medium">Backup Service</p>
-                    <p className="text-sm text-zinc-500">Auto-Backup alle {backups?.stats?.backup_interval_hours || 6}h</p>
-                  </div>
+              {health?.observer_metrics?.last_error && (
+                <div className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
+                  <span className="font-medium">Letzter Observer-Fehler:</span> {health.observer_metrics.last_error}
                 </div>
-                <div className={`flex items-center gap-2 px-3 py-1 rounded-sm ${health?.backup_service_running ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                  {health?.backup_service_running ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-                  <span className="text-sm">{health?.backup_service_running ? 'Running' : 'Stopped'}</span>
-                </div>
-              </div>
-
-              {/* Automation Metrics */}
-              <div className="p-4 bg-zinc-800/50 rounded-sm">
-                <div className="flex items-center gap-3 mb-4">
-                  <Activity className="w-5 h-5 text-zinc-500" />
-                  <p className="text-white font-medium">Autodarts Automation</p>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <p className="text-zinc-500">Total</p>
-                    <p className="text-xl font-mono text-white">{health?.automation_metrics?.total_attempts || 0}</p>
-                  </div>
-                  <div>
-                    <p className="text-zinc-500">Erfolgreich</p>
-                    <p className="text-xl font-mono text-emerald-400">{health?.automation_metrics?.successful || 0}</p>
-                  </div>
-                  <div>
-                    <p className="text-zinc-500">Fehlgeschlagen</p>
-                    <p className="text-xl font-mono text-red-400">{health?.automation_metrics?.failed || 0}</p>
-                  </div>
-                  <div>
-                    <p className="text-zinc-500">Erfolgsrate</p>
-                    <p className="text-xl font-mono text-amber-400">{health?.automation_metrics?.success_rate?.toFixed(1) || 0}%</p>
-                  </div>
-                </div>
-                {health?.automation_metrics?.last_error && (
-                  <div className="mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-sm">
-                    <p className="text-sm text-red-400">Letzter Fehler: {health.automation_metrics.last_error}</p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        {/* Agents Tab */}
-        <TabsContent value="agents">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white">Agent-Verbindungen</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {Object.keys(health?.agent_status || {}).length > 0 ? (
-                <div className="space-y-3">
-                  {Object.entries(health.agent_status).map(([boardId, agent]) => (
-                    <div key={boardId} className="flex items-center justify-between p-4 bg-zinc-800/50 rounded-sm">
-                      <div className="flex items-center gap-3">
-                        {agent.is_online ? <Wifi className="w-5 h-5 text-emerald-500" /> : <WifiOff className="w-5 h-5 text-red-500" />}
-                        <div>
-                          <p className="text-white font-medium">{boardId}</p>
-                          <p className="text-sm text-zinc-500 font-mono">{agent.agent_url}</p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className={`px-3 py-1 rounded-sm ${agent.is_online ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                          {agent.is_online ? 'Online' : 'Offline'}
-                        </div>
-                        {agent.latency_ms && (
-                          <p className="text-xs text-zinc-500 mt-1">{agent.latency_ms}ms</p>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-center text-zinc-500 py-8">Keine Agents konfiguriert</p>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+            </div>
+          </AdminSection>
 
-        {/* Backups Tab */}
-        <TabsContent value="backups">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-white">Datenbank-Backups</CardTitle>
-                <Button
-                  onClick={createBackup}
-                  disabled={creating}
-                  className="bg-amber-500 hover:bg-amber-400 text-black"
-                >
-                  {creating ? <RefreshCw className="w-4 h-4 mr-2 animate-spin" /> : <Database className="w-4 h-4 mr-2" />}
-                  Backup erstellen
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                {backups?.backups?.length > 0 ? (
-                  backups.backups.map((backup) => (
-                    <div key={backup.filename} className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
-                      <div>
-                        <p className="text-white font-mono text-sm">{backup.filename}</p>
-                        <p className="text-xs text-zinc-500">
-                          {new Date(backup.created_at).toLocaleString('de-DE')} • {backup.size_mb} MB
+          <AdminSection title="Agent-Erreichbarkeit" description="Nur Boards mit gepflegter Agent-API-URL werden hier aktiv überwacht.">
+            {metrics.agents.length > 0 ? (
+              <div className="space-y-3">
+                {metrics.agents.map(([boardId, agent]) => (
+                  <div key={boardId} className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-4">
+                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-medium text-white">{boardId}</p>
+                          <AdminStatusPill tone={agent.is_online ? 'emerald' : 'red'}>
+                            {agent.is_online ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+                            {agent.is_online ? 'Online' : 'Offline'}
+                          </AdminStatusPill>
+                        </div>
+                        <p className="mt-1 break-all text-sm font-mono text-zinc-500">{agent.agent_url}</p>
+                        <p className="mt-1 text-xs text-zinc-500">
+                          Letzter Heartbeat: {formatDateTime(agent.last_heartbeat)}
+                          {agent.consecutive_failures ? ` · Fehler in Folge: ${agent.consecutive_failures}` : ''}
                         </p>
                       </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => downloadBackup(backup.filename)}
-                          className="text-zinc-400 hover:text-amber-500"
-                        >
-                          <Download className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => deleteBackup(backup.filename)}
-                          className="text-zinc-400 hover:text-red-500"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <p className="text-center text-zinc-500 py-8">Keine Backups vorhanden</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
 
-        {/* Error Screenshots Tab */}
-        <TabsContent value="errors">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white">Fehler-Screenshots</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {screenshots.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {screenshots.map((screenshot) => (
-                    <div key={screenshot.filename} className="bg-zinc-800/50 rounded-sm overflow-hidden">
-                      <a href={`${API}${screenshot.path}`} target="_blank" rel="noopener noreferrer">
-                        <img 
-                          src={`${API}${screenshot.path}`} 
-                          alt={screenshot.filename}
-                          className="w-full h-32 object-cover hover:opacity-80 transition-opacity"
-                        />
-                      </a>
-                      <div className="p-3">
-                        <p className="text-xs text-zinc-400 truncate">{screenshot.filename}</p>
-                        <p className="text-xs text-zinc-500">
-                          {new Date(screenshot.created_at).toLocaleString('de-DE')}
+                      <div className="text-left md:text-right">
+                        <p className="text-sm font-medium text-white">
+                          {agent.latency_ms ? `${agent.latency_ms} ms` : '–'}
                         </p>
+                        <p className="text-xs text-zinc-500">Latenz</p>
                       </div>
                     </div>
-                  ))}
+
+                    {agent.error && (
+                      <div className="mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 px-3 py-2 text-sm text-red-100">
+                        {agent.error}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <AdminEmptyState
+                icon={Wifi}
+                title="Keine Agent-Ziele in der Health-Überwachung"
+                description="Diese Ansicht füllt sich erst, wenn Boards mit agent_api_base_url konfiguriert sind. Discovery allein reicht dafür noch nicht."
+              />
+            )}
+          </AdminSection>
+        </div>
+
+        <div className="space-y-6">
+          <AdminSection title="Aktuelle Auffälligkeiten" description="Neueste Fehler und Hinweise aus dem Runtime-Monitor.">
+            {metrics.recentErrors.length > 0 ? (
+              <div className="space-y-3">
+                {metrics.recentErrors.slice().reverse().slice(0, 8).map((error, index) => (
+                  <div key={`${error.timestamp}-${index}`} className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <AdminStatusPill tone="red">{error.category || 'runtime'}</AdminStatusPill>
+                      <span className="text-xs text-zinc-500">{formatDateTime(error.timestamp)}</span>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-zinc-300">{error.message}</p>
+                    {error.screenshot && (
+                      <p className="mt-2 text-xs text-zinc-500">Screenshot-Artefakt vorhanden</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-500">Keine aktuellen Runtime-Fehler im Puffer.</p>
+            )}
+          </AdminSection>
+
+          <AdminSection title="Backup-Posture" description="Nur Lesesicht — Verwaltung bleibt absichtlich auf der System-Seite.">
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+                <span className="text-zinc-400">DB-Backups vorhanden</span>
+                <AdminStatusPill tone={metrics.backupCount > 0 ? 'emerald' : 'amber'}>
+                  <HardDrive className="w-3 h-3" /> {metrics.backupCount}
+                </AdminStatusPill>
+              </div>
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+                <p className="text-zinc-400">Letztes Backup</p>
+                <p className="mt-1 font-medium text-white">
+                  {metrics.latestBackup ? formatDateTime(metrics.latestBackup.created_at) : 'Noch keines vorhanden'}
+                </p>
+              </div>
+            </div>
+          </AdminSection>
+
+          <AdminSection title="Direkt weiter" description="Wenn Diagnose in Aktion umschlagen soll.">
+            <div className="space-y-3">
+              <AdminLinkTile
+                icon={Server}
+                title="System"
+                description="Für Logs, Backups, Updates und Neustarts auf die Maintenance-Fläche wechseln."
+                href="/admin/system"
+                tone="amber"
+                cta="Zu System"
+              />
+              <AdminLinkTile
+                icon={ShieldCheck}
+                title="Discovery"
+                description="Wenn ein Agent fehlt, zuerst LAN-Sichtbarkeit und Pairing prüfen."
+                href="/admin/discovery"
+                tone="blue"
+                cta="Discovery öffnen"
+              />
+            </div>
+          </AdminSection>
+        </div>
+      </div>
+
+      <AdminSection title="Fehler-Screenshots" description="Gesicherte Artefakte aus data/autodarts_debug. Hilfreich für Support, aber kein vollständiges Screen-Recording.">
+        {screenshots.length > 0 ? (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {screenshots.map((screenshot) => (
+              <a
+                key={screenshot.filename}
+                href={screenshotUrls[screenshot.filename] || '#'}
+                target="_blank"
+                rel="noreferrer"
+                className="overflow-hidden rounded-3xl border border-zinc-800 bg-zinc-900/70 transition hover:border-amber-500/30"
+              >
+                <div className="aspect-[16/9] bg-zinc-950">
+                  {screenshotUrls[screenshot.filename] ? (
+                    <img
+                      src={screenshotUrls[screenshot.filename]}
+                      alt={screenshot.filename}
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-zinc-600">
+                      <Camera className="h-8 w-8" />
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <p className="text-center text-zinc-500 py-8">Keine Fehler-Screenshots vorhanden</p>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-      </Tabs>
-    </div>
+                <div className="p-4">
+                  <p className="truncate text-sm font-medium text-white">{screenshot.filename}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{formatDateTime(screenshot.created_at)}</p>
+                </div>
+              </a>
+            ))}
+          </div>
+        ) : (
+          <AdminEmptyState
+            icon={Camera}
+            title="Keine Fehler-Screenshots vorhanden"
+            description="Wenn der Observer aktuell sauber läuft, bleibt dieser Bereich absichtlich leer."
+          />
+        )}
+      </AdminSection>
+    </AdminPage>
   );
 }

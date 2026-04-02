@@ -1,14 +1,83 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
+import { toast } from 'sonner';
+import {
+  BarChart3,
+  CalendarRange,
+  FileDown,
+  Filter,
+  Hash,
+  RefreshCw,
+  Target,
+  Wallet,
+} from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
-import { FileDown, Calendar, Filter, TrendingUp, DollarSign, BarChart3, Hash } from 'lucide-react';
-import { toast } from 'sonner';
+import {
+  AdminEmptyState,
+  AdminPage,
+  AdminSection,
+  AdminStatCard,
+  AdminStatsGrid,
+  AdminStatusPill,
+} from '../../components/admin/AdminShell';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+const MODE_LABELS = {
+  per_game: 'Pro Spiel',
+  per_time: 'Pro Zeit',
+  per_player: 'Pro Spieler',
+};
+
+const STATUS_META = {
+  active: { label: 'Aktiv', tone: 'amber' },
+  finished: { label: 'Beendet', tone: 'emerald' },
+  expired: { label: 'Abgelaufen', tone: 'blue' },
+  aborted: { label: 'Abgebrochen', tone: 'red' },
+  cancelled: { label: 'Abgebrochen', tone: 'red' },
+};
+
+function buildReportParams({ preset, dateFrom, dateTo, filterBoard, filterMode }) {
+  const params = new URLSearchParams();
+
+  if (preset && !dateFrom && !dateTo) params.append('preset', preset);
+  if (dateFrom) params.append('date_from', `${dateFrom}T00:00:00`);
+  if (dateTo) params.append('date_to', `${dateTo}T23:59:59`);
+  if (filterBoard) params.append('board_id', filterBoard);
+  if (filterMode) params.append('pricing_mode', filterMode);
+
+  return params;
+}
+
+function formatDateTime(value) {
+  if (!value) return '–';
+  return new Date(value).toLocaleString('de-DE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function formatMoney(value) {
+  return `${Number(value || 0).toFixed(2)} €`;
+}
+
+function formatSessionVolume(session) {
+  if (session.pricing_mode === 'per_time') {
+    return session.minutes_total ? `${session.minutes_total} min` : 'Zeit offen';
+  }
+
+  if (session.credits_total || session.credits_remaining === 0) {
+    return `${session.credits_remaining ?? 0} / ${session.credits_total ?? 0}`;
+  }
+
+  return '–';
+}
 
 export default function Reports() {
   const { token } = useAuth();
@@ -19,7 +88,6 @@ export default function Reports() {
   const [loading, setLoading] = useState(false);
   const [boards, setBoards] = useState([]);
 
-  // Filters
   const [preset, setPreset] = useState('month');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -29,215 +97,385 @@ export default function Reports() {
   useEffect(() => {
     const fetchBoards = async () => {
       try {
-        const res = await axios.get(`${API}/boards`, { headers: { Authorization: `Bearer ${token}` } });
-        setBoards(res.data);
-      } catch { /* ignore */ }
+        const res = await axios.get(`${API}/boards`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        setBoards(res.data || []);
+      } catch {
+        /* ignore */
+      }
     };
+
     fetchBoards();
   }, [token]);
 
   const fetchReport = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (preset && !dateFrom && !dateTo) params.append('preset', preset);
-      if (dateFrom) params.append('date_from', dateFrom);
-      if (dateTo) params.append('date_to', dateTo);
-      if (filterBoard) params.append('board_id', filterBoard);
-      if (filterMode) params.append('pricing_mode', filterMode);
-
-      const res = await axios.get(`${API}/reports/sessions?${params}`, {
+      const params = buildReportParams({ preset, dateFrom, dateTo, filterBoard, filterMode });
+      const res = await axios.get(`${API}/reports/sessions?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      setSessions(res.data.sessions);
-      setSummary(res.data.summary);
+      setSessions(res.data.sessions || []);
+      setSummary(res.data.summary || null);
     } catch {
-      toast.error('Fehler beim Laden');
+      toast.error('Report konnte nicht geladen werden');
     } finally {
       setLoading(false);
     }
   }, [token, preset, dateFrom, dateTo, filterBoard, filterMode]);
 
-  useEffect(() => { fetchReport(); }, [fetchReport]);
+  useEffect(() => {
+    fetchReport();
+  }, [fetchReport]);
 
   const exportCSV = () => {
-    const params = new URLSearchParams();
-    if (preset && !dateFrom && !dateTo) params.append('preset', preset);
-    if (dateFrom) params.append('date_from', dateFrom);
-    if (dateTo) params.append('date_to', dateTo);
-    if (filterBoard) params.append('board_id', filterBoard);
-    if (filterMode) params.append('pricing_mode', filterMode);
-    window.open(`${API}/reports/sessions/csv?${params}&token=${token}`, '_blank');
+    const params = buildReportParams({ preset, dateFrom, dateTo, filterBoard, filterMode });
+    window.open(`${API}/reports/sessions/csv?${params.toString()}&token=${token}`, '_blank');
+  };
+
+  const clearFilters = () => {
+    setPreset('month');
+    setDateFrom('');
+    setDateTo('');
+    setFilterBoard('');
+    setFilterMode('');
   };
 
   const presets = [
     { id: 'today', label: 'Heute' },
-    { id: 'week', label: 'Woche' },
-    { id: 'month', label: 'Monat' },
+    { id: 'week', label: '7 Tage' },
+    { id: 'month', label: '30 Tage' },
     { id: '', label: 'Alle' },
   ];
 
-  const formatDate = (iso) => {
-    if (!iso) return '-';
-    return new Date(iso).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-  };
+  const metrics = useMemo(() => {
+    const activeCount = sessions.filter((session) => session.status === 'active').length;
+    const uniqueBoards = new Set(sessions.map((session) => session.board_id || session.board).filter(Boolean)).size;
+    const boardRanking = Object.entries(summary?.revenue_by_board || {})
+      .map(([board, revenue]) => ({ board, revenue: Number(revenue || 0) }))
+      .sort((a, b) => b.revenue - a.revenue);
+
+    return {
+      activeCount,
+      uniqueBoards,
+      topBoard: boardRanking[0] || null,
+      boardRanking,
+    };
+  }, [sessions, summary]);
+
+  const scopeLabel = useMemo(() => {
+    if (dateFrom || dateTo) {
+      if (dateFrom && dateTo) return `${dateFrom} → ${dateTo}`;
+      if (dateFrom) return `ab ${dateFrom}`;
+      return `bis ${dateTo}`;
+    }
+
+    if (preset === 'today') return 'heute';
+    if (preset === 'week') return 'letzte 7 Tage';
+    if (preset === 'month') return 'letzte 30 Tage';
+    return 'gesamter Bestand';
+  }, [preset, dateFrom, dateTo]);
+
+  if (loading && !summary) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="w-8 h-8 text-amber-500 animate-spin" />
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-zinc-100" data-testid="reports-heading">
-          <BarChart3 className="w-6 h-6 inline mr-2 text-amber-500" />
-          Berichte / Abrechnung
-        </h2>
-        <Button
-          data-testid="export-csv-btn"
-          onClick={exportCSV}
-          className="bg-emerald-600 hover:bg-emerald-700 text-white"
-        >
-          <FileDown className="w-4 h-4 mr-2" />
-          CSV Export
-        </Button>
-      </div>
+    <AdminPage
+      eyebrow="Local bookkeeping"
+      title={t('reports')}
+      description="Session-Export und Nacharbeit für den Venue-Betrieb. Die Seite zeigt lokale Session-Daten mit Status und Filtern — kein vollwertiges FiBu-System und kein zentraler Lizenzreport."
+      actions={
+        <div className="flex flex-wrap gap-2">
+          <Button
+            onClick={fetchReport}
+            variant="outline"
+            className="border-zinc-700 text-zinc-300 hover:text-white"
+          >
+            <RefreshCw className="w-4 h-4 mr-2" /> Aktualisieren
+          </Button>
+          <Button
+            data-testid="export-csv-btn"
+            onClick={exportCSV}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white"
+          >
+            <FileDown className="w-4 h-4 mr-2" /> CSV exportieren
+          </Button>
+        </div>
+      }
+    >
+      <AdminStatsGrid>
+        <AdminStatCard
+          icon={Wallet}
+          label="Gebuchter Umsatz"
+          value={formatMoney(summary?.total_revenue || 0)}
+          hint={`Scope: ${scopeLabel}`}
+          tone="emerald"
+        />
+        <AdminStatCard
+          icon={Hash}
+          label="Sessions im Report"
+          value={summary?.session_count || 0}
+          hint="Lokale Session-Einträge nach Filter"
+          tone="amber"
+        />
+        <AdminStatCard
+          icon={BarChart3}
+          label="Ø pro Session"
+          value={formatMoney(summary?.average_per_session || 0)}
+          hint="Rein aus den geladenen Session-Daten berechnet"
+          tone="blue"
+        />
+        <AdminStatCard
+          icon={Target}
+          label="Boards im Scope"
+          value={metrics.uniqueBoards}
+          hint={metrics.topBoard ? `Top Board: ${metrics.topBoard.board}` : 'Kein Board-Umsatz im Filter'}
+          tone="violet"
+        />
+      </AdminStatsGrid>
 
-      {/* Filters */}
-      <Card className="bg-zinc-900 border-zinc-800">
-        <CardContent className="pt-4">
-          <div className="flex flex-wrap items-end gap-3">
+      <div className="grid gap-6 xl:grid-cols-[1.2fr,0.8fr]">
+        <AdminSection
+          title="Filter & Export"
+          description="Preset-Filter für schnelle Nacharbeit oder ein eigener Zeitraum für Tagesabschluss und CSV-Export."
+          actions={
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={clearFilters}
+              className="border-zinc-700 text-zinc-300 hover:text-white"
+            >
+              Filter zurücksetzen
+            </Button>
+          }
+        >
+          <div className="space-y-5">
             <div>
-              <p className="text-xs text-zinc-500 mb-1">Zeitraum</p>
-              <div className="flex gap-1">
-                {presets.map(p => (
+              <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Schnellfenster</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {presets.map((item) => (
                   <Button
-                    key={p.id}
+                    key={item.id || 'all'}
                     size="sm"
-                    variant={preset === p.id ? 'default' : 'outline'}
-                    className={preset === p.id ? 'bg-amber-500 text-black hover:bg-amber-600' : 'border-zinc-700 text-zinc-400'}
-                    onClick={() => { setPreset(p.id); setDateFrom(''); setDateTo(''); }}
-                    data-testid={`preset-${p.id || 'all'}`}
+                    variant={preset === item.id ? 'default' : 'outline'}
+                    onClick={() => {
+                      setPreset(item.id);
+                      setDateFrom('');
+                      setDateTo('');
+                    }}
+                    className={
+                      preset === item.id
+                        ? 'bg-amber-500 text-black hover:bg-amber-400'
+                        : 'border-zinc-700 text-zinc-300 hover:text-white'
+                    }
+                    data-testid={`preset-${item.id || 'all'}`}
                   >
-                    {p.label}
+                    {item.label}
                   </Button>
                 ))}
               </div>
             </div>
-            <div>
-              <p className="text-xs text-zinc-500 mb-1">Von</p>
-              <Input type="date" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPreset(''); }}
-                className="bg-zinc-800 border-zinc-700 text-zinc-200 w-40" data-testid="date-from" />
+
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div>
+                <label className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Von</label>
+                <Input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => {
+                    setDateFrom(e.target.value);
+                    setPreset('');
+                  }}
+                  className="mt-2 bg-zinc-950 border-zinc-800 text-zinc-200"
+                  data-testid="date-from"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Bis</label>
+                <Input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => {
+                    setDateTo(e.target.value);
+                    setPreset('');
+                  }}
+                  className="mt-2 bg-zinc-950 border-zinc-800 text-zinc-200"
+                  data-testid="date-to"
+                />
+              </div>
+              <div>
+                <label className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Board</label>
+                <select
+                  value={filterBoard}
+                  onChange={(e) => setFilterBoard(e.target.value)}
+                  className="mt-2 h-10 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-200"
+                  data-testid="filter-board"
+                >
+                  <option value="">Alle Boards</option>
+                  {boards.map((board) => (
+                    <option key={board.board_id} value={board.board_id}>
+                      {board.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Modus</label>
+                <select
+                  value={filterMode}
+                  onChange={(e) => setFilterMode(e.target.value)}
+                  className="mt-2 h-10 w-full rounded-md border border-zinc-800 bg-zinc-950 px-3 text-sm text-zinc-200"
+                  data-testid="filter-mode"
+                >
+                  <option value="">Alle Modi</option>
+                  <option value="per_game">Pro Spiel</option>
+                  <option value="per_time">Pro Zeit</option>
+                  <option value="per_player">Pro Spieler</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <p className="text-xs text-zinc-500 mb-1">Bis</p>
-              <Input type="date" value={dateTo} onChange={e => { setDateTo(e.target.value); setPreset(''); }}
-                className="bg-zinc-800 border-zinc-700 text-zinc-200 w-40" data-testid="date-to" />
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500 mb-1">Board</p>
-              <select value={filterBoard} onChange={e => setFilterBoard(e.target.value)}
-                className="bg-zinc-800 border border-zinc-700 text-zinc-200 rounded px-2 py-1.5 text-sm" data-testid="filter-board">
-                <option value="">Alle</option>
-                {boards.map(b => <option key={b.board_id} value={b.board_id}>{b.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <p className="text-xs text-zinc-500 mb-1">Modus</p>
-              <select value={filterMode} onChange={e => setFilterMode(e.target.value)}
-                className="bg-zinc-800 border border-zinc-700 text-zinc-200 rounded px-2 py-1.5 text-sm" data-testid="filter-mode">
-                <option value="">Alle</option>
-                <option value="per_game">Pro Spiel</option>
-                <option value="per_time">Pro Zeit</option>
-                <option value="per_player">Pro Spieler</option>
-              </select>
+
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4 text-sm leading-6 text-zinc-400">
+              Diese Oberfläche liest ausschließlich lokale Session-Datensätze. Sie ist gut für Schichtabschluss,
+              CSV-Export und schnelle Rückfragen — aber nicht dafür gedacht, externe Buchhaltung oder zentrale
+              Lizenz-/Fleet-Themen vorzutäuschen.
             </div>
           </div>
-        </CardContent>
-      </Card>
+        </AdminSection>
 
-      {/* Summary Cards */}
-      {summary && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardContent className="pt-4 text-center">
-              <DollarSign className="w-5 h-5 mx-auto text-emerald-400 mb-1" />
-              <p className="text-2xl font-bold text-zinc-100" data-testid="total-revenue">{summary.total_revenue.toFixed(2)} EUR</p>
-              <p className="text-xs text-zinc-500">Umsatz gesamt</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardContent className="pt-4 text-center">
-              <Hash className="w-5 h-5 mx-auto text-blue-400 mb-1" />
-              <p className="text-2xl font-bold text-zinc-100" data-testid="session-count">{summary.session_count}</p>
-              <p className="text-xs text-zinc-500">Sessions</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardContent className="pt-4 text-center">
-              <TrendingUp className="w-5 h-5 mx-auto text-amber-400 mb-1" />
-              <p className="text-2xl font-bold text-zinc-100" data-testid="avg-per-session">{summary.average_per_session.toFixed(2)} EUR</p>
-              <p className="text-xs text-zinc-500">Durchschnitt/Session</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardContent className="pt-4 text-center">
-              <BarChart3 className="w-5 h-5 mx-auto text-purple-400 mb-1" />
-              <div className="text-xs text-zinc-400 space-y-0.5" data-testid="revenue-by-board">
-                {Object.entries(summary.revenue_by_board).map(([name, rev]) => (
-                  <p key={name}>{name}: <span className="text-zinc-200 font-medium">{rev.toFixed(2)}</span></p>
+        <div className="space-y-6">
+          <AdminSection title="Board-Umsatz im Filter" description="Welche Boards im aktuellen Fenster den größten Anteil tragen.">
+            {metrics.boardRanking.length > 0 ? (
+              <div className="space-y-3" data-testid="revenue-by-board">
+                {metrics.boardRanking.slice(0, 6).map((entry, index) => (
+                  <div
+                    key={entry.board}
+                    className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-xs uppercase tracking-[0.22em] text-zinc-600">Platz {index + 1}</p>
+                      <p className="truncate font-medium text-white">{entry.board}</p>
+                    </div>
+                    <AdminStatusPill tone={index === 0 ? 'emerald' : 'neutral'}>
+                      {formatMoney(entry.revenue)}
+                    </AdminStatusPill>
+                  </div>
                 ))}
               </div>
-              <p className="text-xs text-zinc-500 mt-1">Pro Board</p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            ) : (
+              <p className="text-sm text-zinc-500">Noch keine Umsätze im aktuellen Filterfenster.</p>
+            )}
+          </AdminSection>
 
-      {/* Sessions Table */}
-      <Card className="bg-zinc-900 border-zinc-800">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-zinc-300 text-sm flex items-center gap-2">
-            <Filter className="w-4 h-4" />
-            {loading ? 'Laden...' : `${sessions.length} Sessions`}
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm" data-testid="sessions-table">
-              <thead>
-                <tr className="border-b border-zinc-800 text-zinc-500 text-xs">
-                  <th className="text-left py-2 px-2">Datum</th>
-                  <th className="text-left py-2 px-2">Board</th>
-                  <th className="text-left py-2 px-2">Modus</th>
-                  <th className="text-right py-2 px-2">Preis</th>
-                  <th className="text-right py-2 px-2">Credits</th>
-                  <th className="text-left py-2 px-2">Status</th>
-                  <th className="text-left py-2 px-2">Erstellt von</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.slice(0, 100).map((s, i) => (
-                  <tr key={i} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
-                    <td className="py-1.5 px-2 text-zinc-300 text-xs">{formatDate(s.date)}</td>
-                    <td className="py-1.5 px-2 text-zinc-300">{s.board}</td>
-                    <td className="py-1.5 px-2 text-zinc-400 text-xs">{s.pricing_mode}</td>
-                    <td className="py-1.5 px-2 text-right text-zinc-200 font-mono">{s.price_total.toFixed(2)}</td>
-                    <td className="py-1.5 px-2 text-right text-zinc-400 font-mono">{s.credits_total}</td>
-                    <td className="py-1.5 px-2">
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${
-                        s.status === 'finished' ? 'bg-emerald-900/40 text-emerald-400' :
-                        s.status === 'active' ? 'bg-amber-900/40 text-amber-400' :
-                        'bg-zinc-800 text-zinc-400'
-                      }`}>{s.status}</span>
-                    </td>
-                    <td className="py-1.5 px-2 text-zinc-500 text-xs">{s.created_by}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {sessions.length > 100 && (
-              <p className="text-xs text-zinc-500 mt-2">Zeigt 100 von {sessions.length}. CSV Export fuer alle.</p>
+          <AdminSection title="Report-Status" description="Schnelle Einordnung, bevor jemand falsche Schlüsse zieht.">
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+                <span className="text-zinc-400">Offene Sessions im Report</span>
+                <AdminStatusPill tone={metrics.activeCount > 0 ? 'amber' : 'neutral'}>
+                  {metrics.activeCount}
+                </AdminStatusPill>
+              </div>
+              <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+                <span className="text-zinc-400">Datenquelle</span>
+                <AdminStatusPill tone="blue">Lokal</AdminStatusPill>
+              </div>
+              <div className="flex items-center justify-between rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+                <span className="text-zinc-400">CSV enthält</span>
+                <span className="font-medium text-white">alle Treffer, nicht nur die ersten 100</span>
+              </div>
+            </div>
+          </AdminSection>
+        </div>
+      </div>
+
+      <AdminSection
+        title="Session-Liste"
+        description="Die ersten 100 Treffer direkt im Browser. Für Vollständigkeit und Weitergabe ist der CSV-Export der richtige Weg."
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <AdminStatusPill tone="blue">
+              <CalendarRange className="w-3 h-3" /> {scopeLabel}
+            </AdminStatusPill>
+            {loading && (
+              <AdminStatusPill tone="amber">
+                <RefreshCw className="w-3 h-3 animate-spin" /> lädt
+              </AdminStatusPill>
             )}
           </div>
-        </CardContent>
-      </Card>
-    </div>
+        }
+      >
+        {sessions.length === 0 ? (
+          <AdminEmptyState
+            icon={Filter}
+            title="Keine Sessions im aktuellen Filter"
+            description="Entweder gab es in diesem Fenster keine lokalen Verkäufe oder die Filter sind gerade zu eng gesetzt."
+          />
+        ) : (
+          <div className="space-y-4">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm" data-testid="sessions-table">
+                <thead>
+                  <tr className="border-b border-zinc-800 text-left text-[11px] uppercase tracking-[0.22em] text-zinc-500">
+                    <th className="px-3 py-3">Start</th>
+                    <th className="px-3 py-3">Board</th>
+                    <th className="px-3 py-3">Modus</th>
+                    <th className="px-3 py-3 text-right">Preis</th>
+                    <th className="px-3 py-3 text-right">Umfang</th>
+                    <th className="px-3 py-3 text-right">Spieler</th>
+                    <th className="px-3 py-3">Status</th>
+                    <th className="px-3 py-3">Erstellt von</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sessions.slice(0, 100).map((session) => {
+                    const status = STATUS_META[session.status] || {
+                      label: session.status || 'Unbekannt',
+                      tone: 'neutral',
+                    };
+
+                    return (
+                      <tr key={session.session_id} className="border-b border-zinc-900 align-top hover:bg-zinc-900/40">
+                        <td className="px-3 py-3 text-zinc-300">{formatDateTime(session.date)}</td>
+                        <td className="px-3 py-3">
+                          <div>
+                            <p className="font-medium text-white">{session.board}</p>
+                            <p className="text-xs font-mono text-zinc-500">{session.board_id}</p>
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-zinc-400">{MODE_LABELS[session.pricing_mode] || session.pricing_mode}</td>
+                        <td className="px-3 py-3 text-right font-medium text-zinc-100">{formatMoney(session.price_total)}</td>
+                        <td className="px-3 py-3 text-right text-zinc-400">{formatSessionVolume(session)}</td>
+                        <td className="px-3 py-3 text-right text-zinc-400">{session.players_count || '–'}</td>
+                        <td className="px-3 py-3">
+                          <div className="space-y-1">
+                            <AdminStatusPill tone={status.tone}>{status.label}</AdminStatusPill>
+                            {session.ended_reason ? (
+                              <p className="text-xs text-zinc-500">Grund: {session.ended_reason}</p>
+                            ) : null}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 text-zinc-500">{session.created_by || '–'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {sessions.length > 100 && (
+              <p className="text-sm text-zinc-500">
+                Browseransicht zeigt 100 von {sessions.length} Treffern. Der CSV-Export enthält den vollständigen Filterumfang.
+              </p>
+            )}
+          </div>
+        )}
+      </AdminSection>
+    </AdminPage>
   );
 }

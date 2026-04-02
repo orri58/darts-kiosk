@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { toast } from 'sonner';
 import {
@@ -35,6 +35,13 @@ import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/ca
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
+import {
+  AdminPage,
+  AdminSection,
+  AdminStatCard,
+  AdminStatsGrid,
+  AdminStatusPill,
+} from '../../components/admin/AdminShell';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -114,7 +121,7 @@ export default function AdminSystem() {
   const [rebootingOS, setRebootingOS] = useState(false);
   const [shuttingDownOS, setShuttingDownOS] = useState(false);
   const [ensuringDesktop, setEnsuringDesktop] = useState(false);
-  const headers = { Authorization: `Bearer ${token}` };
+  const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const fetchAll = useCallback(async () => {
     try {
@@ -139,13 +146,42 @@ export default function AdminSystem() {
       const adRes = await axios.get(`${API}/admin/system/autodarts-desktop-status`, { headers });
       setAutodartsDesktop(adRes.data);
     } catch { /* ignore — endpoint may not exist on older builds */ }
-  }, [token]);
+  }, [headers]);
 
   useEffect(() => {
     fetchAll();
     const iv = setInterval(fetchAll, 30000);
     return () => clearInterval(iv);
   }, [fetchAll]);
+
+  const fetchDownloads = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/updates/downloads`, { headers });
+      setDownloadedAssets(res.data.assets || []);
+    } catch { /* ignore */ }
+  }, [headers]);
+
+  const fetchAppBackups = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/updates/backups`, { headers });
+      setAppBackups(res.data.backups || []);
+    } catch { /* ignore */ }
+  }, [headers]);
+
+  const fetchUpdateResult = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/updates/result`, { headers });
+      if (res.data.has_result) {
+        setUpdateResult(res.data.result);
+      }
+    } catch { /* ignore */ }
+  }, [headers]);
+
+  useEffect(() => {
+    fetchDownloads();
+    fetchAppBackups();
+    fetchUpdateResult();
+  }, [fetchDownloads, fetchAppBackups, fetchUpdateResult]);
 
   // Poll download progress
   useEffect(() => {
@@ -168,32 +204,7 @@ export default function AdminSystem() {
       }
     }, 1500);
     return () => clearInterval(iv);
-  }, [downloading]);
-
-  const fetchDownloads = async () => {
-    try {
-      const res = await axios.get(`${API}/updates/downloads`, { headers });
-      setDownloadedAssets(res.data.assets || []);
-    } catch { /* ignore */ }
-  };
-
-  const fetchAppBackups = async () => {
-    try {
-      const res = await axios.get(`${API}/updates/backups`, { headers });
-      setAppBackups(res.data.backups || []);
-    } catch { /* ignore */ }
-  };
-
-  const fetchUpdateResult = async () => {
-    try {
-      const res = await axios.get(`${API}/updates/result`, { headers });
-      if (res.data.has_result) {
-        setUpdateResult(res.data.result);
-      }
-    } catch { /* ignore */ }
-  };
-
-  useEffect(() => { fetchDownloads(); fetchAppBackups(); fetchUpdateResult(); }, []);
+  }, [downloading, headers, fetchDownloads]);
 
   const createBackup = async () => {
     setCreating(true);
@@ -530,81 +541,81 @@ export default function AdminSystem() {
   const diskColor = diskPercent > 90 ? 'text-red-400' : diskPercent > 70 ? 'text-amber-400' : 'text-emerald-400';
 
   return (
-    <div data-testid="admin-system">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('system')}</h1>
-          <p className="text-zinc-500">Verwaltung, Backups & Updates</p>
+    <AdminPage
+      eyebrow="Maintenance & recovery"
+      title={t('system')}
+      description="Host-nahe Wartungsfläche für Updates, Backups, Logs und Neustarts. Anders als Health zeigt diese Seite nicht primär Laufzeit-Signale, sondern die Eingriffe und Artefakte, die ein Operator im Problemfall wirklich braucht."
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <AdminStatusPill tone="blue">
+            <Cpu className="w-3 h-3" /> {sysInfo?.mode || 'MASTER'}
+          </AdminStatusPill>
+          <Button onClick={fetchAll} variant="outline" className="border-zinc-700 text-zinc-300 hover:text-white" data-testid="system-refresh-btn">
+            <RefreshCw className="w-4 h-4 mr-2" /> Aktualisieren
+          </Button>
         </div>
-        <Button onClick={fetchAll} variant="outline" className="border-zinc-700 text-zinc-400 hover:text-white" data-testid="system-refresh-btn">
-          <RefreshCw className="w-4 h-4 mr-2" /> Aktualisieren
-        </Button>
-      </div>
+      }
+    >
+      <AdminStatsGrid>
+        <AdminStatCard
+          icon={Info}
+          label="Installierte Version"
+          value={`v${sysInfo?.version || '–'}`}
+          hint={sysInfo?.image_tag ? `Image tag: ${sysInfo.image_tag}` : 'Lokaler Build-Stand'}
+          tone="amber"
+          className="[&_p.truncate]:text-left"
+        />
+        <AdminStatCard
+          icon={Clock}
+          label="Uptime"
+          value={formatUptime(sysInfo?.uptime_seconds || 0)}
+          hint={sysInfo?.start_time ? `Seit ${formatDate(sysInfo.start_time)}` : 'Seit letztem Start'}
+          tone="blue"
+        />
+        <AdminStatCard
+          icon={HardDrive}
+          label="Festplattennutzung"
+          value={`${diskPercent}%`}
+          hint={`${sysInfo?.disk?.free_gb ?? 0} GB frei im Datenlaufwerk`}
+          tone={diskPercent > 90 ? 'red' : diskPercent > 70 ? 'amber' : 'emerald'}
+        />
+        <AdminStatCard
+          icon={Archive}
+          label="Recovery-Artefakte"
+          value={downloadedAssets.length + appBackups.length}
+          hint={`${downloadedAssets.length} Downloads · ${appBackups.length} App-Backups`}
+          tone={downloadedAssets.length + appBackups.length > 0 ? 'violet' : 'neutral'}
+        />
+      </AdminStatsGrid>
 
-      {/* Overview Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-5">
-            <div className="flex items-center gap-3">
-              <Info className="w-6 h-6 text-amber-500 flex-shrink-0" />
-              <div className="min-w-0">
-                <p className="text-xs text-zinc-500 uppercase tracking-wider">Version</p>
-                <p className="text-lg font-mono font-bold text-white truncate" data-testid="system-version">
-                  v{sysInfo?.version} <span className="text-xs text-zinc-500">({sysInfo?.image_tag})</span>
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      <AdminSection
+        title="Wartungslogik dieser Seite"
+        description="Klare Trennung statt UI-Dopplung."
+        actions={
+          <div className="flex flex-wrap gap-2 text-xs">
+            <AdminStatusPill tone="blue">Health = Diagnose</AdminStatusPill>
+            <AdminStatusPill tone="amber">System = Eingriffe</AdminStatusPill>
+          </div>
+        }
+      >
+        <div className="grid gap-3 lg:grid-cols-3 text-sm leading-6 text-zinc-400">
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="font-medium text-white">Updates</p>
+            GitHub-basierter Update-Flow ist optional. Wenn kein Repo konfiguriert ist, bleibt dieser Tab bewusst eine nüchterne Wartungsansicht statt falscher One-click-Magie.
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="font-medium text-white">Backups & Logs</p>
+            Hier liegen die verwaltbaren Artefakte: DB-Backups, App-Backups, Download-Pakete und der exportierbare App-Log-Bundle.
+          </div>
+          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <p className="font-medium text-white">Host-Aktionen</p>
+            Neustarts, Shutdown und Autodarts-Desktop-Steuerung bleiben hier, weil sie bewusst schwerer wiegende Operator-Eingriffe sind.
+          </div>
+        </div>
+      </AdminSection>
 
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-5">
-            <div className="flex items-center gap-3">
-              <Clock className="w-6 h-6 text-blue-500 flex-shrink-0" />
-              <div>
-                <p className="text-xs text-zinc-500 uppercase tracking-wider">Uptime</p>
-                <p className="text-lg font-mono font-bold text-white" data-testid="system-uptime">
-                  {formatUptime(sysInfo?.uptime_seconds || 0)}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-5">
-            <div className="flex items-center gap-3">
-              <HardDrive className={`w-6 h-6 flex-shrink-0 ${diskColor}`} />
-              <div>
-                <p className="text-xs text-zinc-500 uppercase tracking-wider">Festplatte</p>
-                <p className={`text-lg font-mono font-bold ${diskColor}`} data-testid="system-disk">
-                  {diskPercent}%
-                  <span className="text-xs text-zinc-500 ml-1">({sysInfo?.disk?.free_gb} GB frei)</span>
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-zinc-900 border-zinc-800">
-          <CardContent className="p-5">
-            <div className="flex items-center gap-3">
-              <Cpu className="w-6 h-6 text-purple-500 flex-shrink-0" />
-              <div className="min-w-0">
-                <p className="text-xs text-zinc-500 uppercase tracking-wider">Modus</p>
-                <p className="text-lg font-bold text-white uppercase" data-testid="system-mode">
-                  {sysInfo?.mode}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Tabs */}
       <Tabs defaultValue="updates" className="space-y-6">
-        <TabsList className="bg-zinc-900 border border-zinc-800 p-1">
+        <TabsList className="bg-zinc-900 border border-zinc-800 p-1 h-auto flex-wrap">
           <TabsTrigger value="updates" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-updates">
             <ArrowUpCircle className="w-4 h-4 mr-2" /> Updates
           </TabsTrigger>
@@ -615,7 +626,7 @@ export default function AdminSystem() {
             <Terminal className="w-4 h-4 mr-2" /> Logs
           </TabsTrigger>
           <TabsTrigger value="details" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-details">
-            <Server className="w-4 h-4 mr-2" /> Details
+            <Server className="w-4 h-4 mr-2" /> Host & Dienste
           </TabsTrigger>
         </TabsList>
 
@@ -1216,10 +1227,10 @@ export default function AdminSystem() {
         <TabsContent value="logs">
           <Card className="bg-zinc-900 border-zinc-800">
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-white flex items-center gap-2">
-                  <Terminal className="w-5 h-5 text-amber-500" /> Anwendungs-Logs
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-white flex items-center gap-2">
+                    <Terminal className="w-5 h-5 text-amber-500" /> Anwendungs-Logs
+                  </CardTitle>
                 <div className="flex gap-2">
                   <Button onClick={fetchAll} variant="outline" size="sm" className="border-zinc-700 text-zinc-400 hover:text-white">
                     <RefreshCw className="w-3 h-3 mr-1" /> Refresh
@@ -1229,6 +1240,9 @@ export default function AdminSystem() {
                   </Button>
                 </div>
               </div>
+              <p className="text-xs text-zinc-500 mt-2">
+                Zeigt den aktuellen Tail der App-Logs. Das ist bewusst kein vollständiger OS-Journal-Viewer.
+              </p>
             </CardHeader>
             <CardContent>
               <div
@@ -1435,6 +1449,6 @@ export default function AdminSystem() {
           </div>
         </TabsContent>
       </Tabs>
-    </div>
+    </AdminPage>
   );
 }

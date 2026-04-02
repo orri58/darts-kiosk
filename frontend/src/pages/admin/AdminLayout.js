@@ -179,7 +179,7 @@ export default function AdminLayout() {
                                 : item.path === '/admin/revenue'
                                   ? 'Venue-Umsatz und Trends'
                                   : item.path === '/admin/reports'
-                                    ? 'Sessionlisten & CSV'
+                                    ? 'Lokale Session-Reports & CSV'
                                     : item.path === '/admin/settings'
                                       ? 'Branding, Pricing, Triggers'
                                       : item.path === '/admin/leaderboard'
@@ -187,10 +187,10 @@ export default function AdminLayout() {
                                         : item.path === '/admin/users'
                                           ? 'Logins und Rollen'
                                           : item.path === '/admin/discovery'
-                                            ? 'Board-Agent Pairing'
+                                            ? 'LAN-Discovery & Pairing'
                                             : item.path === '/admin/health'
-                                              ? 'Runtime & Prüfstatus'
-                                              : 'Logs, Updates, Backups'}
+                                              ? 'Runtime, Agents & Diagnose'
+                                              : 'Wartung, Updates & Hostzugriff'}
                           </span>
                         </div>
                       </NavLink>
