@@ -135,8 +135,9 @@ Protected behavior:
 Authoritative path: observer callback `_on_game_started()` in `backend/routers/kiosk.py`
 
 What happens:
-- board moves to `in_game`
-- `per_player` sessions charge exactly once at authoritative start-of-play
+- observer match/lobby payloads can override kiosk-entered player count with the authoritative Autodarts player count
+- if `per_player` credits are sufficient, board moves to `in_game` and charges exactly once at authoritative start-of-play
+- if `per_player` credits are insufficient, board moves to `blocked_pending` instead of hard-locking
 - `per_game` and `per_time` sessions do not charge at start
 - a start sound/event is broadcast
 
@@ -187,9 +188,11 @@ Implementation spine:
 
 ### `per_player`
 - unlock seeds credits from player count
-- authoritative start-of-play consumes the whole player count once
+- authoritative start-of-play uses Autodarts-derived player count when available
+- if credits cover that count, the whole resolved player count is consumed once
+- if credits do not cover that count, the board enters `blocked_pending` and waits for staff top-up instead of locking
+- once topped up, the pending gate resolves exactly once and play continues
 - finish does not add a second charge
-- practical effect: one paid match for the registered player count unless extended/unlocked again
 
 ### `per_time`
 - no credit deduction per match

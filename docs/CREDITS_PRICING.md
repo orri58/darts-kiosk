@@ -62,14 +62,18 @@ That preserves the existing `Session` schema without inventing a separate partic
 `per_player` is billed on **authoritative start-of-play**, not on finish.
 
 Resolved player count is:
-1. non-empty `len(session.players)` if player names exist
-2. else `session.players_count`
-3. else fallback `1`
+1. Autodarts-derived player list/count from observer match/lobby payloads when available
+2. else non-empty `len(session.players)` if player names exist
+3. else `session.players_count`
+4. else fallback `1`
 
 ### Guarantees
 - repeated start signals do not double-charge
+- insufficient credits at authoritative start do not hard-lock the board; they move it into `blocked_pending`
+- staff top-up resolves the pending gate and charges exactly once when capacity becomes sufficient
 - finish does not add a second charge
 - abort before authoritative start does not charge
+- abort while still `blocked_pending` does not charge and returns to ready/unlocked state
 - abort after a charged start does not add another charge
 
 ### Why it works better

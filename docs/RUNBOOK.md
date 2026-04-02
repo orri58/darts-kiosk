@@ -118,10 +118,14 @@ If unlock fails, check:
 Expected:
 1. session already exists
 2. observer sees authoritative gameplay start
-3. board becomes `in_game`
-4. `per_player` capacity charges once here
+3. Autodarts-derived player count is captured from match/lobby payloads when available
+4. if `per_player` credits are sufficient, board becomes `in_game` and charges once here
+5. if credits are short, board enters `blocked_pending` and kiosk shows a fullscreen top-up overlay until staff adds enough credits
 
-If `per_player` sessions look wrong, check whether the operator-entered player count/names match what was intended.
+If `per_player` sessions look wrong, check:
+- whether observer payloads actually exposed the player list/count
+- whether `players_count` on the active session was updated to the authoritative Autodarts value
+- whether the board is intentionally sitting in `blocked_pending` waiting for a top-up
 
 ## 5.3 Finish-of-play flow
 Expected:
@@ -226,6 +230,8 @@ Check:
 
 Remember:
 - `per_player` charges at authoritative start, not finish
+- `blocked_pending` means the match really started, but the current session balance is short for the authoritative player count
+- topping up a `blocked_pending` session should immediately clear the overlay and resume play without double-charging
 - `per_game` charges at authoritative finish/manual end
 - `per_time` uses `expires_at`, not credit deduction
 
