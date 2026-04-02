@@ -263,6 +263,7 @@ class AutodartsObserver:
         # Per-game tracking
         self._credit_consumed = False
         self._authoritative_start_emitted = False
+        self._last_started_match_id: Optional[str] = None
 
         # Trigger policy (configurable, defaults loaded locally)
         self._trigger_policy = build_trigger_policy()
@@ -682,6 +683,7 @@ class AutodartsObserver:
         self._exit_saw_finished = False
         self._credit_consumed = False
         self._authoritative_start_emitted = False
+        self._last_started_match_id = None
         self._ws_state = WSEventState()
         self._ws_frames.clear()
 
@@ -1820,6 +1822,7 @@ class AutodartsObserver:
                     self._credit_consumed = False
                     self._abort_detected = False
                     self._authoritative_start_emitted = False
+                    self._last_started_match_id = None
                     self._exit_polls = 0
                     self._exit_saw_finished = False
                     self._ws_state.reset()
@@ -1856,6 +1859,7 @@ class AutodartsObserver:
                             self._finalize_dispatching = False
                             self._credit_consumed = False
                             self._authoritative_start_emitted = False
+                            self._last_started_match_id = None
                             self._exit_polls = 0
                             self._exit_saw_finished = False
                             self._ws_state.reset()
@@ -1898,8 +1902,14 @@ class AutodartsObserver:
                 # ── PRIMARY: WS event state (already accumulated) ──
                 event_state = self._read_ws_event_state()
 
-                if event_state == ObserverState.IN_GAME and self._start_is_authoritative() and not self._authoritative_start_emitted:
+                current_match_id = self._ws_state.last_match_id
+                should_emit_start = (
+                    not self._authoritative_start_emitted
+                    or (current_match_id and current_match_id != self._last_started_match_id)
+                )
+                if event_state == ObserverState.IN_GAME and self._start_is_authoritative() and should_emit_start:
                     self._authoritative_start_emitted = True
+                    self._last_started_match_id = current_match_id
                     self._credit_consumed = True
                     self._finalized = False
                     self._abort_detected = False
@@ -2019,6 +2029,7 @@ class AutodartsObserver:
                     self._credit_consumed = False
                     self._abort_detected = False
                     self._authoritative_start_emitted = False
+                    self._last_started_match_id = None
                     self._exit_polls = 0
                     self._exit_saw_finished = False
                     self._ws_state.reset()
