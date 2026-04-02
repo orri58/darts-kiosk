@@ -53,6 +53,9 @@ def resolve_players_count(session: Any) -> int:
 
 def initial_credit_seed(pricing_mode: str, credits: int | None, players_count: int | None) -> tuple[int, int]:
     if pricing_mode == PricingMode.PER_PLAYER.value:
+        if credits is not None:
+            units = max(0, int(credits or 0))
+            return units, units
         units = max(1, int(players_count or 1))
         return units, units
     units = max(0, int(credits or 0))

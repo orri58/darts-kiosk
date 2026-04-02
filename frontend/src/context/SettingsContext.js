@@ -16,7 +16,7 @@ export function SettingsProvider({ children }) {
   });
   
   const [pricing, setPricing] = useState({
-    mode: 'per_game',
+    mode: 'per_player',
     per_game: { price_per_credit: 2.0, default_credits: 3, currency: 'EUR' },
     per_time: { price_per_30_min: 5.0, price_per_60_min: 8.0, currency: 'EUR' },
     per_player: { price_per_player: 1.5, currency: 'EUR' },
@@ -33,9 +33,10 @@ export function SettingsProvider({ children }) {
     game_running: 'SPIEL LÄUFT',
     game_finished: 'SPIEL BEENDET',
     call_staff: 'Personal rufen',
-    credits_label: 'Spiele übrig',
+    credits_label: 'Credits verfügbar',
     time_label: 'Zeit übrig',
     staff_hint: '',
+    upsell_message: 'Credits an der Theke nachladen',
   });
   const [pwaConfig, setPwaConfig] = useState({
     app_name: 'Darts Kiosk',

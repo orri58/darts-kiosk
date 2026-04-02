@@ -27,9 +27,9 @@ import {
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const MODE_LABELS = {
-  per_game: 'Pro Spiel',
-  per_time: 'Pro Zeit',
-  per_player: 'Pro Spieler',
+  per_game: 'Spielbasiert (Legacy)',
+  per_time: 'Zeitbasiert (Legacy)',
+  per_player: 'Credits / Matchstart',
 };
 
 const STATUS_META = {
@@ -334,9 +334,9 @@ export default function Reports() {
                   data-testid="filter-mode"
                 >
                   <option value="">Alle Modi</option>
-                  <option value="per_game">Pro Spiel</option>
-                  <option value="per_time">Pro Zeit</option>
-                  <option value="per_player">Pro Spieler</option>
+                  <option value="per_player">Credits / Matchstart</option>
+                  <option value="per_game">Spielbasiert (Legacy)</option>
+                  <option value="per_time">Zeitbasiert (Legacy)</option>
                 </select>
               </div>
             </div>

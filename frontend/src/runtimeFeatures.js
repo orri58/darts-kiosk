@@ -8,4 +8,4 @@ function envFlag(name, fallback = false) {
 
 export const PORTAL_SURFACE_ENABLED = envFlag('REACT_APP_ENABLE_PORTAL_SURFACE', false);
 export const CALL_STAFF_ENABLED = envFlag('REACT_APP_ENABLE_CALL_STAFF', false);
-export const LOCAL_CORE_PRICING_MODES = ['per_game', 'per_time'];
+export const LOCAL_CORE_PRICING_MODES = ['per_player', 'per_game', 'per_time'];

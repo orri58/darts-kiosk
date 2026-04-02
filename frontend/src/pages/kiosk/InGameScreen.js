@@ -39,6 +39,8 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
   };
 
   const dangerTime = timeLeft?.minutes < 5;
+  const isTimeMode = session?.pricing_mode === 'per_time';
+  const isCreditsMode = !isTimeMode;
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-zinc-950" data-testid="in-game-screen">
@@ -84,13 +86,17 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
                 </div>
               </div>
 
-              {session?.pricing_mode === 'per_game' ? (
+              {isCreditsMode ? (
                 <div className="rounded-3xl border border-amber-500/30 bg-amber-500/10 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
                   <div className="flex items-center gap-2 text-sm text-amber-100/70">
-                    <Coins className="h-4 w-4 text-amber-400" /> {kioskTexts.credits_label || 'Spiele übrig'}
+                    <Coins className="h-4 w-4 text-amber-400" /> {kioskTexts.credits_label || 'Credits verfügbar'}
                   </div>
                   <p className="mt-4 text-5xl font-semibold text-white" data-testid="credits-remaining">{session?.credits_remaining || 0}</p>
-                  <p className="mt-2 text-sm text-amber-100/70">von {session?.credits_total || 0} gekauft</p>
+                  <p className="mt-2 text-sm text-amber-100/70">
+                    {session?.pricing_mode === 'per_player'
+                      ? 'Matchstarts ziehen später je nach echter Spielerzahl Credits ab'
+                      : `von ${session?.credits_total || 0} gekauft`}
+                  </p>
                 </div>
               ) : (
                 <div className={`rounded-3xl border p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)] ${dangerTime ? 'border-red-500/30 bg-red-500/10' : 'border-amber-500/30 bg-amber-500/10'}`}>
@@ -106,7 +112,7 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
                 <div className="flex items-center gap-2 text-sm text-zinc-500">
                   <Wallet className="h-4 w-4 text-zinc-400" /> Tarif
                 </div>
-                <p className="mt-4 text-3xl font-semibold text-white">{session?.pricing_mode === 'per_game' ? `${session?.credits_total || 0} Credits` : `${session?.minutes_total || 0} min`}</p>
+                <p className="mt-4 text-3xl font-semibold text-white">{isTimeMode ? `${session?.minutes_total || 0} min` : `${session?.credits_total || 0} Credits`}</p>
                 <p className="mt-2 text-lg text-zinc-400">{session?.price_total?.toFixed(2)} €</p>
               </div>
             </div>

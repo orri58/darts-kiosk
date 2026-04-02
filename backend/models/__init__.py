@@ -293,7 +293,7 @@ DEFAULT_PALETTES = [
 ]
 
 DEFAULT_PRICING = {
-    "mode": "per_game",
+    "mode": "per_player",
     "per_game": {
         "price_per_credit": 2.0,
         "default_credits": 3,

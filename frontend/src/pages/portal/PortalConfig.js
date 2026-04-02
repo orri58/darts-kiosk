@@ -115,17 +115,11 @@ const TABS = [
 
 // ─── Tab Content Renderers ──────────────────────────────────
 function PricingTab({ data, set, disabled }) {
-  const mode = getN(data, 'pricing.mode') || 'per_game';
   return (
     <div data-testid="config-section-pricing">
-      <Field label="Preismodell" hint="Wie wird abgerechnet?">
-        <SelectInput value={mode} onChange={v => set('pricing.mode', v)} disabled={disabled} testId="cfg-pricing-mode"
-          options={[
-            { value: 'per_game', label: 'Pro Spiel' },
-            { value: 'per_time', label: 'Pro Zeit' },
-            { value: 'per_credit', label: 'Pro Credit' },
-          ]} />
-      </Field>
+      <div className="mb-4 rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm leading-6 text-zinc-400">
+        Aktive Produktoberfläche: credits-only Unlock. Credits werden geladen, die tatsächliche Abbuchung folgt erst beim autoritativen Matchstart.
+      </div>
       <Field label="Preis pro Credit" hint="Einzelpreis in EUR">
         <NumberInput value={getN(data, 'pricing.per_game.price_per_credit')} onChange={v => set('pricing.per_game.price_per_credit', v)}
           step={0.5} min={0} disabled={disabled} testId="cfg-pricing-price" suffix="EUR" />
@@ -133,10 +127,6 @@ function PricingTab({ data, set, disabled }) {
       <Field label="Standard-Credits" hint="Anzahl Credits beim Start">
         <NumberInput value={getN(data, 'pricing.per_game.default_credits')} onChange={v => set('pricing.per_game.default_credits', v)}
           step={1} min={1} disabled={disabled} testId="cfg-pricing-credits" />
-      </Field>
-      <Field label="Mindestbetrag" hint="Minimaler Einwurf">
-        <NumberInput value={getN(data, 'pricing.min_amount')} onChange={v => set('pricing.min_amount', v)}
-          step={0.5} min={0} disabled={disabled} testId="cfg-pricing-min" suffix="EUR" />
       </Field>
     </div>
   );
@@ -308,7 +298,7 @@ function EffectiveSummary({ config }) {
   const c = config;
   const sections = [
     { label: 'Preise', items: [
-      { k: 'Modell', v: c.pricing?.mode === 'per_game' ? 'Pro Spiel' : c.pricing?.mode === 'per_time' ? 'Pro Zeit' : c.pricing?.mode || '—' },
+      { k: 'Modell', v: 'Credits / Matchstart' },
       { k: 'Preis/Credit', v: c.pricing?.per_game?.price_per_credit != null ? `${c.pricing.per_game.price_per_credit} EUR` : '—' },
       { k: 'Credits', v: c.pricing?.per_game?.default_credits ?? '—' },
     ]},
@@ -400,7 +390,7 @@ function fmtDiffVal(val, key) {
   if (typeof val === 'string' && /^#[0-9a-fA-F]{6}$/i.test(val))
     return { text: val, isColor: true, hex: val };
   if (key === 'pricing.mode') {
-    const m = { per_game: 'Pro Spiel', per_time: 'Pro Zeit', per_credit: 'Pro Credit' };
+    const m = { per_player: 'Credits / Matchstart', per_game: 'Pro Spiel (Legacy)', per_time: 'Pro Zeit (Legacy)', per_credit: 'Pro Credit' };
     return { text: m[val] || String(val), isColor: false };
   }
   if (key === 'language.default')

@@ -66,11 +66,11 @@ class BoardResponse(BaseModel):
     created_at: datetime
 
 class UnlockRequest(BaseModel):
-    pricing_mode: str = "per_game"
+    pricing_mode: str = "per_player"
     game_type: Optional[str] = None
     credits: Optional[int] = None
     minutes: Optional[int] = None
-    players_count: int = 1
+    players_count: int = 0
     price_total: float = 0.0
 
 class ExtendRequest(BaseModel):

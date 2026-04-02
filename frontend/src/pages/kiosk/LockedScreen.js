@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Crown, Euro, Lock, QrCode, Shield, ShieldCheck, Target, Trophy, WalletCards } from 'lucide-react';
+import { Crown, Lock, QrCode, Shield, ShieldCheck, Target, Trophy, Users, WalletCards } from 'lucide-react';
 import { useI18n } from '../../context/I18nContext';
 import { useSettings } from '../../context/SettingsContext';
 import { QRCodeSVG } from 'qrcode.react';
@@ -291,26 +291,26 @@ export default function LockedScreen({ branding, pricing, boardId }) {
               <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
                 <div className="flex items-center gap-2 text-sm text-zinc-500">
                   <WalletCards className="h-4 w-4 text-amber-400" />
-                  {t('per_game')}
+                  Credits
                 </div>
                 <p className="mt-4 text-3xl font-semibold text-white">{formatPrice(pricing.per_game?.price_per_credit || 2.0)}</p>
-                <p className="mt-2 text-sm text-zinc-500">Direkter Credit-Verkauf</p>
+                <p className="mt-2 text-sm text-zinc-500">Preis pro Credit am Board</p>
               </div>
               <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
                 <div className="flex items-center gap-2 text-sm text-zinc-500">
-                  <Euro className="h-4 w-4 text-amber-400" />
-                  {t('per_30_min')}
+                  <Users className="h-4 w-4 text-amber-400" />
+                  Matchstart
                 </div>
-                <p className="mt-4 text-3xl font-semibold text-white">{formatPrice(pricing.per_time?.price_per_30_min || 5.0)}</p>
-                <p className="mt-2 text-sm text-zinc-500">Kurzsession / Warm-up</p>
+                <p className="mt-4 text-3xl font-semibold text-white">1 Credit / Spieler</p>
+                <p className="mt-2 text-sm text-zinc-500">Die echte Abbuchung passiert erst beim echten Match.</p>
               </div>
               <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
                 <div className="flex items-center gap-2 text-sm text-zinc-500">
-                  <Euro className="h-4 w-4 text-amber-400" />
-                  {t('per_60_min')}
+                  <Target className="h-4 w-4 text-amber-400" />
+                  Freischaltung
                 </div>
-                <p className="mt-4 text-3xl font-semibold text-white">{formatPrice(pricing.per_time?.price_per_60_min || 8.0)}</p>
-                <p className="mt-2 text-sm text-zinc-500">Längere freie Spielphase</p>
+                <p className="mt-4 text-3xl font-semibold text-white">{pricing.per_game?.default_credits || 3} Credits</p>
+                <p className="mt-2 text-sm text-zinc-500">Typischer Startwert, Nachladen jederzeit an der Theke.</p>
               </div>
             </div>
           </div>

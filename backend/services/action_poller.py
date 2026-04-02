@@ -462,24 +462,26 @@ class ActionPoller:
             return False, f"License check failed (fail-closed): {e}"
 
         # Resolve pricing from params or local defaults
-        pricing_mode = (params.get("pricing_mode") or PricingMode.PER_GAME.value) if params else PricingMode.PER_GAME.value
+        pricing_mode = (params.get("pricing_mode") or PricingMode.PER_PLAYER.value) if params else PricingMode.PER_PLAYER.value
         game_type = (params.get("game_type") or "501") if params else "501"
         credits = (params.get("credits") or 3) if params else 3
         minutes = (params.get("minutes") or 0) if params else 0
         price_total = (params.get("price_total") or 0) if params else 0
-        players_count = (params.get("players_count") or 2) if params else 2
+        players_count = (params.get("players_count") or 0) if params else 0
 
         # Try to read defaults from local settings
         try:
             defaults = await get_or_create_setting(db, "pricing", {})
             if not params or not params.get("pricing_mode"):
                 pricing_mode = defaults.get("mode", pricing_mode)
-                if pricing_mode == PricingMode.PER_GAME.value:
-                    credits = defaults.get("per_game", {}).get("credits", credits)
-                    price_total = defaults.get("per_game", {}).get("price", price_total)
+                if pricing_mode in (PricingMode.PER_GAME.value, PricingMode.PER_PLAYER.value):
+                    credits = defaults.get("per_game", {}).get("default_credits", credits)
+                    if not price_total:
+                        price_total = credits * float(defaults.get("per_game", {}).get("price_per_credit", 0) or 0)
                 elif pricing_mode == PricingMode.PER_TIME.value:
                     minutes = defaults.get("per_time", {}).get("minutes", minutes)
-                    price_total = defaults.get("per_time", {}).get("price", price_total)
+                    if not price_total:
+                        price_total = defaults.get("per_time", {}).get("price", price_total)
         except Exception:
             pass
 
@@ -501,8 +503,9 @@ class ActionPoller:
             credits_total=credits_total,
             credits_remaining=credits_remaining,
             minutes_total=minutes,
+            price_per_unit=(float(price_total) / float(credits_total)) if credits_total and price_total else 0.0,
             price_total=price_total,
-            players_count=players_count,
+            players_count=max(0, int(players_count or 0)) if pricing_mode == PricingMode.PER_PLAYER.value else max(1, int(players_count or 1)),
             expires_at=expires_at,
             status=SessionStatus.ACTIVE.value,
         )

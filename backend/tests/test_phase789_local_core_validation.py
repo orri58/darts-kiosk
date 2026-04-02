@@ -162,13 +162,13 @@ async def _create_session(env, *, pricing_mode: str, status: str = SessionStatus
 
 
 @pytest.mark.asyncio
-async def test_unlock_board_creates_active_session_and_unlocked_board(isolated_local_core_env):
+async def test_unlock_board_creates_credit_seeded_per_player_session_without_player_prompt(isolated_local_core_env):
     response = await _unlock_board(
         isolated_local_core_env,
-        pricing_mode=PricingMode.PER_GAME.value,
-        credits=2,
-        players_count=2,
-        price_total=6.0,
+        pricing_mode=PricingMode.PER_PLAYER.value,
+        credits=5,
+        players_count=0,
+        price_total=10.0,
     )
 
     board = await _load_board(isolated_local_core_env)
@@ -177,11 +177,11 @@ async def test_unlock_board_creates_active_session_and_unlocked_board(isolated_l
     assert response.status == SessionStatus.ACTIVE.value
     assert board.status == BoardStatus.UNLOCKED.value
     assert session is not None
-    assert session.pricing_mode == PricingMode.PER_GAME.value
-    assert session.credits_total == 2
-    assert session.credits_remaining == 2
-    assert session.players_count == 2
-    assert session.price_total == 6.0
+    assert session.pricing_mode == PricingMode.PER_PLAYER.value
+    assert session.credits_total == 5
+    assert session.credits_remaining == 5
+    assert session.players_count == 0
+    assert session.price_total == 10.0
 
 
 @pytest.mark.asyncio
@@ -216,9 +216,9 @@ async def test_lock_board_cancels_active_session_and_stops_local_play(isolated_l
 async def test_start_game_records_players_for_current_session(isolated_local_core_env):
     await _unlock_board(
         isolated_local_core_env,
-        pricing_mode=PricingMode.PER_GAME.value,
+        pricing_mode=PricingMode.PER_PLAYER.value,
         credits=2,
-        players_count=2,
+        players_count=0,
         price_total=4.0,
     )
 
@@ -236,6 +236,36 @@ async def test_start_game_records_players_for_current_session(isolated_local_cor
     assert session.game_type == "Cricket"
     assert session.players == ["Alice", "Bob"]
     assert session.players_count == 2
+
+
+@pytest.mark.asyncio
+async def test_credit_seeded_unlock_charges_actual_players_on_authoritative_start(isolated_local_core_env):
+    await _unlock_board(
+        isolated_local_core_env,
+        pricing_mode=PricingMode.PER_PLAYER.value,
+        credits=5,
+        players_count=0,
+        price_total=10.0,
+    )
+
+    async with isolated_local_core_env.session_factory() as db:
+        await kiosk_router.kiosk_start_game(
+            isolated_local_core_env.board.board_id,
+            StartGameRequest(game_type="501", players=["Alice", "Bob", "Cara"]),
+            db=db,
+        )
+        await db.commit()
+
+    await kiosk_router._on_game_started(isolated_local_core_env.board.board_id, "match_start_turn_start")
+
+    board = await _load_board(isolated_local_core_env)
+    session = await _load_active_session(isolated_local_core_env)
+
+    assert board.status == BoardStatus.IN_GAME.value
+    assert session is not None
+    assert session.players_count == 3
+    assert session.credits_total == 5
+    assert session.credits_remaining == 2
 
 
 @pytest.mark.asyncio

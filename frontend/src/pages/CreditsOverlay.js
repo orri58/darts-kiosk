@@ -257,7 +257,7 @@ export default function CreditsOverlay() {
                 letterSpacing: 1.5,
                 marginBottom: 2,
               }}>
-                Spiele übrig
+                Credits verfügbar
               </div>
               <div style={{
                 fontSize: 22,

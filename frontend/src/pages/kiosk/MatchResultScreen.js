@@ -79,8 +79,16 @@ export default function MatchResultScreen({ branding, matchToken, session, onTim
                 <div className="flex items-center gap-2 text-sm text-zinc-500">
                   <Wallet className="h-4 w-4 text-zinc-400" /> Session
                 </div>
-                <p className="mt-4 text-3xl font-semibold text-white">{session?.pricing_mode === 'per_time' ? `${session?.minutes_total || 0} min` : `${session?.credits_total || 0} Credits`}</p>
-                <p className="mt-2 text-lg text-zinc-400">{session?.price_total?.toFixed(2)} €</p>
+                <p className="mt-4 text-3xl font-semibold text-white">
+                  {session?.pricing_mode === 'per_time'
+                    ? `${session?.minutes_total || 0} min`
+                    : `${session?.credits_remaining ?? 0} Credits übrig`}
+                </p>
+                <p className="mt-2 text-lg text-zinc-400">
+                  {session?.pricing_mode === 'per_time'
+                    ? `${session?.price_total?.toFixed(2)} €`
+                    : `von ${session?.credits_total || 0} freigeschaltet`}
+                </p>
               </div>
             </div>
           </div>

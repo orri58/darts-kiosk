@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   ArrowUpCircle,
   BellOff,
-  Clock3,
   ExternalLink,
   FileText,
   Lock,
@@ -57,23 +56,33 @@ const STATUS_STYLES = {
 
 function formatRemaining(session, boardStatus) {
   if (!session) return 'Keine aktive Session';
-  if (session.pricing_mode === 'per_game') {
-    return `${session.credits_remaining} / ${session.credits_total} Spiele übrig`;
-  }
   if (session.pricing_mode === 'per_player') {
     const requiredPlayers = session.players_count || session.players?.length || 1;
     const shortage = Math.max(0, requiredPlayers - (session.credits_remaining || 0));
     if (boardStatus === 'blocked_pending') {
       return `${session.credits_remaining} Credits da, ${shortage} fehlen für ${requiredPlayers} Spieler`;
     }
-    return `${session.credits_remaining} Credits Rest · ${requiredPlayers} Spieler im Match`;
+    if (requiredPlayers > 0) {
+      return `${session.credits_remaining} Credits verfügbar · letzter Match mit ${requiredPlayers} Spielern`;
+    }
+    return `${session.credits_remaining} Credits verfügbar · Abrechnung erst beim echten Matchstart`;
   }
   if (session.pricing_mode === 'per_time' && session.expires_at) {
     const diffMs = Math.max(0, new Date(session.expires_at).getTime() - Date.now());
     const minutes = Math.ceil(diffMs / 60000);
     return `${minutes} min Restzeit`;
   }
+  if (session.pricing_mode === 'per_game') {
+    return `${session.credits_remaining} / ${session.credits_total} Spiel-Credits übrig (Legacy)`;
+  }
   return 'Aktive Session';
+}
+
+function formatSessionMode(session) {
+  if (!session) return 'Keine aktive Session';
+  if (session.pricing_mode === 'per_time') return 'Zeitbasiert (Legacy)';
+  if (session.pricing_mode === 'per_game') return 'Spielbasiert (Legacy)';
+  return 'Credits-basiert';
 }
 
 export default function AdminDashboard() {
@@ -91,10 +100,8 @@ export default function AdminDashboard() {
   const [updateNotification, setUpdateNotification] = useState(null);
   const [showChangelog, setShowChangelog] = useState(false);
 
-  const [unlockMode, setUnlockMode] = useState('per_game');
   const [unlockCredits, setUnlockCredits] = useState(3);
   const [unlockMinutes, setUnlockMinutes] = useState(30);
-  const [unlockPlayers, setUnlockPlayers] = useState(2);
 
   const fetchBoards = useCallback(async () => {
     try {
@@ -209,15 +216,7 @@ export default function AdminDashboard() {
   };
 
   const calculatePrice = () => {
-    if (unlockMode === 'per_game') {
-      return unlockCredits * (pricing?.per_game?.price_per_credit || 2.0);
-    }
-    if (unlockMode === 'per_time') {
-      if (unlockMinutes === 30) return pricing?.per_time?.price_per_30_min || 5.0;
-      if (unlockMinutes === 60) return pricing?.per_time?.price_per_60_min || 8.0;
-      return (unlockMinutes / 30) * (pricing?.per_time?.price_per_30_min || 5.0);
-    }
-    return 0;
+    return unlockCredits * (pricing?.per_game?.price_per_credit || 2.0);
   };
 
   const handleUnlock = async () => {
@@ -227,10 +226,9 @@ export default function AdminDashboard() {
       await axios.post(
         `${API}/boards/${selectedBoard.board_id}/unlock`,
         {
-          pricing_mode: unlockMode,
-          credits: unlockMode === 'per_game' ? unlockCredits : null,
-          minutes: unlockMode === 'per_time' ? unlockMinutes : null,
-          players_count: unlockPlayers,
+          pricing_mode: 'per_player',
+          credits: unlockCredits,
+          players_count: 0,
           price_total: calculatePrice(),
         },
         { headers: { Authorization: `Bearer ${token}` } }
@@ -260,11 +258,13 @@ export default function AdminDashboard() {
     if (!selectedBoard) return;
 
     try {
+      const session = boardDetails[selectedBoard.board_id];
+      const extendTime = session?.pricing_mode === 'per_time';
       await axios.post(
         `${API}/boards/${selectedBoard.board_id}/extend`,
         {
-          credits: unlockMode === 'per_game' ? unlockCredits : null,
-          minutes: unlockMode === 'per_time' ? unlockMinutes : null,
+          credits: extendTime ? null : unlockCredits,
+          minutes: extendTime ? unlockMinutes : null,
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -278,17 +278,13 @@ export default function AdminDashboard() {
 
   const openUnlockDialog = (board) => {
     setSelectedBoard(board);
-    setUnlockMode(pricing?.mode === 'per_time' ? 'per_time' : 'per_game');
     setUnlockCredits(pricing?.per_game?.default_credits || 3);
-    setUnlockMinutes(30);
-    setUnlockPlayers(2);
     setShowUnlockDialog(true);
   };
 
   const openExtendDialog = (board) => {
     const session = boardDetails[board.board_id];
     setSelectedBoard(board);
-    setUnlockMode(session?.pricing_mode === 'per_time' ? 'per_time' : 'per_game');
     setUnlockCredits(1);
     setUnlockMinutes(15);
     setShowExtendDialog(true);
@@ -431,7 +427,7 @@ export default function AdminDashboard() {
                           </div>
                           <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-3 py-2">
                             <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-600">Session-Kontext</p>
-                            <p className="mt-1 text-zinc-200">{session ? (session.pricing_mode === 'per_time' ? 'Zeitbasiert' : session.pricing_mode === 'per_player' ? 'Spielerbasiert' : 'Spielbasiert') : 'Keine aktive Session'}</p>
+                            <p className="mt-1 text-zinc-200">{formatSessionMode(session)}</p>
                             <p className="text-xs text-zinc-500 mt-1">{formatRemaining(session, board.status)}</p>
                           </div>
                         </div>
@@ -508,47 +504,25 @@ export default function AdminDashboard() {
           </DialogHeader>
 
           <div className="space-y-6 py-4">
-            <div className="grid gap-3 md:grid-cols-2">
-              <button
-                type="button"
-                onClick={() => setUnlockMode('per_game')}
-                data-testid="mode-per-game"
-                className={`rounded-2xl border p-4 text-left transition ${unlockMode === 'per_game' ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:border-zinc-700'}`}
-              >
-                <p className="font-medium">Pro Spiel</p>
-                <p className="mt-1 text-sm text-zinc-500">Direkt für Credits / Spiele verkaufen.</p>
-              </button>
-              <button
-                type="button"
-                onClick={() => setUnlockMode('per_time')}
-                data-testid="mode-per-time"
-                className={`rounded-2xl border p-4 text-left transition ${unlockMode === 'per_time' ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-zinc-800 bg-zinc-900/60 text-zinc-400 hover:border-zinc-700'}`}
-              >
-                <p className="font-medium">Pro Zeit</p>
-                <p className="mt-1 text-sm text-zinc-500">Sinnvoll für offene Spielphasen mit Timer.</p>
-              </button>
+            <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4 text-sm leading-6 text-zinc-400">
+              Freischalten ist jetzt bewusst credits-only: Der Operator lädt nur Credits auf und öffnet das Board.
+              Die echte Abbuchung passiert erst beim autoritativen Matchstart anhand der tatsächlich erkannten Spielerzahl.
             </div>
 
             <div className="grid gap-4 md:grid-cols-3">
-              {unlockMode === 'per_game' ? (
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-                  <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Spiele</label>
-                  <Input type="number" min="1" value={unlockCredits} onChange={(e) => setUnlockCredits(parseInt(e.target.value || '1', 10))} data-testid="credits-input" className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-                  <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Minuten</label>
-                  <Input type="number" min="15" step="15" value={unlockMinutes} onChange={(e) => setUnlockMinutes(parseInt(e.target.value || '15', 10))} className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
-                </div>
-              )}
               <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-                <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Spielerzahl</label>
-                <Input type="number" min="1" max="8" value={unlockPlayers} onChange={(e) => setUnlockPlayers(parseInt(e.target.value || '1', 10))} data-testid="players-input" className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
+                <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Credits</label>
+                <Input type="number" min="1" value={unlockCredits} onChange={(e) => setUnlockCredits(parseInt(e.target.value || '1', 10))} data-testid="credits-input" className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
+              </div>
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+                <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Tarif</label>
+                <p className="mt-3 text-3xl font-semibold text-white">{(pricing?.per_game?.price_per_credit || 2).toFixed(2)} € / Credit</p>
+                <p className="mt-1 text-sm text-zinc-500">1 Spieler im echten Match = 1 Credit Abbuchung.</p>
               </div>
               <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4">
                 <label className="text-xs uppercase tracking-[0.24em] text-amber-300">Gesamtpreis</label>
                 <p className="mt-3 text-3xl font-semibold text-white" data-testid="total-price">{calculatePrice().toFixed(2)} €</p>
-                <p className="mt-1 text-sm text-amber-100/70">Direkt aus lokalem Pricing abgeleitet.</p>
+                <p className="mt-1 text-sm text-amber-100/70">Direkt aus dem lokalen Credit-Tarif abgeleitet.</p>
               </div>
             </div>
           </div>
@@ -564,30 +538,32 @@ export default function AdminDashboard() {
         <DialogContent className="bg-zinc-950 border-zinc-800 text-white sm:max-w-xl">
           <DialogHeader>
             <DialogTitle className="font-heading uppercase tracking-[0.12em] text-white">
-              Session verlängern · {selectedBoard?.name}
+              {boardDetails[selectedBoard?.board_id]?.pricing_mode === 'per_time' ? 'Zeit verlängern' : 'Credits nachladen'} · {selectedBoard?.name}
             </DialogTitle>
           </DialogHeader>
 
           <div className="space-y-6 py-4">
             <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4 text-sm text-zinc-400">
-              {selectedBoard ? formatRemaining(boardDetails[selectedBoard.board_id]) : 'Keine Session ausgewählt'}
+              {selectedBoard ? formatRemaining(boardDetails[selectedBoard.board_id], selectedBoard.status) : 'Keine Session ausgewählt'}
             </div>
-            {unlockMode === 'per_game' ? (
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-                <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Zusätzliche Spiele</label>
-                <Input type="number" min="0" value={unlockCredits} onChange={(e) => setUnlockCredits(parseInt(e.target.value || '0', 10))} className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
-              </div>
-            ) : (
+            {boardDetails[selectedBoard?.board_id]?.pricing_mode === 'per_time' ? (
               <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
                 <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Zusätzliche Minuten</label>
                 <Input type="number" min="0" step="15" value={unlockMinutes} onChange={(e) => setUnlockMinutes(parseInt(e.target.value || '0', 10))} className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
+                <label className="text-xs uppercase tracking-[0.24em] text-zinc-500">Zusätzliche Credits</label>
+                <Input type="number" min="0" value={unlockCredits} onChange={(e) => setUnlockCredits(parseInt(e.target.value || '0', 10))} className="mt-3 bg-zinc-950 border-zinc-700 text-white text-center text-2xl h-14" />
               </div>
             )}
           </div>
 
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setShowExtendDialog(false)} className="border-zinc-700 text-zinc-300">Abbrechen</Button>
-            <Button onClick={handleExtend} data-testid="confirm-extend-btn" className="bg-amber-500 hover:bg-amber-400 text-black">Verlängern</Button>
+            <Button onClick={handleExtend} data-testid="confirm-extend-btn" className="bg-amber-500 hover:bg-amber-400 text-black">
+              {boardDetails[selectedBoard?.board_id]?.pricing_mode === 'per_time' ? 'Verlängern' : 'Credits nachladen'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

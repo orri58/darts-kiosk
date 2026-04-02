@@ -433,7 +433,9 @@ export default function AdminSettings() {
   const handleSavePricing = async () => {
     setSaving(true);
     try {
-      await updatePricing(localPricing);
+      const pricingPayload = { ...localPricing, mode: 'per_player' };
+      await updatePricing(pricingPayload);
+      setLocalPricing(pricingPayload);
       toast.success('Preise gespeichert');
     } catch (error) {
       toast.error('Fehler beim Speichern');
@@ -495,7 +497,7 @@ export default function AdminSettings() {
           <AdminStatCard
             icon={Euro}
             label="Primärer Tarif"
-            value={localPricing.mode === 'per_time' ? 'Zeitbasiert' : 'Spielbasiert'}
+            value="Credits-only"
             hint={`${(localPricing.allowed_game_types || []).length || 0} Spieltypen freigegeben`}
             tone="emerald"
           />
@@ -661,31 +663,18 @@ export default function AdminSettings() {
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Default Mode */}
-              <div className="space-y-2">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">Standard-Modus</label>
-                <div className="grid grid-cols-2 gap-2">
-                  {['per_game', 'per_time'].map((mode) => (
-                    <button
-                      key={mode}
-                      onClick={() => setLocalPricing({ ...localPricing, mode })}
-                      className={`p-3 rounded-sm border-2 transition-all ${
-                        localPricing.mode === mode
-                          ? 'border-amber-500 bg-amber-500/20 text-amber-500'
-                          : 'border-zinc-700 text-zinc-400 hover:border-zinc-600'
-                      }`}
-                    >
-                      {mode === 'per_game' ? 'Pro Spiel' : 'Pro Zeit'}
-                    </button>
-                  ))}
-                </div>
+              <div className="rounded-sm border border-zinc-800 bg-zinc-950/60 p-4 text-sm leading-6 text-zinc-400">
+                Aktiv im Operator-Flow ist nur noch der credits-only Tarif: Boards werden mit Credits freigeschaltet,
+                die eigentliche Abbuchung passiert später beim echten Matchstart anhand der erkannten Spielerzahl.
+                Zeitbasierte oder sonstige Legacy-Varianten bleiben intern kompatibel, werden hier aber bewusst nicht mehr exponiert.
               </div>
 
               {/* Per Game Pricing */}
               <div className="bg-zinc-800/50 rounded-sm p-4 space-y-4">
-                <h4 className="text-sm text-zinc-400 uppercase tracking-wider">Pro Spiel</h4>
+                <h4 className="text-sm text-zinc-400 uppercase tracking-wider">Credits</h4>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <label className="text-xs text-zinc-500">Preis pro Spiel (€)</label>
+                    <label className="text-xs text-zinc-500">Preis pro Credit (€)</label>
                     <Input
                       type="number"
                       step="0.5"
@@ -699,7 +688,7 @@ export default function AdminSettings() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <label className="text-xs text-zinc-500">Standard Credits</label>
+                    <label className="text-xs text-zinc-500">Standard-Freischaltung</label>
                     <Input
                       type="number"
                       value={localPricing.per_game?.default_credits || 3}
@@ -708,41 +697,6 @@ export default function AdminSettings() {
                         per_game: { ...localPricing.per_game, default_credits: parseInt(e.target.value) }
                       })}
                       data-testid="default-credits-input"
-                      className="input-industrial h-10"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Per Time Pricing */}
-              <div className="bg-zinc-800/50 rounded-sm p-4 space-y-4">
-                <h4 className="text-sm text-zinc-400 uppercase tracking-wider">Pro Zeit</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-xs text-zinc-500">30 Minuten (€)</label>
-                    <Input
-                      type="number"
-                      step="0.5"
-                      value={localPricing.per_time?.price_per_30_min || 5}
-                      onChange={(e) => setLocalPricing({
-                        ...localPricing,
-                        per_time: { ...localPricing.per_time, price_per_30_min: parseFloat(e.target.value) }
-                      })}
-                      data-testid="price-30-min-input"
-                      className="input-industrial h-10"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs text-zinc-500">60 Minuten (€)</label>
-                    <Input
-                      type="number"
-                      step="0.5"
-                      value={localPricing.per_time?.price_per_60_min || 8}
-                      onChange={(e) => setLocalPricing({
-                        ...localPricing,
-                        per_time: { ...localPricing.per_time, price_per_60_min: parseFloat(e.target.value) }
-                      })}
-                      data-testid="price-60-min-input"
                       className="input-industrial h-10"
                     />
                   </div>

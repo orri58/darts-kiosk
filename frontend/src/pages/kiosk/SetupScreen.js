@@ -106,8 +106,11 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
 
   const getRemainingInfo = () => {
     if (!session) return null;
-    if (session.pricing_mode === 'per_game') {
+    if (session.pricing_mode === 'per_game' || session.pricing_mode === 'per_player') {
       const credits = session.credits_remaining;
+      if (session.pricing_mode === 'per_player') {
+        return { type: 'credits', value: credits, label: 'Credits verfügbar' };
+      }
       if (credits === 1) {
         return { type: 'credits', value: credits, label: t('last_game') };
       }
@@ -366,7 +369,7 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
               <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
                 <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Modus</p>
-                  <p className="mt-1 font-medium text-white">{session?.pricing_mode === 'per_time' ? 'Zeitbasiert' : 'Spielbasiert'}</p>
+                  <p className="mt-1 font-medium text-white">{session?.pricing_mode === 'per_time' ? 'Zeitbasiert' : session?.pricing_mode === 'per_player' ? 'Credits / Matchstart' : 'Spielbasiert (Legacy)'}</p>
                 </div>
                 <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Spiel</p>

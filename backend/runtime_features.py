@@ -52,5 +52,5 @@ def sanitize_pricing_settings(pricing: Dict[str, Any] | None) -> Dict[str, Any]:
     """Keep pricing config compatible with the supported local-core modes."""
     cleaned: Dict[str, Any] = deepcopy(pricing or {})
     if cleaned.get("mode") not in LOCAL_CORE_PRICING_MODES:
-        cleaned["mode"] = PricingMode.PER_GAME.value
+        cleaned["mode"] = PricingMode.PER_PLAYER.value
     return cleaned

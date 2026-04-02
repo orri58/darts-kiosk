@@ -17,7 +17,9 @@ What is in good shape now:
 - board unlock / lock flow
 - local session persistence
 - authoritative match start/finish handling for the protected local core
-- per-game, per-player, and per-time capacity rules in backend logic
+- credits-only unlock flow for the active operator surface
+- authoritative per-player credit deduction based on the real match/player situation
+- legacy-compatible per-game and per-time capacity rules in backend logic
 - local revenue summary from recorded session sale totals
 - Windows setup/start/stop/smoke helper scripts
 - focused in-process backend validation for the local core
@@ -32,7 +34,7 @@ Short version: the repo is now understandable, testable, and honest about its bo
 
 ## Architecture in one paragraph
 
-A staff/admin user unlocks a board, which creates a local `Session` row and moves the board to `unlocked`. In observer mode, the backend launches a persistent Chrome/Playwright observer against the configured Autodarts URL. Authoritative WebSocket signals drive `_on_game_started()` and `finalize_match()`, which update board/session state, charge the correct capacity unit, decide whether the session stays alive or locks, and coordinate kiosk/observer UI behavior. Settings, reporting, and revenue all read from the local database; central outages are supposed to stay non-fatal to local play.
+A staff/admin user unlocks a board by adding credits, which creates a local `Session` row and moves the board to `unlocked`. In observer mode, the backend launches a persistent Chrome/Playwright observer against the configured Autodarts URL. Authoritative WebSocket signals drive `_on_game_started()` and `finalize_match()`, which update board/session state, deduct the correct credit amount from the real match/player situation, decide whether the session stays alive or locks, and coordinate kiosk/observer UI behavior. Settings, reporting, and revenue all read from the local database; central outages are supposed to stay non-fatal to local play.
 
 More detail:
 - `docs/ARCHITECTURE.md`
@@ -139,7 +141,7 @@ python -m pytest -q \
 
 This validates:
 - Autodarts trigger classification boundaries
-- pricing / credit consumption rules
+- credits-only unlock seeding + pricing / credit consumption rules
 - optional adapter-service startup hardening
 - board unlock / lock
 - session lifecycle transitions

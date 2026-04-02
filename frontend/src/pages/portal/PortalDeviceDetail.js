@@ -96,7 +96,7 @@ export default function PortalDeviceDetail() {
   const [configDirty, setConfigDirty] = useState(false);
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [unlockParams, setUnlockParams] = useState({
-    pricing_mode: 'per_game', game_type: '501', credits: 3, minutes: 30, price_total: 0, players_count: 2, board_id: '',
+    pricing_mode: 'per_player', game_type: '501', credits: 3, minutes: 30, price_total: 0, players_count: 0, board_id: '',
   });
 
   const classifyError = (err) => {
@@ -1065,15 +1065,8 @@ export default function PortalDeviceDetail() {
               <input className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-board-id"
                 placeholder="z.B. BOARD-1" value={unlockParams.board_id} onChange={e => setUnlockParams(p => ({ ...p, board_id: e.target.value }))} />
             </div>
-            {/* Pricing Mode */}
-            <div>
-              <label className="text-xs text-zinc-400 block mb-1">Preismodus</label>
-              <select className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-pricing-mode"
-                value={unlockParams.pricing_mode} onChange={e => setUnlockParams(p => ({ ...p, pricing_mode: e.target.value }))}>
-                <option value="per_game">Pro Spiel</option>
-                <option value="per_time">Pro Zeit</option>
-                <option value="per_player">Pro Spieler</option>
-              </select>
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950/70 px-3 py-3 text-xs leading-5 text-zinc-400">
+              Remote-Freischaltung folgt ebenfalls dem credits-only Flow: Credits laden, Board öffnen, echte Abbuchung erst beim autoritativen Matchstart.
             </div>
             {/* Game Type */}
             <div>
@@ -1085,49 +1078,18 @@ export default function PortalDeviceDetail() {
                 <option value="Cricket">Cricket</option>
               </select>
             </div>
-            {/* Mode-specific fields */}
-            {unlockParams.pricing_mode === 'per_game' && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-zinc-400 block mb-1">Spiele (Credits)</label>
-                  <input type="number" min="1" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-credits"
-                    value={unlockParams.credits} onChange={e => setUnlockParams(p => ({ ...p, credits: parseInt(e.target.value) || 1 }))} />
-                </div>
-                <div>
-                  <label className="text-xs text-zinc-400 block mb-1">Preis (EUR)</label>
-                  <input type="number" step="0.5" min="0" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-price"
-                    value={unlockParams.price_total} onChange={e => setUnlockParams(p => ({ ...p, price_total: parseFloat(e.target.value) || 0 }))} />
-                </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Credits</label>
+                <input type="number" min="1" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-credits"
+                  value={unlockParams.credits} onChange={e => setUnlockParams(p => ({ ...p, credits: parseInt(e.target.value) || 1 }))} />
               </div>
-            )}
-            {unlockParams.pricing_mode === 'per_time' && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-zinc-400 block mb-1">Minuten</label>
-                  <input type="number" min="5" step="5" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-minutes"
-                    value={unlockParams.minutes} onChange={e => setUnlockParams(p => ({ ...p, minutes: parseInt(e.target.value) || 5 }))} />
-                </div>
-                <div>
-                  <label className="text-xs text-zinc-400 block mb-1">Preis (EUR)</label>
-                  <input type="number" step="0.5" min="0" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-price-time"
-                    value={unlockParams.price_total} onChange={e => setUnlockParams(p => ({ ...p, price_total: parseFloat(e.target.value) || 0 }))} />
-                </div>
+              <div>
+                <label className="text-xs text-zinc-400 block mb-1">Verkaufsbetrag (EUR)</label>
+                <input type="number" step="0.5" min="0" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-price"
+                  value={unlockParams.price_total} onChange={e => setUnlockParams(p => ({ ...p, price_total: parseFloat(e.target.value) || 0 }))} />
               </div>
-            )}
-            {unlockParams.pricing_mode === 'per_player' && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-xs text-zinc-400 block mb-1">Spieleranzahl</label>
-                  <input type="number" min="1" max="8" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-players"
-                    value={unlockParams.players_count} onChange={e => setUnlockParams(p => ({ ...p, players_count: parseInt(e.target.value) || 2 }))} />
-                </div>
-                <div>
-                  <label className="text-xs text-zinc-400 block mb-1">Preis (EUR)</label>
-                  <input type="number" step="0.5" min="0" className="w-full bg-zinc-800 border border-zinc-700 rounded px-3 py-2 text-sm text-white" data-testid="unlock-price-player"
-                    value={unlockParams.price_total} onChange={e => setUnlockParams(p => ({ ...p, price_total: parseFloat(e.target.value) || 0 }))} />
-                </div>
-              </div>
-            )}
+            </div>
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" className="border-zinc-700 text-zinc-400" onClick={() => setUnlockOpen(false)} data-testid="unlock-cancel-btn">Abbrechen</Button>

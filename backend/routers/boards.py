@@ -205,6 +205,13 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
             detail="Board is not configured for observer mode. Set an Autodarts target URL before unlocking."
         )
 
+    if data.pricing_mode == PricingMode.PER_PLAYER.value and int(data.credits or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Credits must be greater than zero")
+    if data.pricing_mode == PricingMode.PER_GAME.value and int(data.credits or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Credits must be greater than zero")
+    if data.pricing_mode == PricingMode.PER_TIME.value and int(data.minutes or 0) <= 0:
+        raise HTTPException(status_code=400, detail="Minutes must be greater than zero")
+
     existing = await get_active_session_for_board(db, board.id)
     if existing:
         raise HTTPException(status_code=400, detail="Board already has an active session")
@@ -218,6 +225,10 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
         data.credits,
         data.players_count,
     )
+    player_count_hint = max(0, int(data.players_count or 0)) if data.pricing_mode == PricingMode.PER_PLAYER.value else max(1, int(data.players_count or 1))
+    price_per_unit = 0.0
+    if credits_total > 0 and data.price_total:
+        price_per_unit = float(data.price_total) / float(credits_total)
 
     session = Session(
         board_id=board.id,
@@ -226,8 +237,9 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
         credits_total=credits_total,
         credits_remaining=credits_remaining,
         minutes_total=data.minutes or 0,
+        price_per_unit=price_per_unit,
         price_total=data.price_total,
-        players_count=data.players_count,
+        players_count=player_count_hint,
         expires_at=expires_at,
         unlocked_by_user_id=user.id,
         status=SessionStatus.ACTIVE.value
@@ -240,6 +252,9 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
     await log_audit(db, user, "unlock_board", "session", session.id, {
         "board_id": board_id,
         "pricing_mode": data.pricing_mode,
+        "credits": data.credits,
+        "minutes": data.minutes,
+        "players_count": player_count_hint,
         "price_total": data.price_total
     })
 
