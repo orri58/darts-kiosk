@@ -1809,7 +1809,6 @@ class AutodartsObserver:
                 if self._abort_detected and not self._finalized:
                     logger.info(f"[Observer:{self.board_id}] ABORT_FAST_PATH — "
                                 f"immediate finalize, zero delay (before sleep/poll)")
-                    self._finalized = True
                     self._abort_detected = False
                     self._stable_state = ObserverState.IDLE
                     self._set_state(ObserverState.IDLE)
@@ -2081,7 +2080,6 @@ class AutodartsObserver:
                         logger.info(
                             f"[Observer:{self.board_id}] === TRANSITION: in_game -> idle (abort fallback finalize) ==="
                         )
-                        self._finalized = True
                         try:
                             result = await self._dispatch_finalize("match_abort_delete", source="idle_transition_abort_fallback")
                             if result is not None:
