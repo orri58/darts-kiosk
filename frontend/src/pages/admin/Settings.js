@@ -33,6 +33,7 @@ import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
 import { CALL_STAFF_ENABLED } from '../../runtimeFeatures';
+import { buildThemeTokens } from '../../lib/theme';
 import axios from 'axios';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -285,6 +286,12 @@ export default function AdminSettings() {
 
   // Sync local kiosk texts & PWA config when context updates
   useEffect(() => {
+    setLocalBranding(branding);
+  }, [branding]);
+  useEffect(() => {
+    setLocalPricing(pricing);
+  }, [pricing]);
+  useEffect(() => {
     setLocalKioskTexts(kioskTexts);
   }, [kioskTexts]);
   useEffect(() => {
@@ -421,7 +428,8 @@ export default function AdminSettings() {
   const handleSaveBranding = async () => {
     setSaving(true);
     try {
-      await updateBranding(localBranding);
+      const saved = await updateBranding(localBranding);
+      setLocalBranding(saved);
       toast.success('Branding gespeichert');
     } catch (error) {
       toast.error('Fehler beim Speichern');
@@ -477,13 +485,14 @@ export default function AdminSettings() {
   };
 
   const activePalette = palettes.find((palette) => palette.id === localBranding.palette_id);
+  const selectedTheme = useMemo(() => buildThemeTokens(activePalette), [activePalette]);
   const recommendedTriggerPreset = triggerMetadata?.presets?.find((preset) => preset.recommended)?.label || 'WS strict';
 
   return (
     <AdminPage
       eyebrow="Operator configuration"
       title={t('settings')}
-      description="Branding, Abrechnung, Kiosk-Erlebnis und Observer-Verhalten an einem Ort. Fokus bleibt lokal: venue-taugliche Defaults, klare Recovery-Guards, keine freien Risiko-Settings."
+      description="Branding, Tarife und Kiosk-Verhalten an einem Ort. Kürzer, direkter, venue-tauglich."
     >
       <div data-testid="admin-settings" className="space-y-6">
         <AdminStatsGrid className="xl:grid-cols-3">
@@ -491,7 +500,7 @@ export default function AdminSettings() {
             icon={Palette}
             label="Aktives Theme"
             value={activePalette?.name || localBranding.palette_id || 'Standard'}
-            hint={`${palettes.length} Paletten verfügbar`}
+            hint={`${palettes.length} Paletten live verfügbar`}
             tone="amber"
           />
           <AdminStatCard
@@ -511,7 +520,7 @@ export default function AdminSettings() {
         </AdminStatsGrid>
 
         <Tabs defaultValue="branding" className="space-y-6">
-        <TabsList className="bg-zinc-900 border border-zinc-800 p-1 flex flex-wrap h-auto gap-1">
+        <TabsList className="flex h-auto flex-nowrap gap-1 overflow-x-auto rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.66)] p-1">
           <TabsTrigger value="branding" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Palette className="w-4 h-4 mr-2" />
             {t('branding')}
@@ -567,12 +576,12 @@ export default function AdminSettings() {
                 Logo & Name
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-5">
               {/* Logo Upload */}
               <div className="space-y-3">
                 <label className="text-sm text-zinc-500 uppercase tracking-wider">Logo</label>
-                <div className="flex items-center gap-4">
-                  <div className="w-24 h-24 bg-zinc-800 border-2 border-dashed border-zinc-700 rounded-sm flex items-center justify-center overflow-hidden">
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-zinc-700 bg-zinc-800">
                     {localBranding.logo_url ? (
                       <img src={localBranding.logo_url} alt="Logo" className="max-w-full max-h-full object-contain" />
                     ) : (
@@ -589,12 +598,12 @@ export default function AdminSettings() {
                     />
                     <label
                       htmlFor="logo-upload"
-                      className="inline-flex items-center px-4 py-2 bg-zinc-800 border border-zinc-700 rounded-sm text-zinc-300 cursor-pointer hover:border-amber-500/50 hover:text-amber-500 transition-all"
+                      className="inline-flex items-center rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-2 text-zinc-300 cursor-pointer hover:border-amber-500/50 hover:text-amber-500 transition-all"
                     >
                       <Upload className="w-4 h-4 mr-2" />
                       {uploading ? 'Wird hochgeladen...' : 'Logo hochladen'}
                     </label>
-                    <p className="text-xs text-zinc-600 mt-2">PNG, SVG, JPG, WebP (max. 2MB)</p>
+                    <p className="text-xs text-zinc-600 mt-2">PNG, SVG, JPG, WebP · max. 2MB</p>
                     {localBranding.logo_url && (
                       <button
                         data-testid="remove-logo-btn"
@@ -663,10 +672,9 @@ export default function AdminSettings() {
             </CardHeader>
             <CardContent className="space-y-6">
               {/* Default Mode */}
-              <div className="rounded-sm border border-zinc-800 bg-zinc-950/60 p-4 text-sm leading-6 text-zinc-400">
-                Aktiv im Operator-Flow ist nur noch der credits-only Tarif: Boards werden mit Credits freigeschaltet,
-                die eigentliche Abbuchung passiert später beim echten Matchstart anhand der erkannten Spielerzahl.
-                Zeitbasierte oder sonstige Legacy-Varianten bleiben intern kompatibel, werden hier aber bewusst nicht mehr exponiert.
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 text-sm leading-6 text-zinc-400">
+                Aktiv ist nur noch der Credits-Flow: freischalten, spielen, bei echtem Matchstart abbuchen.
+                Legacy-Varianten bleiben intern kompatibel, tauchen hier aber nicht mehr als Hauptprodukt auf.
               </div>
 
               {/* Per Game Pricing */}
@@ -755,6 +763,64 @@ export default function AdminSettings() {
 
         {/* Palettes Tab */}
         <TabsContent value="palettes" className="space-y-6">
+          <Card className="bg-zinc-900 border-zinc-800 overflow-hidden">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center gap-2">
+                <Eye className="w-5 h-5 text-amber-500" />
+                Live-Vorschau
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-4 lg:grid-cols-[1.2fr,0.8fr]">
+                <div className="overflow-hidden rounded-[1.75rem] border border-zinc-700" style={{ backgroundColor: selectedTheme.bg }}>
+                  <div className="p-5 md:p-6">
+                    <p className="text-[11px] uppercase tracking-[0.24em] opacity-70" style={{ color: selectedTheme.textSecondary }}>Kiosk / Dashboard feel</p>
+                    <div className="mt-3 flex items-start justify-between gap-4">
+                      <div>
+                        <h3 className="text-2xl font-heading uppercase" style={{ color: selectedTheme.text }}>{localBranding.cafe_name || 'Dart Zone'}</h3>
+                        <p className="mt-1 text-sm" style={{ color: selectedTheme.textSecondary }}>{localBranding.subtitle || 'Darts & More'}</p>
+                      </div>
+                      <div className="rounded-full border px-3 py-1 text-xs uppercase tracking-[0.2em]" style={{ borderColor: selectedTheme.borderStrong, color: selectedTheme.primary }}>
+                        {activePalette?.name || 'Theme'}
+                      </div>
+                    </div>
+                    <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                      <div className="rounded-3xl border p-4" style={{ backgroundColor: selectedTheme.surface, borderColor: selectedTheme.border }}>
+                        <p className="text-[10px] uppercase tracking-[0.2em]" style={{ color: selectedTheme.textMuted }}>Board</p>
+                        <p className="mt-2 text-lg font-semibold" style={{ color: selectedTheme.text }}>Freigeschaltet</p>
+                      </div>
+                      <div className="rounded-3xl border p-4" style={{ backgroundColor: selectedTheme.surface, borderColor: selectedTheme.border }}>
+                        <p className="text-[10px] uppercase tracking-[0.2em]" style={{ color: selectedTheme.textMuted }}>Action</p>
+                        <div className="mt-2 inline-flex rounded-2xl px-3 py-2 text-sm font-semibold" style={{ backgroundColor: selectedTheme.primary, color: selectedTheme.primaryForeground }}>
+                          Direkt freischalten
+                        </div>
+                      </div>
+                      <div className="rounded-3xl border p-4" style={{ backgroundColor: selectedTheme.surface, borderColor: selectedTheme.border }}>
+                        <p className="text-[10px] uppercase tracking-[0.2em]" style={{ color: selectedTheme.textMuted }}>Warnung</p>
+                        <div className="mt-2 inline-flex rounded-2xl px-3 py-2 text-sm font-semibold" style={{ backgroundColor: selectedTheme.accentSoft, color: selectedTheme.text }}>
+                          Observer-Hinweis
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
+                  {COLOR_FIELDS.map((field) => (
+                    <div key={`preview-${field.key}`} className="rounded-2xl border border-zinc-800 bg-zinc-950/60 px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-xl border border-white/10" style={{ backgroundColor: activePalette?.colors?.[field.key] || EMPTY_PALETTE[field.key] }} />
+                        <div>
+                          <p className="text-xs uppercase tracking-[0.2em] text-zinc-500">{field.label}</p>
+                          <p className="font-mono text-sm text-zinc-200">{activePalette?.colors?.[field.key] || EMPTY_PALETTE[field.key]}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Palette Selection */}
           <Card className="bg-zinc-900 border-zinc-800">
             <CardHeader>
@@ -763,20 +829,20 @@ export default function AdminSettings() {
                 Farbschema wählen
               </CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <CardContent className="space-y-5">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
                 {palettes.map((palette) => (
-                  <div key={palette.id} className={`relative group p-4 rounded-sm border-2 transition-all cursor-pointer ${
+                  <div key={palette.id} className={`relative group rounded-2xl border p-3 transition-all cursor-pointer ${
                     localBranding.palette_id === palette.id ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-zinc-700 hover:border-zinc-600'
                   }`} onClick={() => setLocalBranding({ ...localBranding, palette_id: palette.id })}
                     data-testid={`palette-${palette.id}`}>
-                    <div className="flex gap-1 mb-3 h-8">
-                      <div className="flex-1 rounded-sm" style={{ backgroundColor: palette.colors.bg }}></div>
-                      <div className="flex-1 rounded-sm" style={{ backgroundColor: palette.colors.surface }}></div>
-                      <div className="flex-1 rounded-sm" style={{ backgroundColor: palette.colors.primary }}></div>
-                      <div className="flex-1 rounded-sm" style={{ backgroundColor: palette.colors.accent }}></div>
+                    <div className="mb-3 grid h-20 grid-cols-2 gap-1 overflow-hidden rounded-xl border border-zinc-800">
+                      <div className="rounded-lg" style={{ backgroundColor: palette.colors.bg }}></div>
+                      <div className="rounded-lg" style={{ backgroundColor: palette.colors.surface }}></div>
+                      <div className="rounded-lg" style={{ backgroundColor: palette.colors.primary }}></div>
+                      <div className="rounded-lg" style={{ backgroundColor: palette.colors.accent }}></div>
                     </div>
-                    <p className="text-sm text-center text-zinc-300">{palette.name}</p>
+                    <p className="text-sm text-center text-zinc-200">{palette.name}</p>
                     {localBranding.palette_id === palette.id && (
                       <div className="flex justify-center mt-2"><Check className="w-5 h-5 text-amber-500" /></div>
                     )}
@@ -798,13 +864,13 @@ export default function AdminSettings() {
 
                 {/* New Palette Button */}
                 <button onClick={openNewPalette} data-testid="new-palette-btn"
-                  className="flex flex-col items-center justify-center gap-2 p-4 rounded-sm border-2 border-dashed border-zinc-700 text-zinc-500 hover:border-amber-500/50 hover:text-amber-500 transition-all min-h-[120px]">
+                  className="flex min-h-[120px] flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-zinc-700 p-4 text-zinc-500 transition-all hover:border-amber-500/50 hover:text-amber-500">
                   <Plus className="w-6 h-6" />
                   <span className="text-xs uppercase tracking-wider">Neues Schema</span>
                 </button>
               </div>
 
-              <div className="mt-6">
+              <div>
                 <Button onClick={handleSaveBranding} disabled={saving} data-testid="save-palette-btn"
                   className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading">
                   <Save className="w-4 h-4 mr-2" />

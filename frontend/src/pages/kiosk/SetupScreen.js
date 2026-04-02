@@ -324,20 +324,20 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
   return (
     <div className="h-full w-full flex flex-col" data-testid="setup-screen">
       {/* Header */}
-      <div className="p-6 border-b border-zinc-800 bg-zinc-950">
-        <div className="flex items-center justify-between max-w-6xl mx-auto">
+      <div className="border-b border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.88)] px-4 py-4 backdrop-blur lg:px-6">
+        <div className="mx-auto flex max-w-6xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl font-heading font-bold uppercase tracking-wider text-white">
+            <h1 className="text-xl font-heading font-bold uppercase tracking-wider text-[var(--color-text)] lg:text-2xl">
               {branding.cafe_name}
             </h1>
-            <p className="text-zinc-500 text-sm">{t('game_preparation')}</p>
+            <p className="text-sm text-[var(--color-text-secondary)]">{t('game_preparation')}</p>
           </div>
           {remainingInfo && (
-            <div className="flex items-center gap-3 bg-zinc-900 border border-zinc-700 rounded-sm px-4 py-2">
-              {remainingInfo.type === 'credits' ? <Coins className="w-5 h-5 text-amber-500" /> : <Clock className="w-5 h-5 text-amber-500" />}
+            <div className="flex items-center gap-3 rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.72)] px-4 py-2.5">
+              {remainingInfo.type === 'credits' ? <Coins className="w-5 h-5 text-[var(--color-primary)]" /> : <Clock className="w-5 h-5 text-[var(--color-primary)]" />}
               <div className="text-right">
-                <p className="text-2xl font-mono font-bold text-white">{remainingInfo.value}</p>
-                <p className="text-xs text-zinc-500 uppercase">{remainingInfo.label}</p>
+                <p className="text-2xl font-mono font-bold text-[var(--color-text)]">{remainingInfo.value}</p>
+                <p className="text-xs uppercase text-[var(--color-text-secondary)]">{remainingInfo.label}</p>
               </div>
             </div>
           )}
@@ -345,39 +345,39 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-auto p-8">
+      <div className="flex-1 overflow-auto px-4 py-5 lg:px-6 lg:py-6">
         <div className="max-w-6xl mx-auto">
-          <div className="grid gap-4 mb-8 lg:grid-cols-[1.15fr,0.85fr]">
-            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
-              <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500 mb-3">Setup flow</p>
+          <div className="mb-6 grid gap-4 lg:grid-cols-[1.15fr,0.85fr]">
+            <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.68)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
+              <p className="mb-3 text-[11px] uppercase tracking-[0.28em] text-[var(--color-text-muted)]">Setup flow</p>
               <div className="grid gap-3 md:grid-cols-2">
-                <div className={`rounded-2xl border px-4 py-3 ${step === 1 ? 'border-amber-500/40 bg-amber-500/10' : 'border-zinc-800 bg-zinc-950/70'}`}>
-                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Schritt 1</p>
-                  <p className="mt-1 font-medium text-white">Spiel wählen</p>
-                  <p className="mt-1 text-sm text-zinc-500">301, 501, Cricket oder Training.</p>
+                <div className={`rounded-2xl border px-4 py-3 ${step === 1 ? 'border-[rgb(var(--color-primary-rgb)/0.4)] bg-[rgb(var(--color-primary-rgb)/0.1)]' : 'border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.46)]'}`}>
+                  <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Schritt 1</p>
+                  <p className="mt-1 font-medium text-[var(--color-text)]">Spiel wählen</p>
+                  <p className="mt-1 text-sm text-[var(--color-text-secondary)]">301, 501, Cricket oder Training.</p>
                 </div>
-                <div className={`rounded-2xl border px-4 py-3 ${step === 2 ? 'border-amber-500/40 bg-amber-500/10' : 'border-zinc-800 bg-zinc-950/70'}`}>
-                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Schritt 2</p>
-                  <p className="mt-1 font-medium text-white">Spieler vorbereiten</p>
-                  <p className="mt-1 text-sm text-zinc-500">Namen, Stammkunden-PIN und Startfreigabe.</p>
+                <div className={`rounded-2xl border px-4 py-3 ${step === 2 ? 'border-[rgb(var(--color-primary-rgb)/0.4)] bg-[rgb(var(--color-primary-rgb)/0.1)]' : 'border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.46)]'}`}>
+                  <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Schritt 2</p>
+                  <p className="mt-1 font-medium text-[var(--color-text)]">Spieler vorbereiten</p>
+                  <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Namen, PIN, Start.</p>
                 </div>
               </div>
             </div>
 
-            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
-              <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500 mb-3">Session summary</p>
+            <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.68)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
+              <p className="mb-3 text-[11px] uppercase tracking-[0.28em] text-[var(--color-text-muted)]">Session summary</p>
               <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
-                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Modus</p>
-                  <p className="mt-1 font-medium text-white">{session?.pricing_mode === 'per_time' ? 'Zeitbasiert' : session?.pricing_mode === 'per_player' ? 'Credits / Matchstart' : 'Spielbasiert (Legacy)'}</p>
+                <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.46)] px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Modus</p>
+                  <p className="mt-1 font-medium text-[var(--color-text)]">{session?.pricing_mode === 'per_time' ? 'Zeitbasiert' : session?.pricing_mode === 'per_player' ? 'Credits / Matchstart' : 'Spielbasiert (Legacy)'}</p>
                 </div>
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
-                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Spiel</p>
-                  <p className="mt-1 font-medium text-white">{selectedGame || 'Noch nicht gewählt'}</p>
+                <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.46)] px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Spiel</p>
+                  <p className="mt-1 font-medium text-[var(--color-text)]">{selectedGame || 'Noch nicht gewählt'}</p>
                 </div>
-                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
-                  <p className="text-xs uppercase tracking-[0.22em] text-zinc-500">Spieler</p>
-                  <p className="mt-1 font-medium text-white">{players.filter(p => p.trim().length > 0).length} / {maxPlayers}</p>
+                <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.46)] px-4 py-3">
+                  <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Spieler</p>
+                  <p className="mt-1 font-medium text-[var(--color-text)]">{players.filter(p => p.trim().length > 0).length} / {maxPlayers}</p>
                 </div>
               </div>
             </div>
@@ -386,25 +386,25 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
           {/* Step 1: Game Type */}
           {step === 1 && (
             <div className="animate-slide-up" data-testid="step-game-type">
-              <div className="flex items-center gap-3 mb-8">
-                <Target className="w-8 h-8 text-amber-500" />
-                <h2 className="text-3xl font-heading uppercase tracking-wider text-white">{t('choose_game_type')}</h2>
+              <div className="mb-6 flex items-center gap-3">
+                <Target className="w-7 h-7 text-[var(--color-primary)]" />
+                <h2 className="text-2xl font-heading uppercase tracking-wider text-[var(--color-text)] lg:text-3xl">{t('choose_game_type')}</h2>
               </div>
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+              <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4 lg:gap-5">
                 {GAME_TYPES.map((game) => (
                   <button key={game.id} onClick={() => setSelectedGame(game.id)} data-testid={`game-type-${game.id.toLowerCase()}`}
-                    className={`btn-kiosk flex flex-col items-center justify-center p-8 rounded-sm ${
-                      selectedGame === game.id ? 'bg-amber-500 text-black border-amber-400 animate-pulse-glow' : 'bg-zinc-900 text-white border-zinc-700 hover:border-amber-500/50'
+                    className={`btn-kiosk flex min-h-[104px] flex-col items-center justify-center rounded-3xl p-5 ${
+                      selectedGame === game.id ? 'animate-pulse-glow border-[rgb(var(--color-primary-rgb)/0.35)] bg-[var(--color-primary)] text-[hsl(var(--primary-foreground))]' : 'border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.72)] text-[var(--color-text)] hover:border-[rgb(var(--color-primary-rgb)/0.35)]'
                     }`}>
-                    <span className="text-5xl font-heading font-bold mb-2">{game.name}</span>
-                    <span className={`text-sm uppercase tracking-wider ${selectedGame === game.id ? 'text-black/70' : 'text-zinc-500'}`}>{game.description}</span>
+                    <span className="mb-1 text-4xl font-heading font-bold lg:text-5xl">{game.name}</span>
+                    <span className={`text-xs uppercase tracking-wider ${selectedGame === game.id ? 'text-black/70' : 'text-[var(--color-text-secondary)]'}`}>{game.description}</span>
                   </button>
                 ))}
               </div>
               {selectedGame && (
                 <div className="flex justify-center">
                   <Button onClick={() => setStep(2)} data-testid="next-to-players-btn"
-                    className="btn-industrial h-20 px-16 text-2xl bg-amber-500 hover:bg-amber-400 text-black">
+                    className="btn-industrial h-16 rounded-3xl bg-[var(--color-primary)] px-10 text-xl text-[hsl(var(--primary-foreground))] hover:opacity-90 lg:h-20 lg:px-16 lg:text-2xl">
                     <span>{t('next')}</span>
                     <ChevronRight className="w-8 h-8 ml-2" />
                   </Button>
@@ -416,41 +416,41 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
           {/* Step 2: Player Names + Stammkunde Auth */}
           {step === 2 && (
             <div className="animate-slide-up" data-testid="step-players">
-              <button onClick={() => setStep(1)} className="flex items-center gap-2 text-zinc-500 hover:text-white mb-6 transition-colors">
+              <button onClick={() => setStep(1)} className="mb-5 flex items-center gap-2 text-[var(--color-text-secondary)] transition-colors hover:text-[var(--color-text)]">
                 <ChevronRight className="w-5 h-5 rotate-180" />
                 <span className="uppercase tracking-wider text-sm">{t('back')}</span>
               </button>
 
-              <div className="flex items-center gap-3 mb-8">
-                <Users className="w-8 h-8 text-amber-500" />
-                <h2 className="text-3xl font-heading uppercase tracking-wider text-white">{t('enter_player_names')}</h2>
-                <span className="text-xl text-zinc-500 ml-auto">
-                  {t('game_type')}: <span className="text-amber-500 font-heading">{selectedGame}</span>
+              <div className="mb-6 flex flex-wrap items-center gap-3">
+                <Users className="w-7 h-7 text-[var(--color-primary)]" />
+                <h2 className="text-2xl font-heading uppercase tracking-wider text-[var(--color-text)] lg:text-3xl">{t('enter_player_names')}</h2>
+                <span className="ml-auto text-lg text-[var(--color-text-secondary)]">
+                  {t('game_type')}: <span className="font-heading text-[var(--color-primary)]">{selectedGame}</span>
                 </span>
               </div>
 
               {/* Player Inputs */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+              <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-2">
                 {players.map((player, index) => (
                   <div key={index} onClick={() => focusPlayer(index)}
-                    className={`relative flex items-center bg-zinc-900 border-2 rounded-sm p-4 cursor-pointer transition-all ${
-                      activePlayerIndex === index && showKeyboard ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-zinc-700 hover:border-zinc-600'
+                    className={`relative flex cursor-pointer items-center rounded-2xl border-2 bg-[rgb(var(--color-surface-rgb)/0.7)] p-4 transition-all ${
+                      activePlayerIndex === index && showKeyboard ? 'border-[rgb(var(--color-primary-rgb)/0.45)] ring-2 ring-[rgb(var(--color-primary-rgb)/0.24)]' : 'border-[rgb(var(--color-border-rgb)/0.82)] hover:border-[rgb(var(--color-primary-rgb)/0.28)]'
                     } ${playerAuth[index]?.status === 'verified' ? 'border-emerald-500/50' : ''}`}>
-                    <div className={`w-12 h-12 rounded-sm flex items-center justify-center mr-4 ${
-                      playerAuth[index]?.status === 'verified' ? 'bg-emerald-500/20' : 'bg-zinc-800'
+                    <div className={`mr-4 flex h-12 w-12 items-center justify-center rounded-2xl ${
+                      playerAuth[index]?.status === 'verified' ? 'bg-emerald-500/20' : 'bg-[rgb(var(--color-bg-rgb)/0.58)]'
                     }`}>
                       {playerAuth[index]?.status === 'verified'
                         ? <CheckCircle className="w-6 h-6 text-emerald-400" />
-                        : <span className="text-xl font-heading text-amber-500">{index + 1}</span>
+                        : <span className="text-xl font-heading text-[var(--color-primary)]">{index + 1}</span>
                       }
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <p className="text-xs text-zinc-500 uppercase">{t('player')} {index + 1}</p>
+                        <p className="text-xs uppercase text-[var(--color-text-muted)]">{t('player')} {index + 1}</p>
                         {getPlayerBadge(index)}
                       </div>
-                      <p className="text-xl font-mono text-white min-h-[28px]">
-                        {player || <span className="text-zinc-600">{t('enter_name')}</span>}
+                      <p className="min-h-[28px] text-xl font-mono text-[var(--color-text)]">
+                        {player || <span className="text-[var(--color-text-muted)]">{t('enter_name')}</span>}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -482,7 +482,7 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
 
                 {players.length < maxPlayers && (
                   <button onClick={addPlayer} data-testid="add-player-btn"
-                    className="flex items-center justify-center gap-3 bg-zinc-900/50 border-2 border-dashed border-zinc-700 rounded-sm p-4 text-zinc-500 hover:border-amber-500/50 hover:text-amber-500 transition-all min-h-[96px]">
+                    className="flex min-h-[96px] items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.42)] p-4 text-[var(--color-text-secondary)] transition-all hover:border-[rgb(var(--color-primary-rgb)/0.4)] hover:text-[var(--color-primary)]">
                     <Users className="w-6 h-6" />
                     <span className="uppercase tracking-wider">{t('add_player')}</span>
                   </button>
@@ -514,10 +514,10 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
               {/* Start Button */}
               <div className="flex justify-center">
                 <Button onClick={handleStart} disabled={!canStart} data-testid="start-game-btn"
-                  className={`btn-industrial h-24 px-20 text-3xl ${
-                    canStart ? 'bg-emerald-500 hover:bg-emerald-400 text-black animate-pulse-glow' : 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                  className={`btn-industrial h-16 rounded-3xl px-10 text-xl lg:h-20 lg:px-16 lg:text-2xl ${
+                    canStart ? 'animate-pulse-glow bg-emerald-500 text-black hover:bg-emerald-400' : 'cursor-not-allowed bg-[rgb(var(--color-border-rgb)/0.8)] text-[var(--color-text-muted)]'
                   }`}>
-                  <Play className="w-10 h-10 mr-3" />
+                  <Play className="mr-3 h-8 w-8 lg:h-9 lg:w-9" />
                   <span>{t('start')}</span>
                 </Button>
               </div>

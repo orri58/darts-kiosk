@@ -4,6 +4,10 @@
 
 The repo is in a better product state again:
 - the active operator flow is now **credits-only**
+- palette selection now propagates through a proper frontend theme-token pipeline instead of only touching a few isolated raw vars
+- live kiosk/overlay/public surfaces refresh settings so runtime theme changes can actually show up without manual reloads
+- dashboard board activation is faster via a new quick-unlock section near the top
+- unlock / top-up dialogs and the main admin shell are visibly tighter on both mobile and desktop
 - unlock/freischalten no longer asks for player count
 - actual credit deduction happens later on authoritative match start, using the real player situation
 - time-based and other pricing variants are no longer exposed as first-class operator choices in the main local UI
@@ -14,6 +18,43 @@ This is a meaningful cleanup/product pass, not just copy polish.
 It is still **not fully production-proven** until somebody does a real Windows + Autodarts validation pass.
 
 ## Latest pass: credits-only unlock cleanup
+
+## Latest pass: responsive polish + palette propagation fix
+
+### Product / UX changes implemented
+- dashboard now surfaces locked boards in a dedicated **quick unlock** area above the longer board list
+- one-tap default unlock is available for the common operator case
+- unlock / extend dialogs were compacted so credits can be changed and confirmed faster
+- admin shell spacing, hierarchy, and mobile density were tightened
+- settings tabs are denser and more navigable on smaller screens
+- palette settings now include a stronger live preview surface
+- kiosk locked / setup / in-game / blocked / observer / overlay screens were visually tightened and aligned better with the chosen palette
+
+### Theme runtime fix implemented
+- palette selection now feeds both the raw app color variables and the semantic shadcn token set
+- this means cards, dialogs, buttons, background shells, and other token-driven surfaces actually react to the selected palette
+- SettingsContext now reapplies theme tokens from the active palette instead of only pushing a few hex vars
+- live surfaces (`/kiosk`, `/overlay`, `/public`) now refresh settings periodically and on focus/visibility return so runtime palette changes propagate to already-open windows
+- `/admin/settings` is intentionally excluded from live polling to avoid overwriting in-progress edits
+
+### Validation for this pass
+- frontend production build succeeded
+- build warning remains the same pre-existing `SetupWizard.js` hook dependency warning
+
+Executed command:
+
+```bash
+cd frontend
+npm run build
+```
+
+Result:
+- build completed successfully
+- existing ESLint warning still present in `src/pages/admin/SetupWizard.js`
+
+---
+
+## Previous pass: credits-only unlock cleanup
 
 ### Product decisions implemented
 - board unlock now uses a credits-only operator flow

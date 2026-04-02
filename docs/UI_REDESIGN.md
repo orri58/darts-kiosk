@@ -1,6 +1,26 @@
 # UI Redesign Notes
 
-## Scope completed in this pass
+## Scope completed in this pass (responsive polish + live theming)
+
+This follow-up pass focused on two concrete gaps that were still hurting the product feel:
+
+1. **too much friction / vertical sprawl in the operator surfaces**
+2. **palette changes were not propagating reliably or visibly enough across the actual app shell**
+
+Primary goal:
+
+> make the product feel tighter and more intentional on mobile + desktop, and make theme selection behave like a real runtime feature instead of a half-applied cosmetic setting.
+
+Concretely, this pass targeted:
+- admin shell / dashboard density and quick actions
+- unlock / credits dialog compactness
+- settings layout clarity
+- kiosk screen visual polish
+- theme token propagation from settings → active frontend surfaces
+
+---
+
+## Previous pass: credits-only unlock cleanup
 
 This pass focused on **removing pricing confusion from the active local product surface**.
 
@@ -20,6 +40,70 @@ This was not a licensing pass and not a finance-ledger redesign.
 ---
 
 ## What changed
+
+### 0) Palette application is now a real runtime pipeline
+
+This was the main functional fix in this pass.
+
+Before:
+- settings stored `branding.palette_id`
+- frontend only pushed a few raw hex CSS vars
+- many real surfaces still rendered from separate shadcn / utility tokens
+- long-lived kiosk / overlay windows did not actively refresh settings after startup
+
+Now:
+- palette selection is translated into the raw app color vars **and** the shadcn semantic token set (`--background`, `--card`, `--primary`, `--ring`, etc.)
+- the admin shell, dialogs, cards, buttons, and kiosk surfaces can visibly react to the chosen palette instead of staying mostly zinc/amber
+- kiosk / overlay / public live surfaces refresh settings periodically and on focus/visibility recovery so runtime palette changes propagate without needing a manual full reload
+
+Important implementation detail:
+- `/admin/settings` intentionally does **not** run the same background refresh loop, so unsaved edits in the settings form do not get stomped by live polling
+
+If theme behavior ever regresses again, the path to inspect is now:
+
+`branding.palette_id -> palettes[] -> SettingsContext -> applyPaletteToDocument() -> CSS vars + shadcn vars -> admin/kiosk surfaces`
+
+### 0.5) Dashboard activation is faster now
+
+The dashboard now surfaces locked boards in a dedicated **quick unlock** block near the top.
+
+What changed:
+- locked boards appear before the long detail list
+- operator can do a one-tap unlock with the default credit bundle
+- detailed dialog is still available, but no longer required for the common case
+
+Why:
+- reaching board activation was still taking too much scroll and too much intent
+- the default venue action should be obvious and near the top
+
+### 0.6) Unlock / top-up dialogs are more compact
+
+The credit dialog was tightened into a faster operator tool:
+- less explanatory wall text
+- quick credit presets
+- price summary stays visible without feeling like a billing wizard
+- denser footer/actions
+
+The extend / top-up dialog received the same treatment so it feels consistent.
+
+### 0.7) Admin shell and settings are less bloated
+
+This pass reduced visual drag in the operator UI:
+- tighter page shells and card spacing
+- more compact mobile header / sidebar feel
+- settings tab strip made denser and horizontally scrollable on smaller screens
+- palette tab now includes a stronger live preview surface so the chosen theme is easier to evaluate quickly
+
+### 0.8) Kiosk screens now reflect the selected palette more clearly
+
+The locked, setup, in-game, blocked, observer fallback, and credits overlay surfaces were updated so the chosen palette reaches real visible chrome:
+- top bars
+- cards / panels
+- action buttons
+- warning / accent states
+- overlay colors
+
+This is intentionally still restrained — operator/kiosk clarity stays more important than “theme fireworks” — but the palette now visibly matters.
 
 ### 1) Dashboard unlock flow is now credits-only
 

@@ -38,22 +38,22 @@ function TopPlayersRotation() {
   const player = players[current];
 
   return (
-    <div className="rounded-3xl border border-zinc-800 bg-zinc-950/75 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="top-players-rotation">
+    <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.58)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="top-players-rotation">
       <div className="flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[rgb(var(--color-primary-rgb)/0.16)] text-[var(--color-primary)]">
           <Crown className="h-5 w-5" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{t('top_players_today')}</p>
+          <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--color-text-muted)]">{t('top_players_today')}</p>
           <div className="mt-1 flex items-center gap-2">
-            <span className="truncate text-lg font-semibold text-white" data-testid="top-player-name">{player.nickname}</span>
-            <span className="text-xs text-zinc-500">{player.games_won}W / {player.games_played}G</span>
+            <span className="truncate text-lg font-semibold text-[var(--color-text)]" data-testid="top-player-name">{player.nickname}</span>
+            <span className="text-xs text-[var(--color-text-secondary)]">{player.games_won}W / {player.games_played}G</span>
           </div>
         </div>
         {players.length > 1 && (
           <div className="flex gap-1">
             {players.map((_, index) => (
-              <div key={index} className={`h-1.5 w-1.5 rounded-full ${index === current ? 'bg-amber-500' : 'bg-zinc-700'}`} />
+              <div key={index} className={`h-1.5 w-1.5 rounded-full ${index === current ? 'bg-[var(--color-primary)]' : 'bg-[rgb(var(--color-border-rgb)/0.9)]'}`} />
             ))}
           </div>
         )}
@@ -123,8 +123,8 @@ function TopStammkundenRotation() {
             <ShieldCheck className="h-5 w-5" />
           </div>
           <div>
-            <p className="text-sm text-zinc-200">{t('become_stammkunde')}</p>
-            <p className="text-xs text-zinc-500">{t('become_stammkunde_desc')}</p>
+            <p className="text-sm text-[var(--color-text)]">{t('become_stammkunde')}</p>
+            <p className="text-xs text-[var(--color-text-secondary)]">{t('become_stammkunde_desc')}</p>
           </div>
         </div>
       </div>
@@ -136,14 +136,14 @@ function TopStammkundenRotation() {
   const displayName = player.nickname.length > maxLen ? `${player.nickname.slice(0, maxLen)}...` : player.nickname;
 
   return (
-    <div className="rounded-3xl border border-amber-500/20 bg-[linear-gradient(135deg,rgba(245,158,11,0.10),rgba(24,24,27,0.95))] p-4 shadow-[0_20px_48px_rgba(0,0,0,0.28)]" data-testid="top-stammkunden-rotation">
+    <div className="rounded-3xl border border-[rgb(var(--color-primary-rgb)/0.24)] bg-[linear-gradient(135deg,rgb(var(--color-primary-rgb)/0.14),rgb(var(--color-surface-rgb)/0.96))] p-4 shadow-[0_20px_48px_rgba(0,0,0,0.28)]" data-testid="top-stammkunden-rotation">
       <div className="mb-3 flex items-center gap-2">
-        <Trophy className="h-4 w-4 text-amber-400" />
-        <p className="text-[11px] uppercase tracking-[0.28em] text-amber-300">{t('top_stammkunden')}</p>
+        <Trophy className="h-4 w-4 text-[var(--color-primary)]" />
+        <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-primary)]">{t('top_stammkunden')}</p>
         {players.length > 1 && (
           <div className="ml-auto flex gap-1">
             {players.map((_, index) => (
-              <div key={index} className={`h-1.5 w-1.5 rounded-full ${index === current ? 'bg-amber-400' : 'bg-zinc-700'}`} />
+              <div key={index} className={`h-1.5 w-1.5 rounded-full ${index === current ? 'bg-[var(--color-primary)]' : 'bg-[rgb(var(--color-border-rgb)/0.9)]'}`} />
             ))}
           </div>
         )}
@@ -151,22 +151,22 @@ function TopStammkundenRotation() {
 
       <div className={`transition-opacity duration-300 ${fade ? 'opacity-100' : 'opacity-0'}`} data-testid="stammkunde-card">
         <div className="flex items-center gap-4">
-          <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${current === 0 ? 'bg-amber-500/20 text-amber-300' : current === 1 ? 'bg-zinc-700 text-zinc-200' : 'bg-orange-500/15 text-orange-300'}`}>
+          <div className={`flex h-12 w-12 items-center justify-center rounded-2xl ${current === 0 ? 'bg-[rgb(var(--color-primary-rgb)/0.18)] text-[var(--color-primary)]' : current === 1 ? 'bg-[rgb(var(--color-border-rgb)/0.65)] text-[var(--color-text)]' : 'bg-[rgb(var(--color-accent-rgb)/0.14)] text-[var(--color-text)]'}`}>
             <span className="font-heading text-lg font-bold">#{current + 1}</span>
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
-              <span className="truncate text-lg font-semibold text-white" data-testid="stammkunde-name">{displayName}</span>
+              <span className="truncate text-lg font-semibold text-[var(--color-text)]" data-testid="stammkunde-name">{displayName}</span>
               <ShieldCheck className="h-4 w-4 text-emerald-400" />
             </div>
-            <div className="mt-1 flex items-center gap-3 text-xs text-zinc-400">
+            <div className="mt-1 flex items-center gap-3 text-xs text-[var(--color-text-secondary)]">
               <span>{player.games_won}S / {player.games_played}G</span>
-              <span className="text-zinc-600">•</span>
+              <span className="text-[var(--color-text-muted)]">•</span>
               <span>{player.win_rate}% Quote</span>
             </div>
           </div>
           {player.highlight && (
-            <div className="rounded-2xl border border-zinc-700 bg-zinc-950/80 px-3 py-2 text-xs font-semibold text-zinc-200" data-testid="stammkunde-highlight">
+            <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.62)] px-3 py-2 text-xs font-semibold text-[var(--color-text)]" data-testid="stammkunde-highlight">
               {player.highlight.label}
             </div>
           )}
@@ -209,17 +209,17 @@ function PairingCode() {
   const pct = Math.max(0, (remaining / 60) * 100);
 
   return (
-    <div className="rounded-3xl border border-zinc-800 bg-zinc-950/75 p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="pairing-code-display">
+    <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.58)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="pairing-code-display">
       <div className="flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-amber-500/15 text-amber-400">
+        <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[rgb(var(--color-primary-rgb)/0.16)] text-[var(--color-primary)]">
           <Shield className="h-5 w-5" />
         </div>
         <div>
-          <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{t('pairing_code')}</p>
-          <p className="text-2xl font-mono font-bold tracking-[0.25em] text-white" data-testid="pairing-code-value">{code}</p>
+          <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--color-text-muted)]">{t('pairing_code')}</p>
+          <p className="text-2xl font-mono font-bold tracking-[0.25em] text-[var(--color-text)]" data-testid="pairing-code-value">{code}</p>
         </div>
-        <div className="ml-auto w-16 overflow-hidden rounded-full bg-zinc-800">
-          <div className="h-1.5 bg-amber-500 transition-all duration-1000 ease-linear" style={{ width: `${pct}%` }} />
+        <div className="ml-auto w-16 overflow-hidden rounded-full bg-[rgb(var(--color-bg-rgb)/0.65)]">
+          <div className="h-1.5 bg-[var(--color-primary)] transition-all duration-1000 ease-linear" style={{ width: `${pct}%` }} />
         </div>
       </div>
     </div>
@@ -254,63 +254,63 @@ export default function LockedScreen({ branding, pricing, boardId }) {
   }, []);
 
   return (
-    <div className="relative h-full w-full overflow-hidden bg-zinc-950" data-testid="locked-screen">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(245,158,11,0.16),transparent_30%),linear-gradient(180deg,rgba(9,9,11,0.96),rgba(9,9,11,1))]" />
+    <div className="relative h-full w-full overflow-hidden bg-[var(--color-bg)]" data-testid="locked-screen">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgb(var(--color-primary-rgb)/0.18),transparent_30%),linear-gradient(180deg,rgb(var(--color-bg-rgb)/0.96),var(--color-bg))]" />
       <div className="absolute inset-0 opacity-[0.08] texture-overlay" />
 
-      <div className="relative z-10 flex h-full flex-col px-6 py-6 lg:px-10 lg:py-8">
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between rounded-3xl border border-zinc-800/80 bg-zinc-950/70 px-5 py-4 backdrop-blur">
+      <div className="relative z-10 flex h-full flex-col px-4 py-4 lg:px-8 lg:py-6">
+        <div className="mx-auto flex w-full max-w-7xl items-center justify-between rounded-3xl border border-[rgb(var(--color-border-rgb)/0.8)] bg-[rgb(var(--color-bg-rgb)/0.66)] px-4 py-3 backdrop-blur lg:px-5">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500">Board {boardId}</p>
-            <h1 className="mt-1 text-2xl font-heading uppercase tracking-[0.08em] text-white">{branding.cafe_name}</h1>
-            {branding.subtitle && <p className="text-sm text-zinc-500">{branding.subtitle}</p>}
+            <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-text-muted)]">Board {boardId}</p>
+            <h1 className="mt-1 text-xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] lg:text-2xl">{branding.cafe_name}</h1>
+            {branding.subtitle && <p className="text-sm text-[var(--color-text-secondary)]">{branding.subtitle}</p>}
           </div>
-          <div className="rounded-full border border-zinc-800 bg-zinc-900/80 px-4 py-2 text-sm text-zinc-300">
+          <div className="rounded-full border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.74)] px-4 py-2 text-sm text-[var(--color-text-secondary)]">
             Admin Panel: <span className="font-mono text-white">/admin</span>
           </div>
         </div>
 
-        <div className="mx-auto grid w-full max-w-7xl flex-1 gap-6 py-8 lg:grid-cols-[1.2fr,0.8fr] lg:items-center">
-          <div className="space-y-6">
-            <div className="inline-flex h-20 w-20 items-center justify-center rounded-3xl border border-zinc-800 bg-zinc-900/80 text-zinc-400 shadow-[0_16px_48px_rgba(0,0,0,0.28)]">
+        <div className="mx-auto grid w-full max-w-7xl flex-1 gap-5 py-5 lg:grid-cols-[1.2fr,0.8fr] lg:items-center lg:py-7">
+          <div className="space-y-5">
+            <div className="inline-flex h-16 w-16 items-center justify-center rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.8)] text-[var(--color-text-secondary)] shadow-[0_16px_48px_rgba(0,0,0,0.28)] lg:h-20 lg:w-20">
               <Lock className="h-10 w-10" strokeWidth={2.2} />
             </div>
             <div>
-              <h2 className="text-4xl font-heading uppercase tracking-[0.08em] text-white md:text-6xl" data-testid="locked-message">
+              <h2 className="text-3xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] md:text-5xl lg:text-6xl" data-testid="locked-message">
                 {kioskTexts.locked_title || t('locked')}
               </h2>
-              <p className="mt-4 max-w-2xl text-lg leading-8 text-zinc-400">
+              <p className="mt-3 max-w-2xl text-base leading-7 text-[var(--color-text-secondary)] lg:text-lg lg:leading-8">
                 {kioskTexts.locked_subtitle || t('locked_message')}
               </p>
               {kioskTexts.pricing_hint && (
-                <p className="mt-3 text-sm uppercase tracking-[0.22em] text-amber-300">{kioskTexts.pricing_hint}</p>
+                <p className="mt-3 text-sm uppercase tracking-[0.22em] text-[var(--color-primary)]">{kioskTexts.pricing_hint}</p>
               )}
             </div>
 
-            <div className="grid gap-4 md:grid-cols-3" data-testid="pricing-info">
-              <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
-                <div className="flex items-center gap-2 text-sm text-zinc-500">
-                  <WalletCards className="h-4 w-4 text-amber-400" />
+            <div className="grid gap-3 md:grid-cols-3" data-testid="pricing-info">
+              <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
+                <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+                  <WalletCards className="h-4 w-4 text-[var(--color-primary)]" />
                   Credits
                 </div>
-                <p className="mt-4 text-3xl font-semibold text-white">{formatPrice(pricing.per_game?.price_per_credit || 2.0)}</p>
-                <p className="mt-2 text-sm text-zinc-500">Preis pro Credit am Board</p>
+                <p className="mt-3 text-2xl font-semibold text-[var(--color-text)] lg:text-3xl">{formatPrice(pricing.per_game?.price_per_credit || 2.0)}</p>
+                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Preis pro Credit</p>
               </div>
-              <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
-                <div className="flex items-center gap-2 text-sm text-zinc-500">
-                  <Users className="h-4 w-4 text-amber-400" />
+              <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
+                <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+                  <Users className="h-4 w-4 text-[var(--color-primary)]" />
                   Matchstart
                 </div>
-                <p className="mt-4 text-3xl font-semibold text-white">1 Credit / Spieler</p>
-                <p className="mt-2 text-sm text-zinc-500">Die echte Abbuchung passiert erst beim echten Match.</p>
+                <p className="mt-3 text-2xl font-semibold text-[var(--color-text)] lg:text-3xl">1 Credit / Spieler</p>
+                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Abbuchung erst beim echten Match.</p>
               </div>
-              <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
-                <div className="flex items-center gap-2 text-sm text-zinc-500">
-                  <Target className="h-4 w-4 text-amber-400" />
+              <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
+                <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+                  <Target className="h-4 w-4 text-[var(--color-primary)]" />
                   Freischaltung
                 </div>
-                <p className="mt-4 text-3xl font-semibold text-white">{pricing.per_game?.default_credits || 3} Credits</p>
-                <p className="mt-2 text-sm text-zinc-500">Typischer Startwert, Nachladen jederzeit an der Theke.</p>
+                <p className="mt-3 text-2xl font-semibold text-[var(--color-text)] lg:text-3xl">{pricing.per_game?.default_credits || 3} Credits</p>
+                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Typischer Startwert am Tresen.</p>
               </div>
             </div>
           </div>
@@ -318,11 +318,11 @@ export default function LockedScreen({ branding, pricing, boardId }) {
           <div className="space-y-4">
             <PairingCode />
             {qrConfig?.enabled && baseUrl ? (
-              <div className="rounded-3xl border border-zinc-800 bg-zinc-950/75 p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="lockscreen-qr">
+              <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.58)] p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="lockscreen-qr">
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">{qrConfig.label || 'Leaderboard'}</p>
-                    <p className="mt-2 text-sm leading-6 text-zinc-400">Stats & Ergebnisse direkt am Handy ansehen.</p>
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--color-text-muted)]">{qrConfig.label || 'Leaderboard'}</p>
+                    <p className="mt-2 text-sm leading-6 text-[var(--color-text-secondary)]">Stats & Ergebnisse direkt am Handy ansehen.</p>
                   </div>
                   <div className="rounded-2xl bg-white p-2">
                     <QRCodeSVG value={`${baseUrl}${qrConfig.path || '/public/leaderboard'}`} size={72} bgColor="#ffffff" fgColor="#09090b" level="L" />
@@ -335,8 +335,8 @@ export default function LockedScreen({ branding, pricing, boardId }) {
           </div>
         </div>
 
-        <div className="mx-auto w-full max-w-7xl rounded-3xl border border-zinc-800 bg-zinc-950/70 px-5 py-4 text-sm text-zinc-400 backdrop-blur">
-          Unlocks laufen lokal über den Operator. Kein Lizenz-/Zentral-Noise auf dem Startscreen — nur das, was Gäste hier wirklich brauchen.
+        <div className="mx-auto w-full max-w-7xl rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.56)] px-5 py-3 text-sm text-[var(--color-text-secondary)] backdrop-blur">
+          Freischaltung läuft lokal über den Operator. Gäste sehen hier nur das, was gerade zählt.
         </div>
       </div>
     </div>
