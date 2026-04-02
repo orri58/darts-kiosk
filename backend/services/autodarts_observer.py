@@ -1162,10 +1162,48 @@ class AutodartsObserver:
 
         return None, "text"
 
-    def _extract_match_id(self, channel: str) -> Optional[str]:
-        """Extract match UUID from an Autodarts channel name."""
-        m = re.search(r'autodarts\.matches\.([a-f0-9-]+)', channel, re.IGNORECASE)
-        return m.group(1) if m else None
+    def _extract_match_id(self, channel: str, payload: Any | None = None) -> Optional[str]:
+        """Extract match UUID from channel/topic/payload.
+
+        Live Autodarts frames are not always normalized the same way in our capture
+        path. Sometimes the channel string is clean (`autodarts.matches.<uuid>`),
+        sometimes the raw logging/capture path already contains mixed topic data,
+        while the reliable UUID still exists in `data.matchId` or `topic`.
+        """
+        candidates: list[str] = []
+        if isinstance(channel, str) and channel:
+            candidates.append(channel)
+
+        if isinstance(payload, dict):
+            for value in (
+                payload.get('topic'),
+                payload.get('matchId'),
+                payload.get('match_id'),
+            ):
+                if isinstance(value, str) and value:
+                    candidates.append(value)
+
+            data = payload.get('data')
+            if isinstance(data, dict):
+                for value in (
+                    data.get('topic'),
+                    data.get('matchId'),
+                    data.get('match_id'),
+                    data.get('id'),
+                ):
+                    if isinstance(value, str) and value:
+                        candidates.append(value)
+
+        for candidate in candidates:
+            m = re.search(r'autodarts\.matches\.([a-f0-9-]+)', candidate, re.IGNORECASE)
+            if m:
+                return m.group(1)
+
+            m = re.search(r'([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})', candidate, re.IGNORECASE)
+            if m:
+                return m.group(1)
+
+        return None
 
     def _payload_player_snapshot(self, payload: Any) -> tuple[Optional[int], list[str]]:
         names: list[str] = []
@@ -1438,7 +1476,7 @@ class AutodartsObserver:
         decision = self._trigger_policy.classify_ws(interpretation, channel)
 
         # ── Track match ID from channel ──
-        match_id = self._extract_match_id(channel)
+        match_id = self._extract_match_id(channel, payload)
         if match_id:
             ws.last_match_id = match_id
 

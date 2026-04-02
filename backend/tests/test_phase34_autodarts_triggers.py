@@ -38,6 +38,21 @@ def test_state_active_is_classified_as_authoritative_match_start(observer):
     assert interpretation == "match_start_state_active"
 
 
+def test_extract_match_id_falls_back_to_payload_match_id(observer):
+    payload = {
+        "channel": "autodarts.matches",
+        "topic": "019d4f60-fa34-7130-b354-5fb5b5a7c718.game-events",
+        "data": {
+            "event": "throw",
+            "matchId": "019d4f60-fa34-7130-b354-5fb5b5a7c718",
+        },
+    }
+
+    match_id = observer._extract_match_id('autodarts.matches","topic":"019d4f60-fa34-7130-b354-5fb5b5a7c718.game-events', payload)
+
+    assert match_id == "019d4f60-fa34-7130-b354-5fb5b5a7c718"
+
+
 def test_assistive_finish_signal_is_pending_only(observer, monkeypatch):
     scheduled = []
     monkeypatch.setattr(observer, "_schedule_immediate_finalize", lambda trigger, match_id: scheduled.append((trigger, match_id)))
