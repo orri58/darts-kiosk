@@ -772,6 +772,17 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
     status = observer_manager.get_status(board_id)
     logger.info(f"[Kiosk] Observer post-start: state={status['state']} browser_open={status['browser_open']}")
 
+    if status.get("browser_open") and status.get("state") not in {"auth_required", "error", "closed"}:
+        try:
+            from backend.services.window_manager import hide_kiosk_window, ensure_autodarts_foreground
+            await asyncio.sleep(0.3)
+            await hide_kiosk_window()
+            await asyncio.sleep(0.2)
+            await ensure_autodarts_foreground()
+            logger.info(f"[Kiosk] Observer foreground handoff completed board={board_id}")
+        except Exception as exc:
+            logger.warning(f"[Kiosk] Observer foreground handoff failed board={board_id}: {exc}")
+
 
 async def stop_observer_for_board(board_id: str, reason: str = "unknown"):
     logger.info(f"[Kiosk] Stopping observer for {board_id} reason={reason}")

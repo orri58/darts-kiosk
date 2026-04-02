@@ -357,6 +357,12 @@ async def lock_board(board_id: str, user: User = Depends(get_current_user), db: 
     observer_manager.set_desired_state(board_id, "stopped")
     asyncio.create_task(stop_observer_for_board(board_id, reason="manual_lock"))
 
+    try:
+        from backend.routers.kiosk import return_to_kiosk_ui
+        asyncio.create_task(return_to_kiosk_ui(board_id, should_lock=True))
+    except Exception:
+        pass
+
     return {"message": "Board locked", "board_id": board_id}
 
 
