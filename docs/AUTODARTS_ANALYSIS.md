@@ -452,12 +452,12 @@ This repo has notable drift around the Autodarts integration.
    - this means portions of the test corpus describe a different implementation than the one shipping now
 
 5. **Stale report drift**
-   - `test_reports/pytest/pytest_autodarts.xml` reports failures for `backend/tests/test_autodarts_integration.py`
-   - that referenced test file is not present in the current tree
+   - historical `test_reports/*` artifacts previously referenced failures for `backend/tests/test_autodarts_integration.py`
+   - those generated report files were removed from the tracked repo because the referenced test file is not present in the current tree
 
 6. **Coverage drift across variants**
-   - `test_reports/autodarts_soak_report.json` reports 301/501/Cricket/Training only
-   - no equivalent evidence there for Gotcha / tricky variant behavior
+   - historical soak-report artifacts only mentioned 301/501/Cricket/Training coverage
+   - no equivalent evidence was preserved there for Gotcha / tricky variant behavior
 
 ### Why this matters
 

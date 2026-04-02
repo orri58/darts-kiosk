@@ -2,61 +2,76 @@
 
 ## Executive summary
 
-The repo is now in a **coherent local-core state**:
-- core docs are aligned with the current runtime
-- the protected local board/session/autodarts/pricing flows have focused in-process coverage
-- Windows operator scripts and smoke tooling are documented
-- central/adapter code is described as optional rather than magically absent
+The repo is in a better product state again:
+- the active operator flow is now **credits-only**
+- unlock/freischalten no longer asks for player count
+- actual credit deduction happens later on authoritative match start, using the real player situation
+- time-based and other pricing variants are no longer exposed as first-class operator choices in the main local UI
+- stale generated test-report artifacts and old packaging noise were removed from the tracked repo/build surface
 
-That said, this is **not yet fully production-proven**.
+This is a meaningful cleanup/product pass, not just copy polish.
 
-## Operator surface update (latest pass)
+It is still **not fully production-proven** until somebody does a real Windows + Autodarts validation pass.
 
-A new operator-facing polish pass has now landed on top of the local core:
-- admin navigation was reorganized around real venue tasks
-- dashboard / boards / revenue / settings were upgraded for clearer day-to-day operation
-- reports / discovery / health / system were brought onto the same admin surface language and reframed more honestly
-- kiosk locked / in-game / result / observer-fallback screens were made more coherent and production-like
-- trigger-policy configuration now has a guarded admin UI plus backend validation/metadata support
-- board API responses were corrected to expose Autodarts target / agent endpoint fields needed by the admin board editor
+## Latest pass: credits-only unlock cleanup
 
-Notable correctness fixes in this batch:
-- reports now treat custom end dates as end-of-day instead of effectively midnight cutoffs
-- health now reflects the actual backend health payload (`observer_metrics`, `agent_status`, `recent_errors`) instead of stale/incorrect assumptions
-- authenticated screenshot previews in health now work through blob loading rather than broken direct image URLs
+### Product decisions implemented
+- board unlock now uses a credits-only operator flow
+- operator enters credits and unlocks the board
+- player count is no longer part of the unlock dialog
+- `per_player` remains the active backend mode under the hood, but it now seeds from entered credits instead of player count
+- actual deduction happens on authoritative match start using detected/setup player count
+- `per_time` and similar pricing complexity were removed from the active admin/kiosk unlock surfaces
+- reports now label legacy pricing modes honestly instead of presenting them like current product defaults
 
-What was validated in this pass:
-- `frontend` production build completed successfully after the UI changes
-- `frontend` production build completed successfully again after the reports / discovery / health / system cleanup
-- `backend/tests/test_phase34_autodarts_triggers.py` passed (`8 passed`)
-- trigger metadata + board response schema changes were smoke-checked by direct runtime imports
+### UI surfaces updated
+- **Admin dashboard**
+  - freischalten dialog simplified to credits + price only
+  - no more pricing-mode toggle in the main unlock flow
+  - no more player-count field in unlock
+  - session cards now describe credits-based vs legacy sessions more honestly
+- **Admin settings**
+  - pricing tab now presents the current product as credits-only
+  - per-time tuning is no longer shown as an active operator choice
+  - pricing saves normalize back to `per_player` as the active local mode
+- **Kiosk screens**
+  - locked screen now explains credits / match-start billing instead of showing time offers
+  - setup screen shows credits availability for the active flow
+  - in-game screen correctly treats `per_player` as a credits mode instead of falling into the time UI branch
+  - result/overlay copy now says credits rather than “games left” where that was misleading
+- **Portal surfaces (light cleanup)**
+  - remote unlock dialog also follows the credits-only unlock model
+  - portal pricing summary now frames the active model as credits / matchstart instead of time-heavy mode switching
+- **Reports**
+  - current mode is labeled `Credits / Matchstart`
+  - old `per_game` / `per_time` entries are explicitly marked legacy
 
-Known validation limit for this pass:
-- wider backend test subsets in this sandbox still hit missing environment dependencies in the provided venv (`httpx`, `requests`) before full collection, so broader reruns are still environment-blocked here
-- one unrelated existing frontend lint warning remains in `src/pages/admin/SetupWizard.js` (`react-hooks/exhaustive-deps`); it predates this batch and does not block production build output here
-
-The missing proof is outside this sandbox:
-- no real Windows board PC validation here
-- no live Autodarts session exercised here
-- no long-duration venue-style soak test here
+### Backend/runtime changes
+- default pricing mode is now `per_player`
+- pricing settings sanitize invalid mode → `per_player`
+- unlock schema defaults to `per_player` and no longer assumes a player prompt
+- `initial_credit_seed()` for `per_player` now uses entered credits when present
+- board unlock validates credits/time more explicitly
+- remote action poller defaults were aligned with the credits-only model
+- unlock sessions can start with `players_count = 0` until real setup/match data exists
 
 ## What is currently validated
 
 Validated in-process with the focused backend subset:
-- board unlock creates an active session and unlocks the board
-- board lock cancels the active session and returns the board to `locked`
-- kiosk start-game registration persists player names and count
-- authoritative Autodarts start charges `per_player` once and only once
-- authoritative finish charges `per_game` once per completed game
+- credits-only unlock creates an active `per_player` session seeded from entered credits
+- unlock no longer requires a player-count prompt to create the session
+- kiosk setup still records player names/count for the current session
+- authoritative start deducts the actual player count from the credit seed
+- insufficient credits still enter `blocked_pending` safely
+- authoritative finish still handles legacy `per_game` correctly
 - assistive finish hints do not consume `per_game` credits
 - abort-before-start does not consume `per_player` capacity
-- keep-alive vs teardown follows remaining capacity
-- optional adapter/background services start non-blockingly
-- revenue summary excludes active sessions and handles nullable sale totals safely
+- keep-alive vs teardown still follows remaining capacity
+- revenue summary still excludes active sessions and tolerates nullable sale totals
 
 ## What was actually run
 
-Executed command:
+Executed commands:
 
 ```bash
 source .venv/bin/activate
@@ -67,35 +82,41 @@ python -m pytest -q \
   backend/tests/test_phase789_local_core_validation.py
 ```
 
-Observed result:
-- `21 passed`
+Result:
+- `34 passed`
 
-## What those tests cover
+And:
 
-### Trigger authority
-- `backend/tests/test_phase34_autodarts_triggers.py`
-- validates authoritative vs assistive signal handling inside observer logic
+```bash
+cd frontend
+npm run build
+```
 
-### Pricing / credits core
-- `backend/tests/test_phase34_credits_pricing.py`
-- validates per-player start billing, per-game finish billing, and abort behavior
+Result:
+- production build completed successfully
+- one pre-existing ESLint warning remains in `src/pages/admin/SetupWizard.js` (`react-hooks/exhaustive-deps`)
 
-### Optional adapter hardening
-- `backend/tests/test_phase56_stability_installation.py`
-- validates non-blocking startup and fixed WS broadcast usage for optional sync/poller paths
+## Repo/build-surface cleanup done in this pass
 
-### Local-core lifecycle validation
-- `backend/tests/test_phase789_local_core_validation.py`
-- validates unlock/lock, session lifecycle, authoritative start/finish behavior, assistive no-charge behavior, and revenue summary behavior
+Cleaned up:
+- tracked historical files under `test_reports/` (generated snapshots / XML outputs)
+- stale generated file `release/build/requirements-core.txt`
+- stale version-pinned doc `release/INSTALL_GUIDE_v345.md`
+- broken/noisy root `.gitignore` replaced with a clean deterministic version
+- new `.dockerignore` added so local build context stops dragging along runtime/build/test clutter
+
+This is intentionally conservative cleanup:
+- remove misleading generated artifacts and packaging noise
+- keep the working local-core codebase intact
+- avoid aggressive deletion of potentially useful implementation history
 
 ## What is only partially validated
 
-These areas are better documented and partly simulated, but not field-proven here:
-- persistent Chrome profile reuse on a real board PC
-- window focus / foreground choreography between kiosk and Autodarts on Windows
-- live Autodarts account state, reconnects, and real WS event variations
-- real operator workflows around every remaining legacy/optional surface
-- accounting expectations beyond local session-sale summaries
+Still only partly proven here:
+- real Windows board-PC operator flow with the new copy/order of actions
+- live Autodarts sessions and reconnect behavior over long runtimes
+- touch-first operator usage on actual kiosk/admin devices
+- whether every optional central/licensing surface now feels equally current
 
 ## What still needs live validation before strong production claims
 
@@ -103,12 +124,12 @@ Minimum live checklist:
 1. real Windows machine install via `release/windows/setup_windows.bat`
 2. real Autodarts login/profile prep via `release/windows/setup_profile.bat`
 3. successful `start.bat` + `smoke_test.bat`
-4. real unlock on the target board
-5. real authoritative match start observed
-6. real authoritative finish observed
-7. one keep-alive case (`per_game` credits remain)
-8. one session-end case (credits exhausted or time expired)
-9. manual lock during active session
+4. real credits-only unlock on the target board
+5. real authoritative match start observed with correct player-count deduction
+6. real blocked-pending recovery via staff top-up
+7. real authoritative finish observed
+8. one keep-alive case with credits remaining
+9. one session-end case with credits exhausted
 10. restart/recovery behavior after a stop/start cycle
 
 ## Production-readiness statement
@@ -122,17 +143,17 @@ Minimum live checklist:
 
 ### Not yet proven enough for
 - blanket “deploy everywhere” claims
-- unattended venue rollout without a real-machine test pass
-- claiming long-running Autodarts/Windows reliability from repository tests alone
+- unattended venue rollout without a real-machine validation pass
+- claiming long-running Autodarts/Windows reliability from repo tests alone
 
 ## Current recommendation
 
-The next highest-value step is not more architecture prose and probably not another cosmetic admin pass either.
+The next highest-value step is now a **real-machine operator validation pass**, not another abstract pricing redesign.
 
-It is one disciplined live validation pass on a real Windows board PC with a real Autodarts session, while collecting:
-- `data/logs/app.log`
-- `logs/backend.log`
-- `data/autodarts_debug/*`
-- smoke test output
+Specifically:
+- run the new credits-only unlock flow on a real Windows board PC
+- observe one real match start with 1 player and one with multiple players
+- verify blocked-pending + top-up behavior in the field
+- capture logs/screenshots while doing it
 
-That is the remaining gap between “good repo state” and “credible production claim.”
+That is the remaining gap between “clean repo/product surface” and “credible production claim.”

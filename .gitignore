@@ -1,13 +1,13 @@
-# === Runtime Data (NEVER committed) ===
-data/
-logs/
-backups/
-chrome_profile/
+# Runtime data
+/data/
+/logs/
+/backups/
+/chrome_profile/
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal
 
-# === Environment & Secrets ===
+# Environment / secrets
 *.env
 *.env.*
 backend/.env
@@ -16,25 +16,49 @@ secrets/
 *token.json*
 *credentials.json*
 
-# === Build Artifacts ===
-frontend/build/
-frontend/node_modules/
+# Dependencies / virtualenvs
 node_modules/
-release/build/
-release/*.zip
-release/*.tar.gz
+frontend/node_modules/
+.venv/
+venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.pytest_cache/
 *.egg-info/
-dist/
-/build
-.venv/
-venv/
 
-# === IDE & OS ===
+# Frontend / build artifacts
+frontend/build/
+release/build/
+dist/
+build/
+coverage/
+.cache/
+
+# Test / scratch outputs
+.pytest_cache/
+test_reports/
+test_result.md
+memory/
+.emergent/
+
+# Update/runtime staging
+/data/downloads/
+/data/update_staging/
+/data/app_backups/
+/data/update_manifest.json
+/data/update_result.json
+
+# Archives / packages
+*.zip
+*.tar.gz
+*.tar
+*.tgz
+*.pack
+*.deb
+*.dylib
+
+# IDE / OS
 .vscode/
 .idea/
 *.swp
@@ -45,169 +69,8 @@ Thumbs.db
 desktop.ini
 *.pem
 
-# === Logs ===
+# Logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 dump.rdb
-
-# === Emergent Platform (dev only) ===
-.emergent/
-test_reports/
-test_result.md
-memory/
-
-# === Update System Runtime ===
-data/downloads/
-data/update_staging/
-data/app_backups/
-data/update_manifest.json
-data/update_result.json
-
-# === Archive files ===
-**/*.zip
-**/*.tar.gz
-**/*.tar
-**/*.tgz
-*.pack
-*.deb
-*.dylib
-
-# === Other ===
-/coverage
-/.next/
-/out/
-.vercel
-.cache/
-.chainlit
-chainlit.md
-.ipynb_checkpoints/
-frontend/node_modules/.cache/default-development/11.pack
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/12.pack
-frontend/node_modules/.cache/default-development/15.pack
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/16.pack
-frontend/node_modules/.cache/default-development/4.pack
-frontend/node_modules/.cache/default-development/21.pack
-frontend/node_modules/.cache/default-development/6.pack
-frontend/node_modules/.cache/default-development/1.pack
-frontend/node_modules/.cache/default-development/25.pack
-frontend/node_modules/.cache/default-development/28.pack
-frontend/node_modules/.cache/default-development/29.pack
-frontend/node_modules/.cache/default-development/31.pack
-frontend/node_modules/.cache/default-development/33.pack
-frontend/node_modules/.cache/default-development/36.pack
-frontend/node_modules/.cache/default-development/37.pack
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/38.pack
-frontend/node_modules/.cache/default-development/43.pack
-frontend/node_modules/.cache/default-development/45.pack
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/40.pack
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/47.pack
-frontend/node_modules/.cache/default-development/0.pack
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/7.pack
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
-frontend/node_modules/.cache/default-development/3.pack
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
-release/build/darts-kiosk-v3.13.0-source.zip
-release/darts-kiosk-v3.13.0-source.zip
--e 
-# Environment files
-*.env
-*.env.*
-release/darts-kiosk-v3.14.0-source.zip
-release/build/darts-kiosk-v3.14.0-source.zip
-release/build/darts-kiosk-v3.14.0-source/release/darts-kiosk-v3.13.0-source.zip
-frontend/node_modules/.cache/default-development/2.pack
--e 
-# Environment files
-*.env
-*.env.*
-release/build/darts-kiosk-v3.15.0-source/release/darts-kiosk-v3.14.0-source.zip
-release/build/darts-kiosk-v3.15.0-source/release/darts-kiosk-v3.13.0-source.zip
-release/build/darts-kiosk-v3.15.0-source.zip
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
-release/build/darts-kiosk-v3.15.1-source/release/darts-kiosk-v3.14.0-source.zip
-release/build/darts-kiosk-v3.15.1-source/release/darts-kiosk-v3.13.0-source.zip
-release/build/darts-kiosk-v3.15.1-source.zip
--e 
-# Environment files
-*.env
-*.env.*
-release/build/darts-kiosk-v3.15.2-source.zip
-release/build/darts-kiosk-v3.15.2-source/release/darts-kiosk-v3.14.0-source.zip
-release/build/darts-kiosk-v3.15.2-source/release/darts-kiosk-v3.13.0-source.zip
--e 
-# Environment files
-*.env
-*.env.*
--e 
-# Environment files
-*.env
-*.env.*
-release/build/darts-kiosk-v3.15.3-source/release/darts-kiosk-v3.14.0-source.zip
-release/build/darts-kiosk-v3.15.3-source/release/darts-kiosk-v3.13.0-source.zip
-release/build/darts-kiosk-v3.15.3-source.zip
--e 
-# Environment files
-*.env
-*.env.*
