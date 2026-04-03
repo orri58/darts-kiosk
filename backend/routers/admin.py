@@ -19,7 +19,7 @@ from backend.dependencies import (
 )
 from backend.services.health_monitor import health_monitor
 from backend.services.setup_wizard import (
-    check_setup_status, complete_setup, SetupConfig
+    check_setup_status, complete_setup, SetupConfig, is_setup_complete
 )
 from backend.services.system_service import system_service
 from backend.services.autodarts_desktop_service import autodarts_desktop
@@ -201,6 +201,8 @@ async def get_setup_status(db: AsyncSession = Depends(get_db)):
 @router.post("/setup/complete")
 async def complete_first_setup(config: SetupConfig, db: AsyncSession = Depends(get_db)):
     """Complete first-run setup with secure credentials"""
+    if await is_setup_complete(db):
+        raise HTTPException(status_code=403, detail="Setup already completed")
     if len(config.admin_password) < 8:
         raise HTTPException(status_code=400, detail="Admin password must be at least 8 characters")
     if len(config.staff_pin) != 4 or not config.staff_pin.isdigit():

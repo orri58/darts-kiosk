@@ -26,7 +26,7 @@ import logging
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
@@ -166,9 +166,15 @@ class UpdaterService:
 
         try:
             with zipfile.ZipFile(zip_file, 'r') as zf:
+                for member in zf.infolist():
+                    self._validate_zip_member(member)
                 zf.extractall(STAGING_DIR)
         except zipfile.BadZipFile as e:
             err = f"Ungueltige ZIP-Datei: {e}"
+            logger.error(f"[Updater] {err}")
+            return {"valid": False, "errors": [err]}
+        except ValueError as e:
+            err = str(e)
             logger.error(f"[Updater] {err}")
             return {"valid": False, "errors": [err]}
 
@@ -212,6 +218,15 @@ class UpdaterService:
 
         logger.info(f"[Updater] Validation: valid={result['valid']}, errors={errors}")
         return result
+
+    @staticmethod
+    def _validate_zip_member(member: zipfile.ZipInfo) -> None:
+        name = (member.filename or "").replace('\\', '/')
+        normalized = PurePosixPath(name)
+        if normalized.is_absolute():
+            raise ValueError(f"Unsicherer absoluter Pfad im Update-ZIP: {member.filename}")
+        if any(part == ".." for part in normalized.parts):
+            raise ValueError(f"Pfad-Traversal im Update-ZIP erkannt: {member.filename}")
 
     def write_manifest(self, staging_dir: str, backup_path: str,
                        target_version: str) -> Dict:

@@ -2,8 +2,10 @@ import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
 from unittest.mock import AsyncMock
+import zipfile
 
 import pytest
+from fastapi import HTTPException
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -29,9 +31,12 @@ except ModuleNotFoundError:
     )
 
 from backend.models import BoardStatus, SessionStatus
+from backend.routers import admin as admin_router
 from backend.services.action_poller import ActionPoller
 from backend.services.central_heartbeat_client import CentralHeartbeatClient
 from backend.services.config_sync_client import ConfigSyncClient
+from backend.services.setup_wizard import SetupConfig
+from backend.services.updater_service import UpdaterService
 
 
 @pytest.mark.asyncio
@@ -170,3 +175,30 @@ def test_central_heartbeat_health_payload_uses_health_monitor_snapshot(monkeypat
     assert payload["observer_success_rate"] == 83.3
     assert payload["agents_total"] == 2
     assert payload["agents_online"] == 1
+
+
+@pytest.mark.asyncio
+async def test_complete_first_setup_rejected_when_already_completed(monkeypatch):
+    monkeypatch.setattr(admin_router, "is_setup_complete", AsyncMock(return_value=True))
+    monkeypatch.setattr(admin_router, "complete_setup", AsyncMock())
+
+    with pytest.raises(HTTPException) as exc:
+        await admin_router.complete_first_setup(
+            SetupConfig(admin_password="very-secret", staff_pin="1234"),
+            db=None,
+        )
+
+    assert exc.value.status_code == 403
+    admin_router.complete_setup.assert_not_called()
+
+
+def test_updater_rejects_path_traversal_entries(tmp_path):
+    zip_path = tmp_path / "bad.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("../evil.txt", "nope")
+
+    updater = UpdaterService()
+    result = updater.extract_and_validate(str(zip_path), "4.2.3")
+
+    assert result["valid"] is False
+    assert any("Pfad-Traversal" in err for err in result["errors"])

@@ -4,6 +4,7 @@ Shared Dependencies: auth, password hashing, token management, DB helpers
 import os
 import hmac
 import logging
+import secrets
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from pathlib import Path
@@ -19,11 +20,20 @@ from backend.models import User, Session, Settings, AuditLog, UserRole, SessionS
 
 logger = logging.getLogger(__name__)
 
-JWT_SECRET = os.environ.get('JWT_SECRET', 'darts-kiosk-secret-key-change-in-production')
+def _load_secret(name: str) -> str:
+    value = os.environ.get(name, '').strip()
+    if value:
+        return value
+    generated = secrets.token_urlsafe(48)
+    logger.warning("%s missing from environment; using ephemeral runtime secret", name)
+    return generated
+
+
+JWT_SECRET = _load_secret('JWT_SECRET')
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 24
 MODE = os.environ.get('MODE', 'MASTER')
-AGENT_SECRET = os.environ.get('AGENT_SECRET', 'agent-secret-key')
+AGENT_SECRET = _load_secret('AGENT_SECRET')
 ASSETS_DIR = DATA_DIR / 'assets'
 ASSETS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -53,9 +63,6 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     token = None
     if auth_header.startswith("Bearer "):
         token = auth_header.split(" ")[1]
-    else:
-        # Fallback: accept token as query parameter (needed for window.open downloads)
-        token = request.query_params.get("token")
 
     if not token:
         raise HTTPException(status_code=401, detail="Missing or invalid token")
@@ -76,6 +83,12 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
 async def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != UserRole.ADMIN.value:
         raise HTTPException(status_code=403, detail="Admin access required")
+    return user
+
+
+async def require_superadmin(user: User = Depends(require_admin)) -> User:
+    if (user.username or "").lower() != "superadmin":
+        raise HTTPException(status_code=403, detail="Superadmin access required")
     return user
 
 

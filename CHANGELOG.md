@@ -4,6 +4,22 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.2.3] - 2026-04-04
+
+### Fixed
+- First-run setup can no longer be completed again once the system is already initialized.
+- Update ZIP staging now rejects path traversal / unsafe archive members before extraction.
+- Rebind-device licensing endpoint now requires superadmin instead of any admin.
+- Admin CSV export no longer depends on JWT query parameters.
+
+### Security
+- Removed hardcoded static secret fallbacks for JWT and agent auth; missing secrets now use ephemeral runtime secrets instead of predictable defaults.
+
+### Validation
+- Backend compile check passed.
+- Focused backend validation suite passed (39 tests).
+- Frontend production build passed.
+
 ## [4.2.2] - 2026-04-04
 
 ### Fixed

@@ -129,9 +129,25 @@ export default function Reports() {
     fetchReport();
   }, [fetchReport]);
 
-  const exportCSV = () => {
+  const exportCSV = async () => {
     const params = buildReportParams({ preset, dateFrom, dateTo, filterBoard, filterMode });
-    window.open(`${API}/reports/sessions/csv?${params.toString()}&token=${token}`, '_blank');
+    try {
+      const res = await axios.get(`${API}/reports/sessions/csv?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], { type: 'text/csv;charset=utf-8' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `darts-sessions-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      toast.error('CSV-Export fehlgeschlagen');
+    }
   };
 
   const clearFilters = () => {

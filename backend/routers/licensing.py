@@ -17,7 +17,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
-from backend.dependencies import require_admin
+from backend.dependencies import require_admin, require_superadmin
 from backend.models import User
 from backend.models.licensing import (
     LicCustomer, LicLocation, LicDevice, License, UserMembership,
@@ -390,7 +390,7 @@ async def get_device_identity(admin: User = Depends(require_admin)):
 async def rebind_device(
     device_id: str,
     data: dict,
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_superadmin),
     db: AsyncSession = Depends(get_db),
 ):
     """Rebind a device to a new install_id. Superadmin only.
