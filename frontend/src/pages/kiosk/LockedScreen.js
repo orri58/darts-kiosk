@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Crown, Lock, QrCode, Shield, ShieldCheck, Target, Trophy, Users, WalletCards } from 'lucide-react';
+import { Crown, Lock, Shield, ShieldCheck, Target, Trophy, Users, WalletCards } from 'lucide-react';
 import { useI18n } from '../../context/I18nContext';
 import { useSettings } from '../../context/SettingsContext';
 import { QRCodeSVG } from 'qrcode.react';
@@ -179,10 +179,24 @@ function TopStammkundenRotation() {
 function PairingCode() {
   const [code, setCode] = useState('------');
   const [remaining, setRemaining] = useState(0);
+  const [visible, setVisible] = useState(false);
   const { t } = useI18n();
 
   const fetchCode = useCallback(async () => {
     try {
+      const statusRes = await fetch(`${API}/agent/pair/status`);
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        const shouldShow = Boolean(statusData.show_pairing_code);
+        setVisible(shouldShow);
+        if (!shouldShow) {
+          setRemaining(0);
+          return;
+        }
+      } else {
+        setVisible(true);
+      }
+
       const res = await fetch(`${API}/agent/pair/code`);
       if (res.ok) {
         const data = await res.json();
@@ -206,6 +220,8 @@ function PairingCode() {
     return () => clearInterval(iv);
   }, [remaining]);
 
+  if (!visible) return null;
+
   const pct = Math.max(0, (remaining / 60) * 100);
 
   return (
@@ -217,6 +233,7 @@ function PairingCode() {
         <div>
           <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--color-text-muted)]">{t('pairing_code')}</p>
           <p className="text-2xl font-mono font-bold tracking-[0.25em] text-[var(--color-text)]" data-testid="pairing-code-value">{code}</p>
+          <p className="mt-1 text-xs text-[var(--color-text-secondary)]">Nur nötig, wenn das Gerät neu gekoppelt werden muss.</p>
         </div>
         <div className="ml-auto w-16 overflow-hidden rounded-full bg-[rgb(var(--color-bg-rgb)/0.65)]">
           <div className="h-1.5 bg-[var(--color-primary)] transition-all duration-1000 ease-linear" style={{ width: `${pct}%` }} />
@@ -231,6 +248,7 @@ export default function LockedScreen({ branding, pricing, boardId }) {
   const { kioskTexts } = useSettings();
   const [qrConfig, setQrConfig] = useState(null);
   const [baseUrl, setBaseUrl] = useState('');
+  const showCommunityWidgets = Boolean(kioskTexts?.show_community_widgets);
 
   const formatPrice = (amount, currency = 'EUR') => `${amount.toFixed(2)} ${currency}`;
 
@@ -265,12 +283,9 @@ export default function LockedScreen({ branding, pricing, boardId }) {
             <h1 className="mt-1 text-xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] lg:text-2xl">{branding.cafe_name}</h1>
             {branding.subtitle && <p className="text-sm text-[var(--color-text-secondary)]">{branding.subtitle}</p>}
           </div>
-          <div className="rounded-full border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.74)] px-4 py-2 text-sm text-[var(--color-text-secondary)]">
-            Admin Panel: <span className="font-mono text-white">/admin</span>
-          </div>
         </div>
 
-        <div className="mx-auto grid w-full max-w-7xl flex-1 gap-5 py-5 lg:grid-cols-[1.2fr,0.8fr] lg:items-center lg:py-7">
+        <div className="mx-auto grid w-full max-w-7xl flex-1 gap-5 py-5 lg:grid-cols-[1.25fr,0.75fr] lg:items-center lg:py-7">
           <div className="space-y-5">
             <div className="inline-flex h-16 w-16 items-center justify-center rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.8)] text-[var(--color-text-secondary)] shadow-[0_16px_48px_rgba(0,0,0,0.28)] lg:h-20 lg:w-20">
               <Lock className="h-10 w-10" strokeWidth={2.2} />
@@ -316,7 +331,6 @@ export default function LockedScreen({ branding, pricing, boardId }) {
           </div>
 
           <div className="space-y-4">
-            <PairingCode />
             {qrConfig?.enabled && baseUrl ? (
               <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.58)] p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="lockscreen-qr">
                 <div className="flex items-center justify-between gap-4">
@@ -330,13 +344,13 @@ export default function LockedScreen({ branding, pricing, boardId }) {
                 </div>
               </div>
             ) : null}
-            <TopStammkundenRotation />
-            <TopPlayersRotation />
+            {showCommunityWidgets ? <TopStammkundenRotation /> : null}
+            {showCommunityWidgets ? <TopPlayersRotation /> : null}
           </div>
         </div>
 
-        <div className="mx-auto w-full max-w-7xl rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.56)] px-5 py-3 text-sm text-[var(--color-text-secondary)] backdrop-blur">
-          Freischaltung läuft lokal über den Operator. Gäste sehen hier nur das, was gerade zählt.
+        <div className="mx-auto mt-auto w-full max-w-7xl">
+          <PairingCode />
         </div>
       </div>
     </div>

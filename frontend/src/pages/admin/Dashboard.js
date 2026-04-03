@@ -305,7 +305,6 @@ export default function AdminDashboard() {
   };
 
   const openExtendDialog = (board) => {
-    const session = boardDetails[board.board_id];
     setSelectedBoard(board);
     setUnlockCredits(1);
     setUnlockMinutes(15);
@@ -324,7 +323,21 @@ export default function AdminDashboard() {
     return { total, live, inGame, offline, observerIssues };
   }, [boards, observerStatuses]);
 
-  const lockedBoards = useMemo(() => boards.filter((board) => board.status === 'locked'), [boards]);
+  const actionBoards = useMemo(() => {
+    const priority = {
+      blocked_pending: 0,
+      in_game: 1,
+      unlocked: 2,
+      locked: 3,
+      offline: 4,
+    };
+    return [...boards].sort((a, b) => {
+      const pa = priority[a.status] ?? 99;
+      const pb = priority[b.status] ?? 99;
+      if (pa !== pb) return pa - pb;
+      return a.name.localeCompare(b.name);
+    });
+  }, [boards]);
 
   if (loading) {
     return (
@@ -336,9 +349,9 @@ export default function AdminDashboard() {
 
   return (
     <AdminPage
-      eyebrow="Local operations"
+      eyebrow="Darts Control"
       title={t('dashboard')}
-      description="Boards live sehen, schnell freischalten, Probleme sofort greifen. Ohne Admin-Theater."
+      description="Freischalten, Credits nachbuchen, Status sehen. Das Wesentliche zuerst."
       actions={
         <>
           <AdminMiniAction icon={wsConnected ? Wifi : WifiOff} onClick={fetchBoards}>
@@ -360,61 +373,87 @@ export default function AdminDashboard() {
 
       <div className="grid gap-5 xl:grid-cols-[1.2fr,0.8fr]">
         <AdminSection
-          title="Schnell freischalten"
-          description="Direkt vom Dashboard. Standard-Credits zuerst, Detaildialog nur wenn nötig."
+          title="Dart Control"
+          description="Alle Boards direkt im Zugriff — auch nach dem Freischalten, damit Nachbuchen sofort geht."
           actions={
-            <AdminStatusPill tone={lockedBoards.length ? 'amber' : 'emerald'}>
-              {lockedBoards.length ? `${lockedBoards.length} gesperrt` : 'Alles bereit'}
+            <AdminStatusPill tone={metrics.live ? 'amber' : 'emerald'}>
+              {metrics.live ? `${metrics.live} aktiv / bereit` : 'Aktuell alles gesperrt'}
             </AdminStatusPill>
           }
         >
-          {lockedBoards.length === 0 ? (
+          {actionBoards.length === 0 ? (
             <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.75)] bg-[rgb(var(--color-bg-rgb)/0.34)] px-4 py-4 text-sm text-[var(--color-text-secondary)]">
-              Aktuell ist kein Board gesperrt. Wenn später doch, taucht der Direkt-Unlock hier zuerst auf.
+              Noch keine Boards vorhanden.
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              {lockedBoards.map((board) => (
+              {actionBoards.map((board) => {
+                const session = boardDetails[board.board_id];
+                const isLocked = board.status === 'locked';
+                const isTimeMode = session?.pricing_mode === 'per_time';
+                const primaryCta = isLocked ? 'Direkt freischalten' : (isTimeMode ? 'Zeit verlängern' : 'Credits nachbuchen');
+                const PrimaryIcon = isLocked ? Unlock : Plus;
+
+                return (
                 <div key={`quick-${board.board_id}`} className="theme-panel rounded-3xl border p-4 theme-primary-glow">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-base font-semibold text-[var(--color-text)]">{board.name}</p>
                       <p className="mt-1 text-xs font-mono text-[var(--color-text-secondary)]">{board.board_id}</p>
                     </div>
-                    <AdminStatusPill tone="neutral">Gesperrt</AdminStatusPill>
+                    <AdminStatusPill tone={(STATUS_STYLES[board.status] || STATUS_STYLES.locked).tone}>
+                      {(STATUS_STYLES[board.status] || STATUS_STYLES.locked).label}
+                    </AdminStatusPill>
                   </div>
-                  <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-                    <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.72)] bg-[rgb(var(--color-bg-rgb)/0.4)] px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--color-text-muted)]">Bundle</p>
-                      <p className="mt-1 font-semibold text-[var(--color-text)]">{pricing?.per_game?.default_credits || 3} Credits</p>
+                  <div className="mt-4 space-y-2 text-sm">
+                    <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.72)] bg-[rgb(var(--color-bg-rgb)/0.4)] px-3 py-3">
+                      <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--color-text-muted)]">Status</p>
+                      <p className="mt-1 font-semibold text-[var(--color-text)]">
+                        {isLocked
+                          ? `${pricing?.per_game?.default_credits || 3} Credits Standard · ${((pricing?.per_game?.default_credits || 3) * (pricing?.per_game?.price_per_credit || 2)).toFixed(2)} €`
+                          : formatRemaining(session, board.status)}
+                      </p>
                     </div>
-                    <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.72)] bg-[rgb(var(--color-bg-rgb)/0.4)] px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--color-text-muted)]">Preis</p>
-                      <p className="mt-1 font-semibold text-[var(--color-text)]">{((pricing?.per_game?.default_credits || 3) * (pricing?.per_game?.price_per_credit || 2)).toFixed(2)} €</p>
-                    </div>
+                    {session && (
+                      <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.72)] bg-[rgb(var(--color-bg-rgb)/0.4)] px-3 py-3">
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-[var(--color-text-muted)]">Abrechnung</p>
+                        <p className="mt-1 font-semibold text-[var(--color-text)]">{formatSessionMode(session)}</p>
+                      </div>
+                    )}
                   </div>
                   <div className="mt-4 grid gap-2 sm:grid-cols-2">
                     <Button
-                      onClick={() => handleQuickUnlock(board)}
+                      onClick={() => (isLocked ? handleQuickUnlock(board) : openExtendDialog(board))}
                       className="h-11 rounded-2xl bg-[var(--color-primary)] text-[hsl(var(--primary-foreground))] hover:opacity-90"
                     >
-                      <Unlock className="w-4 h-4 mr-2" /> Direkt
+                      <PrimaryIcon className="w-4 h-4 mr-2" />
+                      {primaryCta}
                     </Button>
-                    <Button
-                      variant="outline"
-                      onClick={() => openUnlockDialog(board)}
-                      className="h-11 rounded-2xl border-[rgb(var(--color-border-rgb)/0.8)] text-[var(--color-text-secondary)] hover:border-[rgb(var(--color-primary-rgb)/0.3)] hover:text-[var(--color-text)]"
-                    >
-                      Anpassen
-                    </Button>
+                    {isLocked ? (
+                      <Button
+                        variant="outline"
+                        onClick={() => openUnlockDialog(board)}
+                        className="h-11 rounded-2xl border-[rgb(var(--color-border-rgb)/0.8)] text-[var(--color-text-secondary)] hover:border-[rgb(var(--color-primary-rgb)/0.3)] hover:text-[var(--color-text)]"
+                      >
+                        Anpassen
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        onClick={() => handleLock(board)}
+                        className="h-11 rounded-2xl border-[rgb(var(--color-accent-rgb)/0.28)] text-[var(--color-accent)] hover:bg-[rgb(var(--color-accent-rgb)/0.12)]"
+                      >
+                        <Lock className="w-4 h-4 mr-2" /> Sperren
+                      </Button>
+                    )}
                   </div>
                 </div>
-              ))}
+              )})}
             </div>
           )}
         </AdminSection>
 
-        <AdminSection title="Betriebsstatus" description="Nur das, was man am Tresen sofort sehen will.">
+        <AdminSection title="Betriebsstatus" description="Nur echte Signale, kein UI-Gequatsche.">
           <div className="grid gap-3 text-sm sm:grid-cols-3 xl:grid-cols-1">
             <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.78)] bg-[rgb(var(--color-surface-rgb)/0.62)] px-4 py-3 flex items-center justify-between">
               <span className="text-[var(--color-text-secondary)]">Realtime</span>
@@ -480,7 +519,7 @@ export default function AdminDashboard() {
       )}
 
       <div className="grid gap-6 xl:grid-cols-[1.45fr,0.75fr]">
-        <AdminSection title="Board-Übersicht" description="Status, Session-Kontext und Eingriffe ohne Scroll-Wüste.">
+        <AdminSection title="Alle Boards" description="Live-Status, Session-Kontext und Eingriffe ohne unnötige Zusatztexte.">
           {boards.length === 0 ? (
             <AdminEmptyState
               icon={Target}
@@ -571,11 +610,11 @@ export default function AdminDashboard() {
         </AdminSection>
 
         <div className="space-y-6">
-          <AdminSection title="Schnellzugriffe" description="Weniger Suchen, mehr Operator-Flow.">
+          <AdminSection title="Weitere Bereiche" description="Nur das Nötige als kurzer Sprung.">
             <div className="space-y-3">
-              <AdminLinkTile icon={TrendingUp} title="Revenue" description="Tagesumsatz, Board-Verteilung und Verlauf im Venue-Modus prüfen." onClick={() => navigate('/admin/revenue')} tone="emerald" cta="Zur Umsatzansicht" />
-              <AdminLinkTile icon={FileText} title="Reports" description="Sessionlisten, Abrechnungsfenster und CSV-Export für die Nacharbeit." onClick={() => navigate('/admin/reports')} tone="blue" cta="Zu Reports" />
-              <AdminLinkTile icon={Settings} title="Settings" description="Branding, Pricing, Trigger-Policy und Kiosk-Verhalten konsolidiert pflegen." onClick={() => navigate('/admin/settings')} tone="amber" cta="Zu Settings" />
+              <AdminLinkTile icon={TrendingUp} title="Umsatz" description="Tagesumsatz und Verteilung prüfen." onClick={() => navigate('/admin/revenue')} tone="emerald" cta="Zur Umsatzansicht" />
+              <AdminLinkTile icon={FileText} title="Reports" description="Sessions und CSV-Export." onClick={() => navigate('/admin/reports')} tone="blue" cta="Zu Reports" />
+              <AdminLinkTile icon={Settings} title="Einstellungen" description="Branding, Pricing und Kiosk-Verhalten." onClick={() => navigate('/admin/settings')} tone="amber" cta="Zu Einstellungen" />
             </div>
           </AdminSection>
         </div>

@@ -226,6 +226,24 @@ async def get_agent_pairing_code():
     return {"code": code, "expires_in": remaining}
 
 
+@router.get("/agent/pair/status")
+async def get_agent_pairing_status(db: AsyncSession = Depends(get_db)):
+    """Public status for the kiosk lockscreen: only show pairing when actually needed."""
+    result = await db.execute(
+        select(TrustedPeer).where(
+            TrustedPeer.role == "master",
+            TrustedPeer.is_active.is_(True),
+        )
+    )
+    peers = result.scalars().all()
+    paired = len(peers) > 0
+    return {
+        "paired": paired,
+        "paired_peers": len(peers),
+        "show_pairing_code": not paired,
+    }
+
+
 @router.post("/agent/pair/verify")
 async def verify_pairing_code(data: PairVerifyRequest, request: Request):
     """Agent verifies the master's submitted pairing code and returns a challenge."""

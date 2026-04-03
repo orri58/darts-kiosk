@@ -26,7 +26,7 @@ import { AdminStatusPill } from '../../components/admin/AdminShell';
 
 const NAV_SECTIONS = [
   {
-    label: 'Operations',
+    label: 'Dart Control',
     items: [
       { path: '/admin', icon: LayoutDashboard, labelKey: 'dashboard', tid: 'nav-dashboard', exact: true },
       { path: '/admin/boards', icon: Target, labelKey: 'boards', tid: 'nav-boards' },
@@ -35,14 +35,14 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    label: 'Experience',
+    label: 'Anzeige',
     items: [
       { path: '/admin/settings', icon: Settings, labelKey: 'settings', tid: 'nav-settings', adminOnly: true },
       { path: '/admin/leaderboard', icon: Trophy, labelKey: 'leaderboard', tid: 'nav-leaderboard' },
     ],
   },
   {
-    label: 'System',
+    label: 'Verwaltung',
     items: [
       { path: '/admin/users', icon: Users, labelKey: 'users', tid: 'nav-users', adminOnly: true },
       { path: '/admin/discovery', icon: Wifi, labelKey: 'discovery', tid: 'nav-discovery', adminOnly: true },
@@ -98,7 +98,7 @@ export default function AdminLayout() {
           {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
         </button>
         <div className="text-center">
-          <p className="text-[10px] uppercase tracking-[0.28em] text-[var(--color-text-muted)]">Operator Console</p>
+          <p className="text-[10px] uppercase tracking-[0.28em] text-[var(--color-text-muted)]">Darts Control</p>
           <h1 className="font-heading text-base uppercase tracking-[0.12em] text-[var(--color-text)] sm:text-lg">{branding.cafe_name}</h1>
         </div>
         <div className="w-10"></div>
@@ -115,7 +115,7 @@ export default function AdminLayout() {
         <div className="border-b border-[rgb(var(--color-border-rgb)/0.82)] px-5 py-5">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--color-text-muted)]">Local-first ops</p>
+              <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--color-text-muted)]">Darts Control</p>
               <h1 className="mt-2 truncate font-heading text-2xl uppercase tracking-[0.08em] text-[var(--color-text)]">
                 {branding.cafe_name}
               </h1>
@@ -128,7 +128,7 @@ export default function AdminLayout() {
           <div className="mt-4 rounded-2xl border border-[rgb(var(--color-border-rgb)/0.78)] bg-[rgb(var(--color-surface-rgb)/0.72)] p-4">
             <div className="flex items-center gap-2 text-sm font-medium text-[var(--color-text)]">
               <MonitorSpeaker className="h-4 w-4 text-[var(--color-primary)]" />
-              Venue operations
+              Operator-Fokus
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <AdminStatusPill tone="emerald">Local mode</AdminStatusPill>
@@ -136,7 +136,7 @@ export default function AdminLayout() {
               {isAdmin && <AdminStatusPill tone="amber">Config write</AdminStatusPill>}
             </div>
             <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">
-              Fokus auf aktive Venue-Aufgaben: Boards, Umsatz, Experience und Systemzustand.
+              Schnell freischalten, Credits nachbuchen, Boards prüfen. Der Rest steht hinten an.
             </p>
           </div>
         </div>
@@ -173,13 +173,13 @@ export default function AdminLayout() {
                           <span className="block font-medium truncate">{t(item.labelKey)}</span>
                           <span className="block text-xs text-[var(--color-text-muted)] truncate">
                             {item.path === '/admin'
-                              ? 'Live-Status & Schnellaktionen'
+                                ? 'Live-Status & Schnellaktionen'
                               : item.path === '/admin/boards'
-                                ? 'Boards, Ziele und Kiosk-Links'
-                                : item.path === '/admin/revenue'
-                                  ? 'Venue-Umsatz und Trends'
+                                ? 'Boards, Ziele und Kiosk'
+                              : item.path === '/admin/revenue'
+                                  ? 'Umsatz und Trends'
                                   : item.path === '/admin/reports'
-                                    ? 'Lokale Session-Reports & CSV'
+                                    ? 'Session-Reports & CSV'
                                     : item.path === '/admin/settings'
                                       ? 'Branding, Pricing, Triggers'
                                       : item.path === '/admin/leaderboard'

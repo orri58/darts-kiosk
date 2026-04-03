@@ -145,17 +145,6 @@ async def lifespan(app: FastAPI):
             db.add(board1)
             logger.info("Created BOARD-1")
 
-        result = await db.execute(select(Board).where(Board.board_id == "BOARD-2"))
-        if not result.scalar_one_or_none():
-            board2 = Board(
-                board_id="BOARD-2",
-                name="Dartboard 2",
-                location="Back Room",
-                status=BoardStatus.LOCKED.value
-            )
-            db.add(board2)
-            logger.info("Created BOARD-2")
-
         await get_or_create_setting(db, "branding", DEFAULT_BRANDING)
         await get_or_create_setting(db, "pricing", DEFAULT_PRICING)
         await get_or_create_setting(db, "palettes", DEFAULT_PALETTES)

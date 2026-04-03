@@ -2070,6 +2070,22 @@ class AutodartsObserver:
                                     f"{stable.value} -> in_game (immediate) ===")
                         self._stable_state = ObserverState.IN_GAME
                         self._set_state(ObserverState.IN_GAME)
+                        if not self._authoritative_start_emitted and self._on_game_started:
+                            try:
+                                logger.info(
+                                    f"[Observer:{self.board_id}] START_FALLBACK_ACCEPTED "
+                                    f"reason=in_game_transition_without_ws_start trigger=observer_in_game_fallback"
+                                )
+                                await self._on_game_started(self.board_id, "observer_in_game_fallback")
+                                self._authoritative_start_emitted = True
+                                self._last_started_match_id = self._ws_state.last_match_id
+                                self._credit_consumed = True
+                                self.status.games_observed += 1
+                            except Exception as e:
+                                logger.error(
+                                    f"[Observer:{self.board_id}] fallback on_game_started ERROR: {e}",
+                                    exc_info=True,
+                                )
                         self._credit_consumed = self._credit_consumed or self._authoritative_start_emitted
                         self._finalized = False  # Reset for new game
                         self._abort_detected = False  # Reset for new game
