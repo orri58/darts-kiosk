@@ -7,6 +7,7 @@ from fastapi import APIRouter
 
 from backend.routers import (
     admin,
+    admin_agent,
     agent,
     auth,
     backups,
@@ -28,6 +29,7 @@ LOCAL_CORE_ROUTERS = (
     kiosk.router,
     settings.router,
     admin.router,
+    admin_agent.router,
     backups.router,
     updates.router,
     agent.router,

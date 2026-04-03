@@ -194,6 +194,36 @@ export default function AgentTab({ agentStatus, setAgentStatus, headers, t, fetc
                   {agentStatus.autostart.last_run && ` | ${t('agent_autostart_last_run')}: ${agentStatus.autostart.last_run}`}
                 </div>
               )}
+
+              {agentStatus.autostart?.supported !== false && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-2">
+                  <Button
+                    onClick={() => doAction('/admin/agent/autostart/register', t('agent_autostart_register'))}
+                    disabled={!!actionInProgress || agentStatus.autostart?.registered}
+                    variant="outline"
+                    className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
+                    data-testid="agent-autostart-register-btn"
+                  >
+                    <PlayCircle className="w-4 h-4 mr-2" />
+                    {t('agent_autostart_register')}
+                  </Button>
+                  <Button
+                    onClick={() => setConfirm({
+                      title: t('agent_autostart_remove'),
+                      message: t('agent_autostart_remove_confirm'),
+                      action: () => doAction('/admin/agent/autostart/remove', t('agent_autostart_remove')),
+                      danger: true,
+                    })}
+                    disabled={!!actionInProgress || !agentStatus.autostart?.registered}
+                    variant="outline"
+                    className="border-red-500/30 text-red-400 hover:bg-red-500/10"
+                    data-testid="agent-autostart-remove-btn"
+                  >
+                    <Power className="w-4 h-4 mr-2" />
+                    {t('agent_autostart_remove')}
+                  </Button>
+                </div>
+              )}
             </>
           )}
 

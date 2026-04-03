@@ -217,17 +217,38 @@ async def get_system_logs(lines: int = 200, admin: User = Depends(require_admin)
 
 
 @router.get("/system/logs/bundle")
-async def download_log_bundle(admin: User = Depends(require_admin)):
-    """Download all logs as a gzipped tar archive"""
-    bundle = system_service.create_log_bundle()
+async def download_log_bundle(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Download a support bundle with logs plus core runtime snapshots."""
+    from dataclasses import asdict
+
+    from backend.routers.admin_agent import _agent_status_or_fallback
+    from backend.services.setup_wizard import get_stored_secrets
+    from backend.services.update_service import update_service
+    from backend.services.updater_service import updater_service
+
+    extras = {
+        "snapshot/system_info.json": system_service.get_system_info(),
+        "snapshot/health.json": asdict(health_monitor.get_health()),
+        "snapshot/setup_status.json": (await check_setup_status(db)).model_dump(),
+        "snapshot/agent_status.json": await _agent_status_or_fallback(db),
+        "snapshot/downloaded_assets.json": {"assets": update_service.list_downloaded_assets()},
+        "snapshot/app_backups.json": {"backups": updater_service.list_app_backups()},
+        "snapshot/update_result.json": {"result": updater_service.get_update_result()},
+        "snapshot/secrets_status.json": {
+            "has_jwt_secret": bool(get_stored_secrets().get('JWT_SECRET')),
+            "has_agent_secret": bool(get_stored_secrets().get('AGENT_SECRET')),
+        },
+    }
+
+    bundle = system_service.create_log_bundle(extras)
     if not bundle:
-        raise HTTPException(status_code=500, detail="Failed to create log bundle")
+        raise HTTPException(status_code=500, detail="Failed to create support bundle")
 
     timestamp = datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')
     return StreamingResponse(
         bundle,
         media_type="application/gzip",
-        headers={"Content-Disposition": f"attachment; filename=darts-logs_{timestamp}.tar.gz"}
+        headers={"Content-Disposition": f"attachment; filename=darts-support_{timestamp}.tar.gz"}
     )
 
 

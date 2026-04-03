@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import axios from 'axios';
 import { Lock, User, KeyRound, Eye, EyeOff } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { useAuth } from '../../context/AuthContext';
+
+const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 export default function AdminLogin() {
   const navigate = useNavigate();
@@ -16,6 +19,26 @@ export default function AdminLogin() {
   const [pin, setPin] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    const checkSetupStatus = async () => {
+      try {
+        const response = await axios.get(`${API}/setup/status`);
+        if (active && response.data && !response.data.is_complete) {
+          navigate('/setup', { replace: true });
+        }
+      } catch {
+        // If setup status cannot be loaded we stay on login and let auth/backend errors surface normally.
+      }
+    };
+
+    checkSetupStatus();
+    return () => {
+      active = false;
+    };
+  }, [navigate]);
 
   const handlePasswordLogin = async (e) => {
     e.preventDefault();

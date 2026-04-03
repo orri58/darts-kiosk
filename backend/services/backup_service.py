@@ -14,9 +14,9 @@ import asyncio
 
 logger = logging.getLogger(__name__)
 
-from backend.database import DATA_DIR
+from backend.database import DATA_DIR, DATABASE_PATH
 BACKUP_DIR = DATA_DIR / 'backups'
-DB_PATH = DATA_DIR / 'db.sqlite'
+DB_PATH = DATABASE_PATH
 
 # Configuration
 MAX_BACKUPS = int(os.environ.get('MAX_BACKUPS', 30))  # Keep last 30 backups

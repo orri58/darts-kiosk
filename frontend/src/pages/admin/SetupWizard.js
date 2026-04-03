@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { toast } from 'sonner';
@@ -24,11 +24,7 @@ export default function SetupWizard() {
     generate_new_secrets: true
   });
 
-  useEffect(() => {
-    checkStatus();
-  }, []);
-
-  const checkStatus = async () => {
+  const checkStatus = useCallback(async () => {
     try {
       const response = await axios.get(`${API}/setup/status`);
       setStatus(response.data);
@@ -42,7 +38,11 @@ export default function SetupWizard() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [navigate]);
+
+  useEffect(() => {
+    checkStatus();
+  }, [checkStatus]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -116,6 +116,46 @@ export default function SetupWizard() {
             Konfigurieren Sie sichere Zugangsdaten für Ihr Darts Kiosk System
           </p>
         </div>
+
+        {status && (
+          <div className="mb-8 grid gap-4 md:grid-cols-2">
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardHeader>
+                <CardTitle className="text-white text-base">Installations-Preflight</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {(status.preflight_checks || []).map((check) => (
+                  <div key={check.key} className="flex items-start justify-between gap-3 rounded-sm bg-zinc-950/70 px-3 py-2">
+                    <div>
+                      <p className="text-white">{check.label}</p>
+                      <p className="text-xs text-zinc-500 break-all">{check.detail}</p>
+                    </div>
+                    <span className={`mt-0.5 text-xs font-medium ${check.ok ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {check.ok ? 'OK' : 'Pruefen'}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardHeader>
+                <CardTitle className="text-white text-base">Lokale Operator-URLs</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                {Object.entries(status.local_urls || {}).map(([key, value]) => (
+                  <div key={key} className="rounded-sm bg-zinc-950/70 px-3 py-2">
+                    <p className="text-xs uppercase tracking-wider text-zinc-500">{key}</p>
+                    <p className="mt-1 break-all font-mono text-zinc-200">{value}</p>
+                  </div>
+                ))}
+                <div className="rounded-sm border border-zinc-800 px-3 py-2 text-xs text-zinc-500">
+                  Datenbank: <span className="font-mono text-zinc-300 break-all">{status.database_path || '-'}</span>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Security Warning */}
         <div className="mb-8 p-4 bg-amber-500/10 border border-amber-500/30 rounded-sm flex items-start gap-3">
@@ -197,7 +237,8 @@ export default function SetupWizard() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-zinc-500">
-                Der 4-stellige PIN ermöglicht dem Personal schnelles Einloggen ohne Passwort.
+                Der 4-stellige PIN wird fuer vorhandene Admin- und Staff-Konten als Quick-PIN gesetzt,
+                damit kein Standard-PIN aktiv bleibt.
               </p>
               <div className="space-y-2">
                 <label className="text-sm text-zinc-500 uppercase tracking-wider">Neuer PIN (4 Ziffern)</label>

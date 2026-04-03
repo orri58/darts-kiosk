@@ -42,6 +42,7 @@ import {
   AdminStatsGrid,
   AdminStatusPill,
 } from '../../components/admin/AdminShell';
+import AgentTab from '../../components/admin/AgentTab';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -116,6 +117,7 @@ export default function AdminSystem() {
   const [updateResult, setUpdateResult] = useState(null);
   const [creatingAppBackup, setCreatingAppBackup] = useState(false);
   const [autodartsDesktop, setAutodartsDesktop] = useState(null);
+  const [agentStatus, setAgentStatus] = useState(null);
   const [restartingAutodarts, setRestartingAutodarts] = useState(false);
   const [restartingBackend, setRestartingBackend] = useState(false);
   const [rebootingOS, setRebootingOS] = useState(false);
@@ -146,6 +148,11 @@ export default function AdminSystem() {
       const adRes = await axios.get(`${API}/admin/system/autodarts-desktop-status`, { headers });
       setAutodartsDesktop(adRes.data);
     } catch { /* ignore — endpoint may not exist on older builds */ }
+
+    try {
+      const agentRes = await axios.get(`${API}/admin/agent/status`, { headers });
+      setAgentStatus(agentRes.data);
+    } catch { /* ignore — agent surface may not exist on older builds */ }
   }, [headers]);
 
   useEffect(() => {
@@ -177,11 +184,21 @@ export default function AdminSystem() {
     } catch { /* ignore */ }
   }, [headers]);
 
+  const fetchAgentStatus = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/admin/agent/status`, { headers });
+      setAgentStatus(res.data);
+    } catch {
+      setAgentStatus(null);
+    }
+  }, [headers]);
+
   useEffect(() => {
     fetchDownloads();
     fetchAppBackups();
     fetchUpdateResult();
-  }, [fetchDownloads, fetchAppBackups, fetchUpdateResult]);
+    fetchAgentStatus();
+  }, [fetchDownloads, fetchAppBackups, fetchUpdateResult, fetchAgentStatus]);
 
   // Poll download progress
   useEffect(() => {
@@ -519,11 +536,11 @@ export default function AdminSystem() {
       const url = window.URL.createObjectURL(new Blob([res.data]));
       const a = document.createElement('a');
       a.href = url;
-      a.download = `darts-logs_${new Date().toISOString().slice(0,10)}.tar.gz`;
+      a.download = `darts-support_${new Date().toISOString().slice(0,10)}.tar.gz`;
       document.body.appendChild(a);
       a.click();
       a.remove();
-      toast.success('Log-Bundle heruntergeladen');
+      toast.success('Support-Bundle heruntergeladen');
     } catch {
       toast.error('Download fehlgeschlagen');
     }
@@ -605,7 +622,7 @@ export default function AdminSystem() {
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
             <p className="font-medium text-white">Backups & Logs</p>
-            Hier liegen die verwaltbaren Artefakte: DB-Backups, App-Backups, Download-Pakete und der exportierbare App-Log-Bundle.
+            Hier liegen die verwaltbaren Artefakte: DB-Backups, App-Backups, Download-Pakete und das exportierbare Support-Bundle mit Laufzeit-Snapshots.
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
             <p className="font-medium text-white">Host-Aktionen</p>
@@ -624,6 +641,9 @@ export default function AdminSystem() {
           </TabsTrigger>
           <TabsTrigger value="logs" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-logs">
             <Terminal className="w-4 h-4 mr-2" /> Logs
+          </TabsTrigger>
+          <TabsTrigger value="device" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-device">
+            <ShieldCheck className="w-4 h-4 mr-2" /> Device Ops
           </TabsTrigger>
           <TabsTrigger value="details" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-details">
             <Server className="w-4 h-4 mr-2" /> Host & Dienste
@@ -1236,7 +1256,7 @@ export default function AdminSystem() {
                     <RefreshCw className="w-3 h-3 mr-1" /> Refresh
                   </Button>
                   <Button onClick={downloadLogBundle} variant="outline" size="sm" className="border-zinc-700 text-zinc-400 hover:text-white" data-testid="logs-download-btn">
-                    <Archive className="w-3 h-3 mr-1" /> Bundle
+                    <Archive className="w-3 h-3 mr-1" /> Support-Bundle
                   </Button>
                 </div>
               </div>
@@ -1265,6 +1285,29 @@ export default function AdminSystem() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* ===== Device Ops Tab ===== */}
+        <TabsContent value="device">
+          <div className="space-y-4">
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardHeader>
+                <CardTitle className="text-white flex items-center gap-2">
+                  <ShieldCheck className="w-5 h-5 text-amber-500" /> Windows / Device Operations
+                </CardTitle>
+                <p className="text-sm text-zinc-400">
+                  Nutzt bevorzugt den lokalen Windows-Agenten und faellt fuer sichere Recovery-Faelle auf bestehende Backend-Pfade zurueck.
+                </p>
+              </CardHeader>
+            </Card>
+            <AgentTab
+              agentStatus={agentStatus}
+              setAgentStatus={setAgentStatus}
+              headers={headers}
+              t={t}
+              fetchAll={fetchAll}
+            />
+          </div>
         </TabsContent>
 
         {/* ===== Details Tab ===== */}

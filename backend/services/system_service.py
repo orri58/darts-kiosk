@@ -2,19 +2,19 @@
 System Service
 Provides system info, disk usage, log access, and management for /admin/system
 """
+import io
+import json
+import logging
 import os
 import platform
 import shutil
-import gzip
-import io
-import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-from backend.database import DATA_DIR
+from backend.database import DATA_DIR, DATABASE_PATH
 LOGS_DIR = DATA_DIR / 'logs'
 
 # Read version from VERSION file (single source of truth)
@@ -42,7 +42,7 @@ class SystemService:
         disk = shutil.disk_usage(str(DATA_DIR))
 
         # DB file size
-        db_path = DATA_DIR / 'db.sqlite'
+        db_path = DATABASE_PATH
         db_size = db_path.stat().st_size if db_path.exists() else 0
 
         # Count backups
@@ -87,8 +87,8 @@ class SystemService:
             logger.error(f"Failed to read logs: {e}")
             return [f"Error reading logs: {e}"]
 
-    def create_log_bundle(self) -> Optional[io.BytesIO]:
-        """Create a gzipped tarball of all log files"""
+    def create_log_bundle(self, extra_json_files: Optional[Dict[str, dict]] = None) -> Optional[io.BytesIO]:
+        """Create a gzipped support bundle with logs plus optional JSON snapshots."""
         import tarfile
 
         buf = io.BytesIO()
@@ -104,6 +104,13 @@ class SystemService:
                 if sup_dir.exists():
                     for log_file in sup_dir.glob('*.log'):
                         tar.add(str(log_file), arcname=f"supervisor/{log_file.name}")
+
+                for relative_name, payload in (extra_json_files or {}).items():
+                    body = json.dumps(payload, indent=2, ensure_ascii=False, default=str).encode('utf-8')
+                    info = tarfile.TarInfo(name=relative_name)
+                    info.size = len(body)
+                    info.mtime = datetime.now(timezone.utc).timestamp()
+                    tar.addfile(info, io.BytesIO(body))
 
             buf.seek(0)
             return buf

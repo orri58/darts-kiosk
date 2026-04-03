@@ -396,7 +396,10 @@ class UpdateService:
                     stat = f.stat()
                     assets.append({
                         "name": f.name,
+                        "filename": f.name,
+                        "path": str(f),
                         "size": stat.st_size,
+                        "size_bytes": stat.st_size,
                         "downloaded_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
                     })
         return assets
