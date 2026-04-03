@@ -248,7 +248,7 @@ Validated here:
 - active unlock path, per-player start deduction, and local-core lifecycle stayed green in the focused backend suite
 
 Build note:
-- one pre-existing ESLint warning remains in `src/pages/admin/SetupWizard.js` (`react-hooks/exhaustive-deps`)
+- the historical SetupWizard hook warning mentioned during this pass was removed in a later cleanup; current frontend production builds are expected to run cleanly again
 
 Repo cleanup note:
 - tracked generated `test_reports/*` artifacts were removed

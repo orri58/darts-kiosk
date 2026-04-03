@@ -1,46 +1,59 @@
-# Darts Kiosk — Release Notes v3.4.5
-## Lizenz-System Stabilisierung
+# Darts Kiosk — Release Notes v4.0.0-recovery
 
-### Neue Features seit v3.4.2
+## Local-first hardening / release polish
 
-#### v3.4.3 — Device Binding
-- Persistente Geraete-ID (install_id) fuer Hardware-Bindung
-- Auto-Bind beim ersten Game-Start
-- Mismatch-Erkennung bei fremden Geraeten
-- Rebind durch Superadmin im Admin Panel
-- Device Identity Card in der Lizenzverwaltung
+This release is not about adding new central-heavy product scope.
+It is mainly a cleanup and stabilization release around the current board-PC baseline.
 
-#### v3.4.4 — Mismatch Grace
-- Konfigurierbarer Grace-Zeitraum (Standard 48h) bei Geraete-Mismatch
-- Sessions bleiben waehrend Grace erlaubt (mit Warning)
-- Nach Ablauf: automatische Blockierung
-- Tracking: mismatch_detected_at, previous_install_id
-- Auto-Bind NUR bei Game-Start, nicht bei Unlock
+### Highlights
 
-#### v3.4.5 — Zyklische Pruefung + Audit-Log
-- Background-Lizenzpruefung alle 6 Stunden (konfigurierbar)
-- Fail-Safe: Bei Fehler bleibt letzter gueltiger Status aktiv
-- Manueller Trigger via Admin Panel ("Jetzt pruefen")
-- Vollstaendiges Audit-Log fuer alle Lizenz-Events
-- Neuer "Audit-Log" Tab mit Filter und Event-Badges
+#### 1. Local operator surface is clearer
+- admin runtime surfaces are more deliberately split between **Health**, **System**, and **Device Ops**
+- diagnostics and support-bundle contents are visible before export
+- operator messaging is more explicit about what is local-first vs optional
 
-### Bekannte Einschraenkungen
-- Rollen-basierte Sichtbarkeit noch nicht implementiert (alle Admins sehen alles)
-- Kein automatischer Setup-Wizard (manuelle Konfiguration erforderlich)
-- Agent-Autostart nur unter Windows via Task Scheduler
+#### 2. Credits-only active flow stays the baseline
+- active local unlock flow stays credits-first
+- authoritative billing still happens on real match start using the actual player situation
+- older time/game wording was further reduced where it was misleading in the main operator path
 
-### Systemanforderungen
-- Windows 10/11 oder Linux (Ubuntu 20.04+)
-- Python 3.10+
-- Node.js 18+ (nur fuer Development)
-- SQLite 3.x (eingebettet)
+#### 3. Packaging/release surface is less noisy
+- Windows setup now installs frontend dependencies via **npm**, matching the shared release build
+- release automation is aligned around the shared `release/build_release.sh` script
+- stale version-pinned release docs/examples were refreshed to the current repo/product shape
+- Windows/manual deployment docs now describe the local-first board-PC path instead of implying central dependency as the norm
 
-### Installation
-Siehe MANUAL_DEPLOYMENT.md (Windows) oder install.sh (Linux).
+#### 4. Diagnostics/operator polish
+- start/smoke helper messaging now points operators at the right logs
+- Windows helper output emphasizes that local play does not depend on external reachability
+- agent runtime/version output now follows the repo `VERSION` file instead of stale hardcoded version strings
 
-### Lizenz einrichten (Kurzanleitung)
-1. Admin Panel → Lizenzierung → Kunden anlegen
-2. Standort erstellen und Kunden zuweisen
-3. Lizenz erstellen (Plan, Laufzeit)
-4. Geraet mit Board-ID anlegen (install_id wird automatisch gebunden)
-5. Kiosk starten → Lizenz wird automatisch geprueft
+## Validation performed for this repo-side pass
+
+Executed successfully:
+
+```bash
+source .venv/bin/activate
+python -m compileall backend agent
+python -m pytest -q \
+  backend/tests/test_phase34_autodarts_triggers.py \
+  backend/tests/test_phase34_credits_pricing.py \
+  backend/tests/test_phase56_stability_installation.py \
+  backend/tests/test_phase789_local_core_validation.py
+cd frontend && npm run build
+cd .. && bash release/build_release.sh
+```
+
+Observed result:
+- backend + agent compile cleanly
+- focused backend suite passed
+- frontend production build passed cleanly
+- release artifacts were generated successfully for Windows/Linux/source
+
+## Still not proven by this repo-side release pass
+
+Real-machine validation is still required for:
+- actual Windows board-PC installation
+- Autodarts login/profile handling on the target machine
+- kiosk/window focus behavior on real hardware
+- install/update/rollback behavior using the packaged release on a real machine

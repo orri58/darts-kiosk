@@ -1,5 +1,9 @@
 # GitHub Setup — Vollstaendige Anleitung fuer das Darts Kiosk Update-System
 
+> **Aktueller Hinweis:** Dieses Dokument enthaelt noch einige historische Beispielversionen wie `1.7.0`.
+> Massgeblich sind heute immer die reale `VERSION`-Datei im Repo und der gemeinsame Build-Pfad
+> `bash release/build_release.sh`, den auch der GitHub-Workflow verwendet.
+
 ## Uebersicht
 
 Dieses Dokument ist die exakte Schritt-fuer-Schritt Anleitung zum Einrichten
@@ -13,9 +17,9 @@ Die folgenden Dateien sind bereits im Projekt vorbereitet und einsatzbereit:
 
 | Datei | Zweck | Status |
 |-------|-------|--------|
-| `VERSION` | Single Source of Truth fuer die Versionsnummer | Erstellt (1.6.5) |
-| `.gitignore` | Schuetzt Laufzeitdaten, .env, Datenbank vor versehentlichem Commit | Erstellt |
-| `.github/workflows/build-release.yml` | GitHub Actions Workflow: baut alle 3 Release-Pakete automatisch | Erstellt |
+| `VERSION` | Single Source of Truth fuer die Versionsnummer | Aktiv |
+| `.gitignore` | Schuetzt Laufzeitdaten, .env, Datenbank vor versehentlichem Commit | Aktiv |
+| `.github/workflows/build-release.yml` | GitHub Actions Workflow: ruft den gemeinsamen Release-Builder auf | Aktiv |
 | `backend/.env.example` | Template fuer Backend-Konfiguration | Erstellt |
 | `frontend/.env.example` | Template fuer Frontend-Konfiguration | Erstellt |
 | `updater.py` | Standalone Updater (stop → replace → restart → health check → rollback) | Erstellt |

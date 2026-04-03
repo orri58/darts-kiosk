@@ -1,21 +1,9 @@
 # =============================================================================
 # Darts Kiosk — Build & Release Workflow
 # =============================================================================
-# Triggers:
-#   1. Manual dispatch (workflow_dispatch) — build any version on demand
-#   2. Push of a version tag (v*) — auto-build on `git tag v1.7.0 && git push --tags`
-#
-# What it does:
-#   1. Checks out the repo
-#   2. Sets up Node.js and builds the React frontend
-#   3. Packages three release artifacts:
-#      - darts-kiosk-v{VERSION}-windows.zip  (Windows Board PC)
-#      - darts-kiosk-v{VERSION}-linux.tar.gz (Linux / Docker)
-#      - darts-kiosk-v{VERSION}-source.zip   (Full source)
-#   4. Creates a GitHub Release with all three artifacts attached
-#
-# Required secrets: none (public repo)
-# Optional secrets: none
+# Single rule:
+#   CI uses the same packaging script as local releases.
+#   Source of truth = release/build_release.sh
 # =============================================================================
 
 name: Build Release Packages
@@ -27,162 +15,45 @@ on:
   workflow_dispatch:
     inputs:
       version_override:
-        description: 'Override version (leave empty to read from VERSION file)'
+        description: 'Override version (leave empty to use VERSION from repo)'
         required: false
         default: ''
 
 permissions:
-  contents: write  # Needed to create releases and upload assets
+  contents: write
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
 
     steps:
-      # ─── Checkout ───────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ─── Determine version ─────────────────────────────────────
-      - name: Read version
-        id: version
-        run: |
-          if [ -n "${{ github.event.inputs.version_override }}" ]; then
-            VERSION="${{ github.event.inputs.version_override }}"
-          elif [ -f VERSION ]; then
-            VERSION=$(cat VERSION | tr -d '[:space:]')
-          else
-            VERSION="${GITHUB_REF_NAME#v}"
-          fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Building version: $VERSION"
-
-      # ─── Setup Node.js ─────────────────────────────────────────
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-          cache: 'yarn'
-          cache-dependency-path: frontend/yarn.lock
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
 
-      # ─── Build Frontend ────────────────────────────────────────
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: yarn install --frozen-lockfile
-
-      - name: Build frontend
-        working-directory: frontend
-        env:
-          REACT_APP_BACKEND_URL: ''
-        run: yarn build
-
-      # ─── Package: Windows ──────────────────────────────────────
-      - name: Create Windows package
+      - name: Resolve version
+        id: version
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          WIN_DIR="darts-kiosk-v${VERSION}-windows"
-          mkdir -p "${WIN_DIR}/backend" "${WIN_DIR}/frontend" "${WIN_DIR}/data/db" "${WIN_DIR}/data/assets" "${WIN_DIR}/data/backups" "${WIN_DIR}/logs"
+          if [ -n "${{ github.event.inputs.version_override }}" ]; then
+            printf '%s\n' "${{ github.event.inputs.version_override }}" > VERSION
+          fi
+          VERSION=$(tr -d '[:space:]' < VERSION)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
 
-          # Backend (exclude dev files)
-          rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='tests/' --exclude='.env' --exclude='*.sqlite*' \
-            backend/ "${WIN_DIR}/backend/"
+      - name: Build release artifacts
+        run: bash release/build_release.sh
 
-          # Frontend build + source
-          cp -r frontend/build "${WIN_DIR}/frontend/build"
-          rsync -a --exclude='node_modules' --exclude='build' --exclude='.env' \
-            frontend/ "${WIN_DIR}/frontend/"
+      - name: List generated artifacts
+        run: ls -lh release/build
 
-          # Strip dev-only packages from requirements
-          grep -v -E '^(emergentintegrations|pytest)' backend/requirements.txt > "${WIN_DIR}/backend/requirements.txt" || \
-            cp backend/requirements.txt "${WIN_DIR}/backend/requirements.txt"
-
-          # VERSION file
-          cp VERSION "${WIN_DIR}/"
-
-          # Updater
-          cp updater.py "${WIN_DIR}/"
-
-          # Windows scripts
-          cp release/windows/*.bat "${WIN_DIR}/" 2>/dev/null || true
-          cp release/windows/run_backend.py "${WIN_DIR}/" 2>/dev/null || true
-          cp release/windows/credits_overlay.py "${WIN_DIR}/" 2>/dev/null || true
-          cp release/windows/setup_profile.bat "${WIN_DIR}/" 2>/dev/null || true
-          cp release/windows/README.md "${WIN_DIR}/" 2>/dev/null || true
-
-          # Template .env files (user must configure)
-          cat > "${WIN_DIR}/backend/.env.example" << 'ENVEOF'
-          DATABASE_URL=sqlite+aiosqlite:///./data/db/darts.sqlite
-          SYNC_DATABASE_URL=sqlite:///./data/db/darts.sqlite
-          DATA_DIR=./data
-          JWT_SECRET=CHANGE-THIS-TO-A-RANDOM-SECRET
-          AGENT_SECRET=CHANGE-THIS-TO-A-RANDOM-SECRET
-          CORS_ORIGINS=*
-          MODE=STANDALONE
-          BOARD_ID=BOARD-1
-          AUTODARTS_URL=https://play.autodarts.io
-          AUTODARTS_MODE=observer
-          AUTODARTS_HEADLESS=false
-          AUTODARTS_MOCK=false
-          UPDATE_CHECK_ENABLED=true
-          UPDATE_CHECK_INTERVAL_HOURS=24
-          GITHUB_REPO=
-          GITHUB_TOKEN=
-          ENVEOF
-
-          cat > "${WIN_DIR}/frontend/.env.example" << 'ENVEOF'
-          REACT_APP_BACKEND_URL=http://localhost:8001
-          ENVEOF
-
-          # Zip
-          zip -r "darts-kiosk-v${VERSION}-windows.zip" "${WIN_DIR}" -q
-          echo "Windows package: darts-kiosk-v${VERSION}-windows.zip"
-
-      # ─── Package: Linux ────────────────────────────────────────
-      - name: Create Linux package
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          LINUX_DIR="darts-kiosk-v${VERSION}-linux"
-          mkdir -p "${LINUX_DIR}/backend" "${LINUX_DIR}/frontend/build" "${LINUX_DIR}/nginx"
-
-          rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='tests/' --exclude='.env' --exclude='*.sqlite*' \
-            backend/ "${LINUX_DIR}/backend/"
-
-          cp -r frontend/build/* "${LINUX_DIR}/frontend/build/"
-
-          grep -v -E '^(emergentintegrations|pytest)' backend/requirements.txt > "${LINUX_DIR}/backend/requirements.txt" || \
-            cp backend/requirements.txt "${LINUX_DIR}/backend/requirements.txt"
-
-          cp VERSION "${LINUX_DIR}/"
-          cp updater.py "${LINUX_DIR}/"
-          cp install.sh "${LINUX_DIR}/" 2>/dev/null || true
-          cp docker-compose.yml "${LINUX_DIR}/" 2>/dev/null || true
-          cp Dockerfile "${LINUX_DIR}/" 2>/dev/null || true
-          cp -r nginx/* "${LINUX_DIR}/nginx/" 2>/dev/null || true
-
-          tar czf "darts-kiosk-v${VERSION}-linux.tar.gz" "${LINUX_DIR}"
-          echo "Linux package: darts-kiosk-v${VERSION}-linux.tar.gz"
-
-      # ─── Package: Source ───────────────────────────────────────
-      - name: Create Source package
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          SRC_DIR="darts-kiosk-v${VERSION}-source"
-          mkdir -p "${SRC_DIR}"
-
-          rsync -a \
-            --exclude='node_modules' --exclude='__pycache__' --exclude='*.pyc' \
-            --exclude='.env' --exclude='*.sqlite*' --exclude='build' \
-            --exclude='data/' --exclude='logs/' --exclude='.git' \
-            --exclude='.emergent' --exclude='release/build' \
-            --exclude='test_reports/' --exclude='test_result.md' \
-            --exclude='memory/' --exclude='.github' \
-            ./ "${SRC_DIR}/"
-
-          zip -r "darts-kiosk-v${VERSION}-source.zip" "${SRC_DIR}" -q
-          echo "Source package: darts-kiosk-v${VERSION}-source.zip"
-
-      # ─── Create GitHub Release ─────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -192,8 +63,8 @@ jobs:
           prerelease: false
           generate_release_notes: true
           files: |
-            darts-kiosk-v${{ steps.version.outputs.version }}-windows.zip
-            darts-kiosk-v${{ steps.version.outputs.version }}-linux.tar.gz
-            darts-kiosk-v${{ steps.version.outputs.version }}-source.zip
+            release/build/darts-kiosk-v${{ steps.version.outputs.version }}-windows.zip
+            release/build/darts-kiosk-v${{ steps.version.outputs.version }}-linux.tar.gz
+            release/build/darts-kiosk-v${{ steps.version.outputs.version }}-source.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

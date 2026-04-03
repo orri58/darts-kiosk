@@ -16,10 +16,44 @@ The repo is in a better product state again:
 - time-based and other pricing variants are no longer exposed as first-class operator choices in the main local UI
 - stale generated test-report artifacts and old packaging noise were removed from the tracked repo/build surface
 - setup / install / maintenance / recovery flows are now more coherent across backend, Windows scripts, and admin UI
+- release/build/docs now align better around the current product shape: npm-based frontend packaging on Windows, shared release-script usage in CI, and less misleading central-heavy deployment copy
 
 This is a meaningful cleanup/product pass, not just copy polish.
 
 It is still **not fully production-proven** until somebody does a real Windows + Autodarts validation pass.
+
+## Latest pass: final hardening + release polish
+
+### What changed in this pass
+- Windows release/setup helpers now install frontend dependencies via **npm**, matching the shared release build instead of inventing a separate yarn-only board-PC path
+- GitHub release automation now calls the shared `release/build_release.sh` script so CI packaging follows the same artifact/content rules as local releases
+- Windows helper output is clearer about the local-first baseline: `start.bat` now foregrounds local kiosk/admin/health URLs and stops advertising optional central surfaces as if they were the main board-PC runtime story
+- smoke-test failure output now points operators directly at `data\\logs\\app.log` and `logs\\backend.log`
+- Windows agent version/status output now follows the repo `VERSION` file instead of stale hardcoded v3.x strings
+- release docs were refreshed to the current product shape (`RELEASE_GUIDE.md`, `release/source/RELEASE_NOTES.md`, `release/windows/MANUAL_DEPLOYMENT.md`, `frontend/README.md`)
+- dev docs now consistently use the npm-based frontend path
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+source .venv/bin/activate
+python -m compileall backend agent
+python -m pytest -q \
+  backend/tests/test_phase34_autodarts_triggers.py \
+  backend/tests/test_phase34_credits_pricing.py \
+  backend/tests/test_phase56_stability_installation.py \
+  backend/tests/test_phase789_local_core_validation.py
+cd frontend && npm run build
+cd .. && bash release/build_release.sh
+```
+
+Result:
+- backend + agent compile cleanly
+- focused backend validation passed (`36 passed`)
+- frontend production build succeeds cleanly
+- release artifacts were generated successfully in `release/build/`
+- live Windows install/update/rollback behavior is still only claimable after real-machine validation
 
 ## Latest pass: board-PC readiness + diagnostics surface
 
@@ -118,7 +152,7 @@ Result:
 
 ### Validation for this pass
 - frontend production build succeeded
-- build warning remains the same pre-existing `SetupWizard.js` hook dependency warning
+- the historical SetupWizard hook warning from this pass has since been resolved
 
 Executed command:
 
@@ -129,7 +163,7 @@ npm run build
 
 Result:
 - build completed successfully
-- existing ESLint warning still present in `src/pages/admin/SetupWizard.js`
+- frontend build is now clean again in the current repo state
 
 ---
 
@@ -214,7 +248,7 @@ npm run build
 
 Result:
 - production build completed successfully
-- one pre-existing ESLint warning remains in `src/pages/admin/SetupWizard.js` (`react-hooks/exhaustive-deps`)
+- current frontend production builds are now expected to complete without that older SetupWizard warning
 
 ## Repo/build-surface cleanup done in this pass
 

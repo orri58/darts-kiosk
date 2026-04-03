@@ -99,8 +99,8 @@ Notes:
 
 ```bash
 cd frontend
-yarn install
-REACT_APP_BACKEND_URL=http://localhost:8001 yarn start
+npm ci
+REACT_APP_BACKEND_URL=http://localhost:8001 npm start
 ```
 
 ### Local URLs

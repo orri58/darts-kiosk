@@ -1,278 +1,295 @@
-# Darts Kiosk v3.5.3 - Windows Deployment Guide
+# Darts Kiosk — Windows board PC deployment guide
 
-## Uebersicht
+## What this guide is for
 
-Diese Anleitung beschreibt das vollstaendige Deployment eines Darts Kiosk-PCs,
-inklusive Anbindung an den zentralen Lizenzserver (api.dartcontrol.io),
-Device Registration, Agent-Autostart und Kiosk-Modus.
+This is the practical deployment path for a **local board machine**.
 
-## Systemanforderungen
+The baseline assumption is:
+- the board PC must be able to run locally
+- local admin + kiosk surfaces are the primary operator path
+- optional central/portal/licensing adapters may exist, but they are **not the dependency that defines whether local play works**
 
-- Windows 10/11 (64-bit)
-- Python 3.11+ (https://python.org/downloads)
-  - WICHTIG: Bei Installation "Add to PATH" aktivieren
-- Google Chrome (https://google.com/chrome)
-- Netzwerk/Internet (fuer Lizenz-Sync mit api.dartcontrol.io)
+If you want the short version, use `README.md` in this same folder.
+This document is the more detailed step-by-step path.
 
-## Verzeichnisstruktur
+---
 
-```
+## 1. System requirements
+
+Recommended:
+- Windows 10/11 64-bit
+- Python 3.11 or 3.12
+- Node.js 20 or 22 LTS
+- Google Chrome
+- Microsoft Visual C++ Redistributable x64
+
+Notes:
+- use the official LTS Node builds, not odd-numbered/preview variants
+- internet access helps for package downloads and optional sync/update checks
+- once set up, the local board runtime should still be usable without central connectivity
+
+---
+
+## 2. Package layout after unpacking
+
+Typical target path:
+
+```text
 C:\DartsKiosk\
-  backend\               <- Backend-Server (FastAPI)
-  frontend\              <- Frontend (React, pre-built)
-  central_server\        <- Zentraler Lizenzserver (optional, nur fuer Self-Hosting)
-  agent\                 <- Windows Agent (Autostart, Monitoring)
-  kiosk_experimental\    <- Hard-Kiosk-Modus (experimentell)
-  data\                  <- Datenbank, Assets, Backups
-  logs\                  <- Log-Dateien
-  setup_windows.bat      <- Einmalige Einrichtung
-  start.bat              <- System starten
-  stop.bat               <- System stoppen
-  run_backend.py         <- Backend-Launcher mit Watchdog
-  VERSION                <- Aktuelle Version
+```
+
+Expected top-level contents in the Windows bundle:
+
+```text
+backend\
+frontend\
+agent\
+central_server\        optional/in-tree, not required for local play
+kiosk\                 experimental hard-kiosk helpers
+VERSION
+check_requirements.bat
+setup_windows.bat
+setup_profile.bat
+start.bat
+stop.bat
+smoke_test.bat
+run_backend.py
+credits_overlay.py
+README.md
+```
+
+Runtime state will be created locally during setup/start, especially:
+
+```text
+data\
+logs\
+.venv\
+backend\.env
+frontend\.env
 ```
 
 ---
 
-## Schritt 1: Dateien entpacken
+## 3. Step-by-step bring-up
 
-ZIP entpacken nach `C:\DartsKiosk`:
+### Step 1 — unpack the Windows package
 
-```
-Rechtsklick auf darts-kiosk-v3.5.3-windows.zip -> "Alle extrahieren..."
+Example:
+
+```text
+Rechtsklick auf darts-kiosk-v4.0.0-recovery-windows.zip -> "Alle extrahieren..."
 Ziel: C:\DartsKiosk
 ```
 
-## Schritt 2: Einmalige Einrichtung
+### Step 2 — run the requirement check
 
+Double-click:
+
+```text
+check_requirements.bat
 ```
-Doppelklick auf: setup_windows.bat
+
+This verifies:
+- Python
+- Node.js
+- npm
+- VC++ Redistributable hinting
+
+### Step 3 — run the one-time setup
+
+Double-click:
+
+```text
+setup_windows.bat
 ```
 
-Das Script erledigt automatisch:
-1. Verzeichnisse erstellen (data, logs)
-2. backend\.env aus Vorlage erstellen
-3. Python Virtual Environment (.venv) erstellen
-4. Backend-Pakete installieren
-5. Playwright Chromium installieren
-6. Frontend-Pakete installieren
+What it does:
+1. creates runtime directories
+2. creates `backend\.env` / `frontend\.env` from examples if missing
+3. creates `.venv`
+4. installs backend dependencies
+5. installs Playwright Chromium
+6. installs frontend dependencies via **npm**
 
-Dauer: ca. 5-10 Minuten beim ersten Mal.
+### Step 4 — review `backend\.env`
 
-## Schritt 3: Konfiguration (.env anpassen)
-
-Oeffnen Sie `backend\.env` in einem Texteditor und pruefen Sie:
+At minimum, check and adjust:
 
 ```env
-# === Datenbank ===
 DATABASE_URL=sqlite+aiosqlite:///./data/db/darts.sqlite
 SYNC_DATABASE_URL=sqlite:///./data/db/darts.sqlite
 DATA_DIR=./data
-
-# === Sicherheit (AENDERN!) ===
-JWT_SECRET=IHR-SICHERES-PASSWORT-HIER
-AGENT_SECRET=IHR-AGENT-GEHEIMNIS-HIER
-
-# === Zentraler Lizenzserver ===
-CENTRAL_SERVER_URL=https://api.dartcontrol.io
-
-# === Board-Konfiguration ===
-BOARD_ID=BOARD-1
+JWT_SECRET=CHANGE-ME
+AGENT_SECRET=CHANGE-ME
+CORS_ORIGINS=*
 MODE=STANDALONE
-
-# === Autodarts ===
+BOARD_ID=BOARD-1
 AUTODARTS_URL=https://play.autodarts.io
 AUTODARTS_MODE=observer
 AUTODARTS_HEADLESS=false
 AUTODARTS_MOCK=false
-
-# === Updates ===
 UPDATE_CHECK_ENABLED=true
 UPDATE_CHECK_INTERVAL_HOURS=24
 GITHUB_REPO=
 GITHUB_TOKEN=
 ```
 
-WICHTIG:
-- `JWT_SECRET` und `AGENT_SECRET` unbedingt aendern!
-- `CENTRAL_SERVER_URL` zeigt auf den produktiven Lizenzserver
-- `BOARD_ID` pro Dartboard eindeutig vergeben (BOARD-1, BOARD-2, etc.)
+Important:
+- change `JWT_SECRET`
+- change `AGENT_SECRET`
+- set a correct `BOARD_ID` for the physical board PC
+- review the `AUTODARTS_*` values for the actual observer setup
+- GitHub update variables are optional
 
-## Schritt 4: System starten
+### Step 5 — prepare the persistent Chrome/Autodarts profile
 
+Double-click:
+
+```text
+setup_profile.bat
 ```
-Doppelklick auf: start.bat
+
+Use that profile window to:
+- sign into Autodarts if needed
+- install required extension(s)
+- confirm the intended board/browser state
+
+### Step 6 — start the system
+
+Double-click:
+
+```text
+start.bat
 ```
 
-Das Script:
-1. Aktiviert die Python .venv
-2. Prueft Abhaengigkeiten
-3. Erkennt die LAN-IP
-4. Startet den Backend-Server (Port 8001, 0.0.0.0)
-5. Startet den Windows Agent (Monitoring)
-6. Startet Credits-Overlay
-7. Oeffnet Chrome im Kiosk-Modus
+What it does:
+- activates `.venv` if present
+- starts the backend watchdog
+- starts the Windows agent if present
+- starts the credits overlay if present
+- opens the kiosk UI in Chrome kiosk mode
 
-## Schritt 5: Geraet registrieren
+### Step 7 — run the smoke test
 
-Beim ersten Start zeigt der Kiosk ein "Registrierungs-Overlay".
+Double-click:
 
-1. Betreiber-Admin erstellt im Admin-Panel einen Registration-Token
-   (Admin -> Licensing -> Tokens -> Neuer Token)
-2. Token auf dem Kiosk-PC eingeben
-3. Das Geraet registriert sich automatisch beim zentralen Server
+```text
+smoke_test.bat
+```
 
-Danach synchronisiert der Kiosk regelmaessig seine Lizenz.
-
-## Schritt 6: Lizenz-Sync konfigurieren
-
-Im Admin-Panel unter "Licensing" -> "Sync":
-- Server-URL: https://api.dartcontrol.io (sollte vorausgefuellt sein)
-- Sync aktivieren
-- Interval: z.B. alle 4 Stunden
-
-Der Sync-Client arbeitet offline-faehig:
-- Bei Verbindung: Holt aktuelle Lizenz vom Server
-- Ohne Verbindung: Verwendet lokalen Cache
+The smoke test checks:
+- `/api/health`
+- `/api/system/version`
+- `/api/boards`
+- observer status for the configured `BOARD_ID`
 
 ---
 
-## Zugriff
+## 4. Main local URLs
 
-### Lokal (auf dem Kiosk-PC)
-| Funktion | URL |
-|----------|-----|
-| Kiosk-UI | http://localhost:8001/kiosk/BOARD-1 |
-| Admin-Panel | http://localhost:8001/admin |
-| Betreiber-Portal | http://localhost:8001/operator |
-| API Health | http://localhost:8001/api/health |
+Assuming default port `8001`:
 
-### LAN (andere Geraete im Netzwerk)
-| Funktion | URL |
-|----------|-----|
-| Kiosk-UI | http://[LAN-IP]:8001/kiosk/BOARD-1 |
-| Admin-Panel | http://[LAN-IP]:8001/admin |
-| Betreiber-Portal | http://[LAN-IP]:8001/operator |
+### On the board PC itself
+- Kiosk UI: `http://localhost:8001/kiosk/BOARD_ID`
+- Admin UI: `http://localhost:8001/admin`
+- Health: `http://localhost:8001/api/health`
 
-Die LAN-IP wird beim Start angezeigt (z.B. 192.168.1.100).
+### From another device on the LAN
+- Kiosk UI: `http://<LAN-IP>:8001/kiosk/BOARD_ID`
+- Admin UI: `http://<LAN-IP>:8001/admin`
+- Health: `http://<LAN-IP>:8001/api/health`
 
-### Betreiber-Portal
-Das Betreiber-Portal unter /operator ist ein separates, read-only Portal fuer
-Betreiber. Login mit den Betreiber-Zugangsdaten vom zentralen Server.
-
-Funktionen:
-- Uebersicht (Dashboard mit Statusanzeige)
-- Geraete (Online/Offline, Binding-Status)
-- Lizenzen (Aktiv/Grace/Abgelaufen)
-- Kunden und Standorte
-- Aktivitaetsprotokoll
+`start.bat` prints the detected LAN IP during bring-up.
 
 ---
 
-## Agent (Autostart)
+## 5. Important runtime facts
 
-Der Windows Agent ueberwacht den Kiosk-Betrieb.
-
-### Automatischen Start einrichten
-```
-cd C:\DartsKiosk\agent
-python setup_autostart.py
-```
-
-Oder manuell ueber Task Scheduler (siehe unten).
-
-### Agent-Funktionen
-- Ueberwacht Backend-Prozess
-- Startet Backend bei Absturz neu
-- Meldet Status an Master-PC (im AGENT-Modus)
+- `BOARD_ID` in `backend\.env` controls which board the Windows helpers target.
+- Chrome board profile data lives in `data\chrome_profile\<BOARD_ID>`.
+- Kiosk UI profile data lives in `data\kiosk_ui_profile`.
+- Backend/runtime logs go to `data\logs\app.log`.
+- Windows helper/watchdog logs go to the top-level `logs\` folder.
+- Local play should not depend on central reachability once the board machine is configured.
 
 ---
 
-## Automatischer Start (Task Scheduler)
+## 6. Troubleshooting
 
-### Variante A: Task Scheduler GUI
+### Backend does not come up
+Check:
+- `logs\backend.log`
+- `data\logs\app.log`
+- whether port `8001` is already in use
 
-1. `Win+R` -> `taskschd.msc` -> Enter
-2. Rechts: "Aufgabe erstellen..."
-3. Tab "Allgemein":
-   - Name: `DartsKiosk`
-   - "Mit hoechsten Privilegien ausfuehren" aktivieren
-4. Tab "Trigger":
-   - Neu -> "Bei Anmeldung"
-5. Tab "Aktionen":
-   - Neu -> Programm starten
-   - Programm: `C:\DartsKiosk\start.bat`
-   - Starten in: `C:\DartsKiosk`
-6. Tab "Bedingungen":
-   - "Nur starten, wenn Netzwerk verfuegbar" deaktivieren
-7. OK
-
-### Variante B: Per Befehl
+Quick check:
 
 ```cmd
-schtasks /create /tn "DartsKiosk" /tr "C:\DartsKiosk\start.bat" /sc onlogon /rl highest
+netstat -an | findstr 8001
 ```
 
+### Smoke test fails
+Check:
+- `data\logs\app.log`
+- `logs\backend.log`
+- whether `BOARD_ID` in `backend\.env` matches an actual board row
+
+### Agent does not respond
+Check:
+- `data\logs\agent.log`
+- whether `AGENT_SECRET` exists in `backend\.env`
+- whether the system is running on Windows (many agent functions are Windows-only)
+
+### Autodarts/observer problems
+Check:
+- Chrome is installed
+- the persistent profile was prepared via `setup_profile.bat`
+- Playwright Chromium installed successfully during setup
+- the observer target and board/login state are valid on the actual machine
+
+### Central/portal surfaces are unavailable
+That is not the first thing to debug for a board PC.
+First confirm:
+- local backend health
+- board/admin local access
+- observer state
+- smoke test status
+
+Optional central connectivity can be debugged afterwards.
+
 ---
 
-## System stoppen
+## 7. Stop / restart
 
+To stop the local services cleanly:
+
+```text
+stop.bat
 ```
-Doppelklick auf: stop.bat
-```
 
-Oder: Im start.bat-Fenster eine Taste druecken.
+Or stop them from the still-open `start.bat` window.
 
 ---
 
-## Troubleshooting
+## 8. Updates
 
-### Backend startet nicht
-- Pruefe `logs\backend.log`
-- Pruefe ob Port 8001 frei ist: `netstat -an | findstr 8001`
-- Pruefe .env Konfiguration
+Preferred path:
+- use the admin UI maintenance/update surface
+- or replace app files with a newer Windows release bundle while preserving runtime state
 
-### Lizenz-Sync fehlgeschlagen
-- Pruefe Internetverbindung
-- Pruefe `CENTRAL_SERVER_URL` in backend\.env
-- Pruefe ob api.dartcontrol.io erreichbar ist: `curl https://api.dartcontrol.io/api/health`
-- Der Kiosk funktioniert offline mit dem lokalen Cache weiter
-
-### Betreiber-Portal zeigt "Server nicht erreichbar"
-- Pruefe ob `CENTRAL_SERVER_URL` korrekt in backend\.env gesetzt ist
-- Der Proxy leitet Anfragen an den zentralen Server weiter
-- Ohne Verbindung zum zentralen Server ist das Portal nicht nutzbar
-
-### Chrome startet nicht im Kiosk-Modus
-- Pruefe ob Chrome installiert ist
-- Alle Chrome-Fenster schliessen vor dem Start
-- Ggf. Chrome-Profil loeschen: `data\kiosk_ui_profile`
-
-### Agent funktioniert nicht
-- Pruefe `agent\AGENT_DEPLOYMENT.md` fuer Details
-- Agent benoetigt psutil: `pip install psutil`
+Do **not** casually overwrite these during an update:
+- `data\`
+- `logs\`
+- `backend\.env`
+- `frontend\.env`
+- Chrome profiles under `data\chrome_profile\...`
 
 ---
 
-## Updates
+## 9. What still needs real-machine confirmation
 
-Updates koennen ueber den integrierten Updater eingespielt werden:
-
-1. Im Admin-Panel: System -> Updates pruefen
-2. Oder manuell: `python updater.py`
-
-Fuer manuelle Updates:
-1. System stoppen (stop.bat)
-2. Neues ZIP entpacken (backend/ und frontend/ ersetzen)
-3. NICHT ueberschreiben: data/, logs/, backend/.env
-4. System starten (start.bat)
-
----
-
-## Sicherheitshinweise
-
-- `JWT_SECRET` und `AGENT_SECRET` immer aendern (keine Default-Werte!)
-- Admin-Passwort nach erstem Login aendern
-- Chrome Kiosk-Modus verhindert Zugriff auf andere Anwendungen
-- Firewall: Port 8001 nur im lokalen Netzwerk freigeben
-- Updates regelmaessig einspielen
+This guide reflects the repo/product surface, but the following still need actual machine confirmation:
+- Chrome kiosk/focus behavior on the target hardware
+- Autodarts login/session stability over real runtime
+- shell/device recovery actions on a live Windows machine
+- update/rollback behavior using packaged artifacts on the real board PC

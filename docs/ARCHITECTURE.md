@@ -249,7 +249,7 @@ Important limitation:
 
 ### Developer / local Linux workflow
 - run backend from repo root via `python -m uvicorn backend.server:app`
-- run frontend separately with `yarn start`
+- run frontend separately with `npm start`
 - use pytest suites for local-core validation
 
 ### Windows board PC workflow
