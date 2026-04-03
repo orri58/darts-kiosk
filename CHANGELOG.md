@@ -4,6 +4,17 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.2.2] - 2026-04-04
+
+### Fixed
+- Local leaderboard/statistics no longer depend on match sharing being enabled.
+- Completed local matches now persist `MatchResult` records even when a session still has remaining credits/time.
+- This makes local player names and rankings much more consistent across standalone devices.
+
+### Validation
+- Backend compile check passed.
+- Focused backend validation suite passed (37 tests).
+
 ## [4.2.1] - 2026-04-04
 
 ### Fixed

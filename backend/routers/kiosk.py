@@ -333,26 +333,30 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                     # ── Match result + player stats ──
                     if should_record_match_completion(trigger):
                         match_sharing = await get_or_create_setting(db, "match_sharing", DEFAULT_MATCH_SHARING)
-                        if match_sharing.get("enabled", False) and should_lock:
-                            match_token = secrets.token_hex(16)
-                            duration = None
-                            if session.started_at:
-                                started = session.started_at
-                                if started.tzinfo is None:
-                                    started = started.replace(tzinfo=timezone.utc)
-                                duration = int((datetime.now(timezone.utc) - started).total_seconds())
-                            match = MatchResult(
-                                public_token=match_token,
-                                board_id=board.board_id,
-                                board_name=board.name,
-                                game_type=session.game_type or "Dart",
-                                players=session.players or [],
-                                winner=winner or (session.players[0] if session.players else None),
-                                scores=scores,
-                                duration_seconds=duration,
-                                expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
-                            )
-                            db.add(match)
+                        match_token = secrets.token_hex(16)
+                        duration = None
+                        if session.started_at:
+                            started = session.started_at
+                            if started.tzinfo is None:
+                                started = started.replace(tzinfo=timezone.utc)
+                            duration = int((datetime.now(timezone.utc) - started).total_seconds())
+                        match = MatchResult(
+                            public_token=match_token,
+                            board_id=board.board_id,
+                            board_name=board.name,
+                            game_type=session.game_type or "Dart",
+                            players=session.players or [],
+                            winner=winner or (session.players[0] if session.players else None),
+                            scores=scores,
+                            duration_seconds=duration,
+                            expires_at=datetime.now(timezone.utc) + timedelta(hours=24),
+                        )
+                        db.add(match)
+                        logger.info(
+                            f"[STATS] local_match_result_saved board={board.board_id} "
+                            f"players={len(session.players or [])} should_lock={should_lock} "
+                            f"match_sharing_enabled={bool(match_sharing.get('enabled', False))}"
+                        )
 
                         for name in (session.players or []):
                             result_p = await db.execute(
