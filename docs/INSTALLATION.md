@@ -52,9 +52,17 @@ From the repo root on the Windows machine:
 3. Edit `backend\.env`
 4. Run `release/windows/setup_profile.bat`
 5. Run `release/windows/start.bat`
-6. Run `release/windows/smoke_test.bat`
+6. Open `http://localhost:3000/setup` (or just `http://localhost:3000/admin/login` and let it redirect)
+7. Complete the setup wizard
+8. Run `release/windows/smoke_test.bat`
 
-If step 6 passes, you have a usable local runtime baseline.
+If step 8 passes, you have a usable local runtime baseline.
+
+What the setup wizard now does:
+- rotates the admin password away from the seeded default
+- rotates the quick PIN for existing admin/staff users so the old seeded quick PIN cannot linger
+- can generate fresh JWT / agent secrets into `data/.secrets`
+- shows local URLs + basic preflight state instead of making the operator infer them
 
 ## Minimum `backend\.env` review
 
@@ -124,17 +132,37 @@ What you want to see:
 ## Local URLs
 
 Default local URLs:
-- Kiosk UI: `http://localhost:8001/kiosk/<BOARD_ID>`
-- Admin UI: `http://localhost:8001/admin`
+- Kiosk UI: `http://localhost:3000/kiosk/<BOARD_ID>` in dev / `http://localhost:8001/kiosk/<BOARD_ID>` when served by backend build
+- Admin UI: `http://localhost:3000/admin/login` in dev / `http://localhost:8001/admin` when served by backend build
+- Setup wizard: `http://localhost:3000/setup` in dev
 - Health: `http://localhost:8001/api/health`
 - Observer status: `http://localhost:8001/api/kiosk/<BOARD_ID>/observer-status`
 - Version: `http://localhost:8001/api/system/version`
 
 Default seeded admin credentials on a fresh database:
 - admin user: `admin` / `admin123`
-- staff user: `wirt` / `wirt123`
+- admin quick PIN before setup: `1234`
 
-Change them on real installs. Obviously.
+Treat those as bootstrap-only. The first-run setup wizard is expected to replace them.
+
+## Device ops / recovery after install
+
+Once the board is up, the main operator-maintenance surface is:
+- `System -> Device Ops`
+
+Use it for:
+- Autodarts ensure / restart
+- backend restart
+- Windows reboot / shutdown
+- Explorer restore if kiosk shell/lockdown went wrong
+- kiosk-shell re-enable after repair
+- Task Manager enable / disable
+- agent autostart register / remove
+
+Recovery rule of thumb:
+- if the box feels "too kiosked" or hard to recover, switch to **Explorer** first
+- after shell changes, expect a reboot or sign-out/sign-in
+- export a support bundle before risky repair work when possible
 
 ## Updates
 
@@ -148,6 +176,14 @@ If this machine runs directly from a git checkout:
 
 ### Bundle/update script workflow
 If your release bundle ships `update.bat`, use that bundle’s documented flow and still finish with `smoke_test.bat`.
+
+Admin-side update flow expectation:
+1. download or select the package
+2. create a pre-update app backup
+3. stage + validate the package
+4. launch the updater
+5. let the updater perform restart + health/version check
+6. keep rollback material available until the board passes smoke + operator checks
 
 ## Logs
 

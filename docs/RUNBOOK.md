@@ -37,6 +37,13 @@ release\windows\setup_windows.bat
 release\windows\setup_profile.bat
 ```
 
+### First-run completion
+If `/admin/login` redirects to `/setup`, finish the setup wizard there first.
+It now sets:
+- admin password
+- quick PIN for existing admin/staff users
+- generated JWT / agent secrets (optional, but recommended)
+
 ## 2. Expected healthy state
 
 A healthy board PC should have all of the following:
@@ -156,6 +163,17 @@ Look here first:
 - `data\logs\app.log`
 - `logs\backend.log`
 - `data\autodarts_debug\`
+- Admin UI -> `System` -> `Logs` -> `Support-Bundle`
+
+The support bundle now contains:
+- application logs
+- supervisor logs when present
+- system info snapshot
+- health snapshot
+- setup/preflight snapshot
+- agent/device-ops snapshot
+- downloaded update assets + app backup snapshot
+- last updater result snapshot
 
 Useful search terms:
 - `SESSION`
@@ -247,6 +265,21 @@ If central problems stop local play, treat that as a bug.
 
 ## 8. Recovery actions
 
+### Safe local recovery via admin UI
+Use `System -> Device Ops` for the host-near controls that should not be buried in generic health pages:
+- Autodarts ensure / restart
+- backend restart
+- Windows reboot / shutdown
+- Explorer restore
+- kiosk-shell re-enable
+- Task Manager enable / disable
+- agent autostart register / remove
+
+Practical rule:
+- if the kiosk shell or lockdown behaviour is the problem, switch to **Explorer** first so the machine becomes operable again
+- only then change shell/task-manager/autostart settings further
+- after shell changes, expect a sign-out/sign-in or reboot to be required
+
 ### Full rebuild after drift
 ```bat
 release\windows\stop.bat
@@ -273,6 +306,19 @@ release\windows\setup_profile.bat
 Do not casually delete both profiles on a live board unless you want to rebuild the whole login/session state.
 
 ## 9. Validation checklist after update
+
+Update/rollback intent is now:
+1. create backup before install
+2. stage + validate package
+3. write manifest
+4. launch external updater
+5. let updater perform health/version checks
+6. keep rollback artifact available if install/health fails
+
+When an update looked suspicious, do **not** guess blindly:
+- check `System -> Updates` for downloaded packages, backup artifacts, and updater result
+- export a support bundle before further repair work
+- only then decide whether to retry install or trigger rollback
 
 Minimum:
 1. `start.bat`

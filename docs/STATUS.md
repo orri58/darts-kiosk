@@ -12,10 +12,45 @@ The repo is in a better product state again:
 - actual credit deduction happens later on authoritative match start, using the real player situation
 - time-based and other pricing variants are no longer exposed as first-class operator choices in the main local UI
 - stale generated test-report artifacts and old packaging noise were removed from the tracked repo/build surface
+- setup / install / maintenance / recovery flows are now more coherent across backend, Windows scripts, and admin UI
 
 This is a meaningful cleanup/product pass, not just copy polish.
 
 It is still **not fully production-proven** until somebody does a real Windows + Autodarts validation pass.
+
+## Latest pass: ops / maintenance / installation completion
+
+### What changed in this pass
+- added a dedicated **Device Ops** admin surface that finally wires the existing AgentTab into live backend routes
+- implemented agent-first backend routes for:
+  - agent status
+  - Autodarts ensure/restart
+  - backend restart
+  - Windows reboot/shutdown
+  - Explorer ↔ kiosk shell switching
+  - Task Manager enable/disable
+  - agent autostart register/remove
+- kept safe fallback behavior when the Windows agent is offline by reusing existing backend services instead of creating parallel code paths
+- first-run setup now exposes lightweight preflight data and local URLs directly in the setup wizard
+- admin login now redirects incomplete systems to `/setup` instead of leaving operators to guess the right first-run step
+- setup completion now rotates the quick PIN for existing **admin/staff** users, closing the old foot-gun where the seeded admin quick PIN could remain active even after setup
+- support bundle export now includes runtime snapshots (system info, health, setup status, agent status, update/download state) in addition to raw logs
+- update downloads listing now returns the metadata that the install path actually expects (`filename`, `path`, byte size), fixing the broken handoff between download and install
+- DB-aware backup/system info paths now use the configured SQLite file instead of assuming a stale hardcoded default path
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+python3 -m compileall backend agent
+cd frontend && npm run build
+```
+
+Result:
+- backend + agent sources compile cleanly
+- frontend production build succeeds
+- focused pytest execution was **not run here** because the host environment lacks `pytest`
+- live Windows/Autodarts validation is still required before making strong production claims about shell switching, reboot/shutdown, or scheduled-task autostart on a real board PC
 
 ## Latest pass: credits-only unlock cleanup
 
