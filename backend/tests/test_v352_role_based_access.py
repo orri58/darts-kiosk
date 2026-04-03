@@ -11,6 +11,8 @@ import requests
 import os
 import uuid
 
+pytestmark = pytest.mark.integration
+
 CENTRAL_URL = os.environ.get("CENTRAL_SERVER_URL", "http://localhost:8002")
 KIOSK_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://boardgame-repair.preview.emergentagent.com")
 LEGACY_TOKEN = "admin-secret-token"

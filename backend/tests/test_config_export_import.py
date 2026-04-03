@@ -8,6 +8,8 @@ import requests
 import os
 import time
 
+pytestmark = pytest.mark.integration
+
 # Central server URL (NOT the backend proxy)
 CS_URL = "http://localhost:8002"
 

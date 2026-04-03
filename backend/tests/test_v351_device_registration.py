@@ -15,6 +15,8 @@ import uuid
 import os
 import time
 
+pytestmark = pytest.mark.integration
+
 # URLs from environment
 KIOSK_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 CENTRAL_SERVER_URL = "http://localhost:8002"

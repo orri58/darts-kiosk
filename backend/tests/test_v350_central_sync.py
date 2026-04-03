@@ -17,6 +17,8 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
+pytestmark = pytest.mark.integration
+
 # Central Server (internal port 8002)
 CENTRAL_SERVER_URL = "http://localhost:8002"
 CENTRAL_ADMIN_TOKEN = os.environ.get("CENTRAL_ADMIN_TOKEN", "admin-secret-token")

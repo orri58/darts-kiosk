@@ -7,6 +7,8 @@ import requests
 import os
 import json
 
+pytestmark = pytest.mark.integration
+
 # Central server URL (running on port 8002)
 CENTRAL_URL = "http://localhost:8002"
 # Frontend URL for portal testing

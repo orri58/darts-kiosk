@@ -9,6 +9,8 @@ import pytest
 import requests
 import os
 
+pytestmark = pytest.mark.integration
+
 # Central server URL (running on port 8002)
 CENTRAL_URL = "http://localhost:8002"
 # Backend URL from environment

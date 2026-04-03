@@ -19,6 +19,8 @@ import asyncio
 import json
 import os
 
+pytestmark = pytest.mark.integration
+
 # Central server runs on port 8002
 CENTRAL_URL = "http://localhost:8002"
 

@@ -317,14 +317,17 @@ class TestExePathValidation:
 class TestAgentVersion:
     """Test agent version is set correctly."""
 
-    def test_version_is_341(self):
+    def test_version_matches_repo_version(self):
         from agent.darts_agent import AGENT_VERSION
-        assert AGENT_VERSION == "3.4.1"
+        from pathlib import Path
+        version_file = Path(__file__).resolve().parent.parent.parent / "VERSION"
+        expected = version_file.read_text().strip()
+        assert AGENT_VERSION == expected
 
     def test_version_in_status(self):
-        from agent.darts_agent import AutodartsDesktopManager, AgentHandler
+        from agent.darts_agent import AutodartsDesktopManager, AgentHandler, AGENT_VERSION
         assert hasattr(AgentHandler, 'server_version')
-        assert '3.4.1' in AgentHandler.server_version
+        assert AGENT_VERSION in AgentHandler.server_version
 
 
 # ═══════════════════════════════════════════════════════════════
