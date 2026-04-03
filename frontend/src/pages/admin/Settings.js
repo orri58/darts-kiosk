@@ -71,10 +71,13 @@ const COLOR_FIELDS = [
 const EMPTY_PALETTE = { bg: '#09090b', surface: '#18181b', primary: '#f59e0b', secondary: '#ffffff', accent: '#ef4444', text: '#e4e4e7' };
 
 export default function AdminSettings() {
-  const { branding, pricing, palettes, kioskTexts, pwaConfig, lockscreenQr, updateBranding, updatePricing, updatePalettes, refreshSettings } = useSettings();
+  const { branding, pricing, palettes, kioskTheme, adminTheme, kioskLayout, kioskTexts, pwaConfig, lockscreenQr, updateBranding, updatePricing, updatePalettes, updateKioskTheme, updateAdminTheme, updateKioskLayout, refreshSettings } = useSettings();
   const { token } = useAuth();
   
   const [localBranding, setLocalBranding] = useState(branding);
+  const [localKioskTheme, setLocalKioskTheme] = useState(kioskTheme);
+  const [localAdminTheme, setLocalAdminTheme] = useState(adminTheme);
+  const [localKioskLayout, setLocalKioskLayout] = useState(kioskLayout);
   const [localPricing, setLocalPricing] = useState(pricing);
   const [localKioskTexts, setLocalKioskTexts] = useState(kioskTexts);
   const [localPwa, setLocalPwa] = useState(pwaConfig);
@@ -157,7 +160,7 @@ export default function AdminSettings() {
   };
 
   const handleDeletePalette = async (paletteId) => {
-    if (localBranding.palette_id === paletteId) { toast.error('Aktives Schema kann nicht gelöscht werden'); return; }
+    if ((localKioskTheme?.palette_id || localBranding.palette_id) === paletteId || (localAdminTheme?.palette_id || 'slate') === paletteId) { toast.error('Aktives Schema kann nicht gelöscht werden'); return; }
     setSaving(true);
     try {
       const updated = palettes.filter(p => p.id !== paletteId);
@@ -288,6 +291,15 @@ export default function AdminSettings() {
   useEffect(() => {
     setLocalBranding(branding);
   }, [branding]);
+  useEffect(() => {
+    setLocalKioskTheme(kioskTheme);
+  }, [kioskTheme]);
+  useEffect(() => {
+    setLocalAdminTheme(adminTheme);
+  }, [adminTheme]);
+  useEffect(() => {
+    setLocalKioskLayout(kioskLayout);
+  }, [kioskLayout]);
   useEffect(() => {
     setLocalPricing(pricing);
   }, [pricing]);
@@ -428,9 +440,18 @@ export default function AdminSettings() {
   const handleSaveBranding = async () => {
     setSaving(true);
     try {
-      const saved = await updateBranding(localBranding);
+      const [savedBranding, savedKioskTheme, savedAdminTheme, savedKioskLayout] = await Promise.all([
+        updateBranding(localBranding),
+        updateKioskTheme(localKioskTheme),
+        updateAdminTheme(localAdminTheme),
+        updateKioskLayout(localKioskLayout),
+      ]);
+      const saved = savedBranding;
       setLocalBranding(saved);
-      toast.success('Branding gespeichert');
+      setLocalKioskTheme(savedKioskTheme);
+      setLocalAdminTheme(savedAdminTheme);
+      setLocalKioskLayout(savedKioskLayout);
+      toast.success('Branding & Oberfläche gespeichert');
     } catch (error) {
       toast.error('Fehler beim Speichern');
     } finally {
@@ -484,7 +505,7 @@ export default function AdminSettings() {
     setLocalPricing({ ...localPricing, allowed_game_types: updated });
   };
 
-  const activePalette = palettes.find((palette) => palette.id === localBranding.palette_id);
+  const activePalette = palettes.find((palette) => palette.id === (localKioskTheme?.palette_id || localBranding.palette_id));
   const selectedTheme = useMemo(() => buildThemeTokens(activePalette), [activePalette]);
   const recommendedTriggerPreset = triggerMetadata?.presets?.find((preset) => preset.recommended)?.label || 'WS strict';
 
@@ -646,6 +667,108 @@ export default function AdminSettings() {
                   data-testid="subtitle-input"
                   className="input-industrial"
                 />
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
+                  <div>
+                    <p className="text-sm font-medium text-white">Kiosk-Thema</p>
+                    <p className="text-xs text-zinc-500">Nur für Kiosk, Overlay und öffentliche Flächen.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs uppercase tracking-wider text-zinc-500">Palette</label>
+                    <select
+                      value={localKioskTheme?.palette_id || 'industrial'}
+                      onChange={(e) => setLocalKioskTheme({ ...localKioskTheme, palette_id: e.target.value })}
+                      className="input-industrial h-11"
+                    >
+                      {palettes.map((palette) => (
+                        <option key={`kiosk-${palette.id}`} value={palette.id}>{palette.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-xs uppercase tracking-wider text-zinc-500">Logo-Größe</label>
+                      <select
+                        value={localKioskLayout?.header?.logo_size || 'md'}
+                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, header: { ...(localKioskLayout?.header || {}), logo_size: e.target.value } })}
+                        className="input-industrial h-11"
+                      >
+                        <option value="sm">Klein</option>
+                        <option value="md">Mittel</option>
+                        <option value="lg">Groß</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs uppercase tracking-wider text-zinc-500">Header-Ausrichtung</label>
+                      <select
+                        value={localKioskLayout?.header?.align || 'left'}
+                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, header: { ...(localKioskLayout?.header || {}), align: e.target.value } })}
+                        className="input-industrial h-11"
+                      >
+                        <option value="left">Links</option>
+                        <option value="center">Mitte</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <label className="flex items-center gap-3 rounded-xl border border-zinc-800 px-3 py-3 text-sm text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(localKioskLayout?.header?.show_logo)}
+                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, header: { ...(localKioskLayout?.header || {}), show_logo: e.target.checked } })}
+                      />
+                      Logo anzeigen
+                    </label>
+                    <label className="flex items-center gap-3 rounded-xl border border-zinc-800 px-3 py-3 text-sm text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(localKioskLayout?.header?.show_subtitle)}
+                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, header: { ...(localKioskLayout?.header || {}), show_subtitle: e.target.checked } })}
+                      />
+                      Untertitel anzeigen
+                    </label>
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
+                  <div>
+                    <p className="text-sm font-medium text-white">Admin-Thema</p>
+                    <p className="text-xs text-zinc-500">Ruhiger Operator-Look, unabhängig vom Kiosk.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs uppercase tracking-wider text-zinc-500">Palette</label>
+                    <select
+                      value={localAdminTheme?.palette_id || 'slate'}
+                      onChange={(e) => setLocalAdminTheme({ ...localAdminTheme, palette_id: e.target.value })}
+                      className="input-industrial h-11"
+                    >
+                      {palettes.map((palette) => (
+                        <option key={`admin-${palette.id}`} value={palette.id}>{palette.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs uppercase tracking-wider text-zinc-500">Pairing-Code auf Lockscreen</label>
+                    <select
+                      value={localKioskLayout?.locked_screen?.pairing_position || 'bottom'}
+                      onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, locked_screen: { ...(localKioskLayout?.locked_screen || {}), pairing_position: e.target.value } })}
+                      className="input-industrial h-11"
+                    >
+                      <option value="bottom">Unten</option>
+                      <option value="side">Rechte Seite</option>
+                    </select>
+                  </div>
+                  <label className="flex items-center gap-3 rounded-xl border border-zinc-800 px-3 py-3 text-sm text-zinc-300">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(localKioskLayout?.locked_screen?.show_community_widgets)}
+                      onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, locked_screen: { ...(localKioskLayout?.locked_screen || {}), show_community_widgets: e.target.checked } })}
+                    />
+                    Rankings / Community-Widgets auf dem Lockscreen anzeigen
+                  </label>
+                </div>
               </div>
 
               <Button
@@ -833,8 +956,8 @@ export default function AdminSettings() {
               <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
                 {palettes.map((palette) => (
                   <div key={palette.id} className={`relative group rounded-2xl border p-3 transition-all cursor-pointer ${
-                    localBranding.palette_id === palette.id ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-zinc-700 hover:border-zinc-600'
-                  }`} onClick={() => setLocalBranding({ ...localBranding, palette_id: palette.id })}
+                    (localKioskTheme?.palette_id || localBranding.palette_id) === palette.id ? 'border-amber-500 ring-2 ring-amber-500/30' : 'border-zinc-700 hover:border-zinc-600'
+                  }`} onClick={() => setLocalKioskTheme({ ...localKioskTheme, palette_id: palette.id })}
                     data-testid={`palette-${palette.id}`}>
                     <div className="mb-3 grid h-20 grid-cols-2 gap-1 overflow-hidden rounded-xl border border-zinc-800">
                       <div className="rounded-lg" style={{ backgroundColor: palette.colors.bg }}></div>
@@ -843,7 +966,7 @@ export default function AdminSettings() {
                       <div className="rounded-lg" style={{ backgroundColor: palette.colors.accent }}></div>
                     </div>
                     <p className="text-sm text-center text-zinc-200">{palette.name}</p>
-                    {localBranding.palette_id === palette.id && (
+                    {(localKioskTheme?.palette_id || localBranding.palette_id) === palette.id && (
                       <div className="flex justify-center mt-2"><Check className="w-5 h-5 text-amber-500" /></div>
                     )}
                     {/* Edit + Delete for custom palettes */}

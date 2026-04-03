@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Clock, Coins, Phone, StopCircle, Target, Users, Wallet } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { useSettings } from '../../context/SettingsContext';
+import KioskHeader from '../../components/kiosk/KioskHeader';
 
 export default function InGameScreen({ branding, session, onEndGame, onCallStaff }) {
   const [timeLeft, setTimeLeft] = useState(null);
@@ -46,16 +47,17 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
     <div className="relative h-full w-full overflow-hidden bg-[var(--color-bg)]" data-testid="in-game-screen">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(16,185,129,0.16),transparent_30%),linear-gradient(180deg,rgb(var(--color-bg-rgb)/0.96),var(--color-bg))]" />
       <div className="relative z-10 flex h-full flex-col px-4 py-4 lg:px-8 lg:py-6">
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.62)] px-4 py-3 backdrop-blur lg:px-5">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-text-muted)]">Live session</p>
-            <h1 className="mt-1 text-xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] lg:text-2xl">{branding.cafe_name}</h1>
-          </div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
-            <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
-            {kioskTexts.game_running || 'SPIEL LÄUFT'}
-          </div>
-        </div>
+        <KioskHeader
+          branding={branding}
+          eyebrow="Live session"
+          compact
+          right={(
+            <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
+              <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
+              {kioskTexts.game_running || 'SPIEL LÄUFT'}
+            </div>
+          )}
+        />
 
         <div className="mx-auto grid w-full max-w-7xl flex-1 gap-5 py-5 lg:grid-cols-[1.2fr,0.8fr] lg:items-center lg:py-7">
           <div className="space-y-5">

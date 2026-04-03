@@ -76,6 +76,7 @@ class UnlockRequest(BaseModel):
 class ExtendRequest(BaseModel):
     credits: Optional[int] = None
     minutes: Optional[int] = None
+    price_total: float = 0.0
 
 class StartGameRequest(BaseModel):
     game_type: str

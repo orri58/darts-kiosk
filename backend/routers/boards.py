@@ -8,7 +8,7 @@ from sqlalchemy import select, delete
 from typing import List
 
 from backend.database import get_db
-from backend.models import User, Board, Session, BoardStatus, SessionStatus, PricingMode
+from backend.models import User, Board, Session, SessionCharge, BoardStatus, SessionStatus, PricingMode
 from backend.schemas import (
     BoardCreate, BoardUpdate, BoardResponse,
     UnlockRequest, ExtendRequest, SessionResponse
@@ -24,6 +24,39 @@ from backend.routers.kiosk import start_observer_for_board, stop_observer_for_bo
 from backend.services.autodarts_observer import observer_manager
 
 router = APIRouter()
+
+
+def _currency_from_session(session: Session) -> str:
+    return "EUR"
+
+
+async def _book_session_charge(
+    db: AsyncSession,
+    *,
+    session: Session,
+    user: User | None,
+    kind: str,
+    amount: float,
+    credits_added: int = 0,
+    minutes_added: int = 0,
+    note: str | None = None,
+):
+    amount = float(amount or 0.0)
+    charge = SessionCharge(
+        session_id=session.id,
+        kind=kind,
+        credits_added=int(credits_added or 0),
+        minutes_added=int(minutes_added or 0),
+        amount=amount,
+        currency=_currency_from_session(session),
+        price_per_unit_snapshot=float(session.price_per_unit or 0.0) if session.price_per_unit is not None else None,
+        created_by_user_id=getattr(user, 'id', None),
+        note=note,
+    )
+    db.add(charge)
+    session.price_total = float(session.price_total or 0.0) + amount
+    await db.flush()
+    return charge
 
 
 def _session_state_payload(board_id: str, board_status: str, session, charge=None) -> dict:
@@ -238,7 +271,7 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
         credits_remaining=credits_remaining,
         minutes_total=data.minutes or 0,
         price_per_unit=price_per_unit,
-        price_total=data.price_total,
+        price_total=0.0,
         players_count=player_count_hint,
         expires_at=expires_at,
         unlocked_by_user_id=user.id,
@@ -248,6 +281,17 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
 
     board.status = BoardStatus.UNLOCKED.value
     await db.flush()
+
+    await _book_session_charge(
+        db,
+        session=session,
+        user=user,
+        kind="unlock",
+        amount=float(data.price_total or 0.0),
+        credits_added=credits_total if data.pricing_mode != PricingMode.PER_TIME.value else 0,
+        minutes_added=int(data.minutes or 0) if data.pricing_mode == PricingMode.PER_TIME.value else 0,
+        note=f"Initial unlock for {board_id}",
+    )
 
     await log_audit(db, user, "unlock_board", "session", session.id, {
         "board_id": board_id,
@@ -309,6 +353,18 @@ async def extend_session(board_id: str, data: ExtendRequest, user: User = Depend
         else:
             session.expires_at = datetime.now(timezone.utc) + timedelta(minutes=data.minutes)
 
+    if float(data.price_total or 0.0) > 0:
+        await _book_session_charge(
+            db,
+            session=session,
+            user=user,
+            kind="topup",
+            amount=float(data.price_total or 0.0),
+            credits_added=int(data.credits or 0),
+            minutes_added=int(data.minutes or 0),
+            note=f"Top-up for {board_id}",
+        )
+
     pending_gate_resolved = False
     pending_gate_charge = None
     if board.status == BoardStatus.BLOCKED_PENDING.value and session.pricing_mode == PricingMode.PER_PLAYER.value:
@@ -322,6 +378,7 @@ async def extend_session(board_id: str, data: ExtendRequest, user: User = Depend
         "board_id": board_id,
         "credits": data.credits,
         "minutes": data.minutes,
+        "price_total": data.price_total,
         "pending_gate_resolved": pending_gate_resolved,
     })
 

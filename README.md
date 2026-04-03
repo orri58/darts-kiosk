@@ -2,7 +2,7 @@
 
 Local-first darts board control and kiosk software for venue operation.
 
-Current product release line: **v4.1.0**
+Current product release line: **v4.2.0**
 
 The current repo state is centered on a **protected local core**:
 - local auth, boards, sessions, settings, admin UI
@@ -17,6 +17,9 @@ There is also an **optional central adapter ring** in the tree, but it is **not 
 
 What is in good shape now:
 - one-click Windows bring-up via `release/windows/install.bat`
+- operator-first admin dashboard flow with smaller, less dominant control surfaces
+- separate admin vs kiosk theme direction
+- kiosk logo rendering + configurable kiosk layout basics
 - board unlock / lock flow
 - local session persistence
 - authoritative match start/finish handling for the protected local core

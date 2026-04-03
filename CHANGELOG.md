@@ -4,6 +4,29 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.2.0] - 2026-04-03
+
+### Added
+- Separate settings buckets for `kiosk_theme`, `admin_theme`, and `kiosk_layout`.
+- Shared kiosk branding header so the configured logo finally renders on major kiosk surfaces.
+- Session charge booking model for proper unlock/top-up accounting history.
+
+### Changed
+- Dashboard was tightened to be more operator-first, with smaller summary cards and a less dominant page header.
+- Top-up flow now displays the amount that will be booked.
+- Admin theme selection is now independent from kiosk theme selection.
+- Kiosk layout gained practical controls for logo visibility/size/alignment and pairing-code position.
+
+### Fixed
+- Additional credits / session extensions now count toward revenue/reporting instead of disappearing from bookkeeping.
+- Kiosk logo uploads are now actually visible on the kiosk UI.
+- Admin and kiosk surfaces no longer have to share the same palette choice.
+
+### Validation
+- Backend/agent compile check passed.
+- Focused backend validation suite passed (37 tests).
+- Frontend production build passed.
+
 ## [4.1.0] - 2026-04-03
 
 ### Added

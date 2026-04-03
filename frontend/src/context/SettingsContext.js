@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
+import { useLocation } from 'react-router-dom';
 import { applyPaletteToDocument, buildThemeTokens } from '../lib/theme';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
@@ -7,6 +8,7 @@ const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 const SettingsContext = createContext(null);
 
 export function SettingsProvider({ children }) {
+  const location = useLocation();
   const [branding, setBranding] = useState({
     cafe_name: 'Dart Zone',
     subtitle: 'Darts & More',
@@ -27,6 +29,19 @@ export function SettingsProvider({ children }) {
   });
   
   const [palettes, setPalettes] = useState([]);
+  const [kioskTheme, setKioskTheme] = useState({
+    palette_id: 'industrial',
+    font_preset: 'industrial',
+    background_style: 'solid',
+  });
+  const [adminTheme, setAdminTheme] = useState({
+    palette_id: 'slate',
+  });
+  const [kioskLayout, setKioskLayout] = useState({
+    preset: 'balanced',
+    header: { show_logo: true, show_title: true, show_subtitle: true, align: 'left', logo_size: 'md' },
+    locked_screen: { pairing_position: 'bottom', show_community_widgets: false, panel_emphasis: 'balanced' },
+  });
   const [kioskTexts, setKioskTexts] = useState({
     locked_title: 'GESPERRT',
     locked_subtitle: 'Bitte an der Theke freischalten lassen',
@@ -54,13 +69,16 @@ export function SettingsProvider({ children }) {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const [brandingRes, pricingRes, palettesRes, textsRes, pwaRes, qrRes] = await Promise.all([
+      const [brandingRes, pricingRes, palettesRes, textsRes, pwaRes, qrRes, kioskThemeRes, adminThemeRes, kioskLayoutRes] = await Promise.all([
         axios.get(`${API}/settings/branding`),
         axios.get(`${API}/settings/pricing`),
         axios.get(`${API}/settings/palettes`),
         axios.get(`${API}/settings/kiosk-texts`).catch(() => ({ data: null })),
         axios.get(`${API}/settings/pwa`).catch(() => ({ data: null })),
         axios.get(`${API}/settings/lockscreen-qr`).catch(() => ({ data: null })),
+        axios.get(`${API}/settings/kiosk-theme`).catch(() => ({ data: null })),
+        axios.get(`${API}/settings/admin-theme`).catch(() => ({ data: null })),
+        axios.get(`${API}/settings/kiosk-layout`).catch(() => ({ data: null })),
       ]);
 
       const nextBranding = brandingRes.data || {};
@@ -68,16 +86,23 @@ export function SettingsProvider({ children }) {
       setBranding(nextBranding);
       setPricing(pricingRes.data);
       setPalettes(nextPalettes);
+      if (kioskThemeRes.data) setKioskTheme((prev) => ({ ...prev, ...kioskThemeRes.data }));
+      if (adminThemeRes.data) setAdminTheme((prev) => ({ ...prev, ...adminThemeRes.data }));
+      if (kioskLayoutRes.data) setKioskLayout((prev) => ({ ...prev, ...kioskLayoutRes.data }));
       if (textsRes.data) setKioskTexts(prev => ({ ...prev, ...textsRes.data }));
       if (pwaRes.data) setPwaConfig(prev => ({ ...prev, ...pwaRes.data }));
       if (qrRes.data) setLockscreenQr(prev => ({ ...prev, ...qrRes.data }));
 
       // Set document title from branding (except on /kiosk pages which use fixed title for Win32)
-      if (!window.location.pathname.startsWith('/kiosk')) {
+      if (!location.pathname.startsWith('/kiosk')) {
         document.title = nextBranding.cafe_name || 'Darts Kiosk';
       }
 
-      const activePalette = nextPalettes.find((palette) => palette.id === nextBranding.palette_id) || nextPalettes[0];
+      const path = location.pathname;
+      const themePaletteId = path.startsWith('/admin')
+        ? (adminThemeRes.data?.palette_id || 'slate')
+        : (kioskThemeRes.data?.palette_id || nextBranding.palette_id);
+      const activePalette = nextPalettes.find((palette) => palette.id === themePaletteId) || nextPalettes[0];
       if (activePalette) {
         applyPaletteToDocument(activePalette, { themeColor: pwaRes.data?.theme_color });
       }
@@ -86,14 +111,14 @@ export function SettingsProvider({ children }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [location.pathname]);
 
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
 
   useEffect(() => {
-    const path = window.location.pathname;
+    const path = location.pathname;
     if (path.startsWith('/admin/settings')) {
       return undefined;
     }
@@ -115,12 +140,15 @@ export function SettingsProvider({ children }) {
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [fetchSettings]);
+  }, [fetchSettings, location.pathname]);
 
-  const activePalette = useMemo(
-    () => palettes.find((palette) => palette.id === branding.palette_id) || palettes[0] || null,
-    [palettes, branding.palette_id]
-  );
+  const activePalette = useMemo(() => {
+    const path = location.pathname;
+    const themePaletteId = path.startsWith('/admin')
+      ? (adminTheme?.palette_id || 'slate')
+      : (kioskTheme?.palette_id || branding.palette_id);
+    return palettes.find((palette) => palette.id === themePaletteId) || palettes[0] || null;
+  }, [palettes, branding.palette_id, kioskTheme?.palette_id, adminTheme?.palette_id, location.pathname]);
 
   const theme = useMemo(() => buildThemeTokens(activePalette), [activePalette]);
 
@@ -149,6 +177,24 @@ export function SettingsProvider({ children }) {
     return response.data;
   };
 
+  const updateKioskTheme = async (newTheme) => {
+    const response = await axios.put(`${API}/settings/kiosk-theme`, { value: newTheme });
+    setKioskTheme(response.data);
+    return response.data;
+  };
+
+  const updateAdminTheme = async (newTheme) => {
+    const response = await axios.put(`${API}/settings/admin-theme`, { value: newTheme });
+    setAdminTheme(response.data);
+    return response.data;
+  };
+
+  const updateKioskLayout = async (newLayout) => {
+    const response = await axios.put(`${API}/settings/kiosk-layout`, { value: newLayout });
+    setKioskLayout(response.data);
+    return response.data;
+  };
+
   const getCurrentPalette = () => {
     return activePalette;
   };
@@ -158,6 +204,9 @@ export function SettingsProvider({ children }) {
       branding,
       pricing,
       palettes,
+      kioskTheme,
+      adminTheme,
+      kioskLayout,
       kioskTexts,
       pwaConfig,
       lockscreenQr,
@@ -166,6 +215,9 @@ export function SettingsProvider({ children }) {
       updateBranding,
       updatePricing,
       updatePalettes,
+      updateKioskTheme,
+      updateAdminTheme,
+      updateKioskLayout,
       getCurrentPalette,
       refreshSettings: fetchSettings
     }}>

@@ -5,7 +5,6 @@ import {
   AlertTriangle,
   ArrowUpCircle,
   BellOff,
-  ExternalLink,
   FileText,
   Lock,
   Play,
@@ -34,13 +33,10 @@ import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
 import { useBoardWS } from '../../hooks/useBoardWS';
 import {
-  AdminEmptyState,
   AdminLinkTile,
   AdminMiniAction,
   AdminPage,
   AdminSection,
-  AdminStatCard,
-  AdminStatsGrid,
   AdminStatusPill,
 } from '../../components/admin/AdminShell';
 
@@ -83,6 +79,15 @@ function formatSessionMode(session) {
   if (session.pricing_mode === 'per_time') return 'Zeitbasiert (Legacy)';
   if (session.pricing_mode === 'per_game') return 'Spielbasiert (Legacy)';
   return 'Credits-basiert';
+}
+
+function calculateExtendPrice(session, pricing, credits, minutes) {
+  if (!session) return 0;
+  if (session.pricing_mode === 'per_time') {
+    const halfHours = Math.max(0, Number(minutes || 0)) / 30;
+    return halfHours * Number(pricing?.per_time?.price_per_30_min || 5);
+  }
+  return Math.max(0, Number(credits || 0)) * Number(pricing?.per_game?.price_per_credit || 2);
 }
 
 export default function AdminDashboard() {
@@ -287,6 +292,7 @@ export default function AdminDashboard() {
         {
           credits: extendTime ? null : unlockCredits,
           minutes: extendTime ? unlockMinutes : null,
+          price_total: calculateExtendPrice(session, pricing, unlockCredits, unlockMinutes),
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
@@ -350,8 +356,8 @@ export default function AdminDashboard() {
   return (
     <AdminPage
       eyebrow="Darts Control"
-      title={t('dashboard')}
-      description="Freischalten, Credits nachbuchen, Status sehen. Das Wesentliche zuerst."
+      title="Control"
+      description="Boards steuern, Credits nachbuchen, Probleme direkt sehen."
       actions={
         <>
           <AdminMiniAction icon={wsConnected ? Wifi : WifiOff} onClick={fetchBoards}>
@@ -364,12 +370,21 @@ export default function AdminDashboard() {
         </>
       }
     >
-      <AdminStatsGrid>
-        <AdminStatCard icon={Target} label="Boards gesamt" value={metrics.total} hint="Alle lokal bekannten Spielplätze" tone="amber" />
-        <AdminStatCard icon={Unlock} label="Bereit / aktiv" value={metrics.live} hint="Freigeschaltet oder gerade im Spiel" tone="emerald" />
-        <AdminStatCard icon={Play} label="Aktive Matches" value={metrics.inGame} hint="Boards mit laufendem Spiel" tone="blue" />
-        <AdminStatCard icon={AlertTriangle} label="Auffälligkeiten" value={metrics.offline + metrics.observerIssues} hint={`${metrics.offline} offline · ${metrics.observerIssues} Observer`} tone={metrics.offline + metrics.observerIssues > 0 ? 'red' : 'neutral'} />
-      </AdminStatsGrid>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: 'Boards', value: metrics.total, tone: 'amber' },
+          { label: 'Aktiv', value: metrics.live, tone: 'emerald' },
+          { label: 'Im Spiel', value: metrics.inGame, tone: 'blue' },
+          { label: 'Hinweise', value: metrics.offline + metrics.observerIssues, tone: metrics.offline + metrics.observerIssues > 0 ? 'red' : 'neutral' },
+        ].map((item) => (
+          <div key={item.label} className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.7)] px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-sm text-[var(--color-text-secondary)]">{item.label}</span>
+              <AdminStatusPill tone={item.tone}>{item.value}</AdminStatusPill>
+            </div>
+          </div>
+        ))}
+      </div>
 
       <div className="grid gap-5 xl:grid-cols-[1.2fr,0.8fr]">
         <AdminSection
@@ -453,7 +468,7 @@ export default function AdminDashboard() {
           )}
         </AdminSection>
 
-        <AdminSection title="Betriebsstatus" description="Nur echte Signale, kein UI-Gequatsche.">
+        <AdminSection title="Heute" description="Knapp, direkt, hilfreich.">
           <div className="grid gap-3 text-sm sm:grid-cols-3 xl:grid-cols-1">
             <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.78)] bg-[rgb(var(--color-surface-rgb)/0.62)] px-4 py-3 flex items-center justify-between">
               <span className="text-[var(--color-text-secondary)]">Realtime</span>
@@ -518,107 +533,13 @@ export default function AdminDashboard() {
         </AdminSection>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[1.45fr,0.75fr]">
-        <AdminSection title="Alle Boards" description="Live-Status, Session-Kontext und Eingriffe ohne unnötige Zusatztexte.">
-          {boards.length === 0 ? (
-            <AdminEmptyState
-              icon={Target}
-              title="Noch keine Boards vorhanden"
-              description="Lege zuerst mindestens ein Board an, damit Unlocks, Kiosk und lokale Umsatzlogik sinnvoll greifen."
-              action={
-                <Button onClick={() => navigate('/admin/boards')} className="bg-amber-500 text-black hover:bg-amber-400">
-                  <Plus className="w-4 h-4 mr-2" /> Boards öffnen
-                </Button>
-              }
-            />
-          ) : (
-            <div className="grid gap-4 2xl:grid-cols-2">
-              {boards.map((board) => {
-                const status = STATUS_STYLES[board.status] || STATUS_STYLES.locked;
-                const StatusIcon = status.icon;
-                const session = boardDetails[board.board_id];
-                const observer = observerStatuses[board.board_id];
-                const kioskHref = `/kiosk/${board.board_id}`;
-
-                return (
-                  <div key={board.id} className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.66)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid={`board-card-${board.board_id}`}>
-                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-lg font-semibold text-[var(--color-text)]">{board.name}</p>
-                          <AdminStatusPill tone={status.tone}>
-                            <StatusIcon className="w-3 h-3" /> {status.label}
-                          </AdminStatusPill>
-                          {board.is_master && <AdminStatusPill tone="amber">Master</AdminStatusPill>}
-                          {observer?.state && observer.state !== 'closed' && (
-                            <AdminStatusPill tone={observer.state === 'error' ? 'red' : observer.state === 'in_game' ? 'emerald' : 'blue'}>
-                              Observer {observer.state}
-                            </AdminStatusPill>
-                          )}
-                        </div>
-                        <p className="mt-1 font-mono text-sm text-[var(--color-text-secondary)]">{board.board_id}</p>
-                        <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
-                          <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.76)] bg-[rgb(var(--color-bg-rgb)/0.42)] px-3 py-2">
-                            <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Standort</p>
-                            <p className="mt-1 text-[var(--color-text)]">{board.location || 'Nicht hinterlegt'}</p>
-                          </div>
-                          <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.76)] bg-[rgb(var(--color-bg-rgb)/0.42)] px-3 py-2">
-                            <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Session</p>
-                            <p className="mt-1 text-[var(--color-text)]">{formatSessionMode(session)}</p>
-                            <p className="mt-1 text-xs text-[var(--color-text-secondary)]">{formatRemaining(session, board.status)}</p>
-                          </div>
-                        </div>
-                        {observer?.last_error && (
-                          <div className="mt-3 rounded-2xl border border-[rgb(var(--color-accent-rgb)/0.24)] bg-[rgb(var(--color-accent-rgb)/0.12)] px-3 py-2 text-sm text-[var(--color-text)]">
-                            <span className="font-medium">Observer-Hinweis:</span> {observer.last_error}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="flex flex-col gap-2 lg:min-w-[208px]">
-                        <Button asChild variant="outline" className="justify-between rounded-2xl border-[rgb(var(--color-border-rgb)/0.82)] text-[var(--color-text-secondary)] hover:border-[rgb(var(--color-primary-rgb)/0.24)] hover:text-[var(--color-text)]">
-                          <a href={kioskHref} target="_blank" rel="noreferrer">
-                            Kiosk öffnen <ExternalLink className="w-4 h-4" />
-                          </a>
-                        </Button>
-                        {board.status === 'locked' ? (
-                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-1">
-                            <Button onClick={() => handleQuickUnlock(board)} className="rounded-2xl bg-[var(--color-primary)] text-[hsl(var(--primary-foreground))] hover:opacity-90">
-                              <Unlock className="w-4 h-4 mr-2" /> Direkt
-                            </Button>
-                            <Button onClick={() => openUnlockDialog(board)} data-testid={`unlock-btn-${board.board_id}`} variant="outline" className="rounded-2xl border-[rgb(var(--color-primary-rgb)/0.28)] text-[var(--color-primary)] hover:bg-[rgb(var(--color-primary-rgb)/0.12)]">
-                              Details
-                            </Button>
-                          </div>
-                        ) : (
-                          <>
-                            <Button onClick={() => openExtendDialog(board)} data-testid={`extend-btn-${board.board_id}`} variant="outline" className="rounded-2xl border-[rgb(var(--color-primary-rgb)/0.28)] text-[var(--color-primary)] hover:bg-[rgb(var(--color-primary-rgb)/0.12)]">
-                              <Plus className="w-4 h-4 mr-2" /> Verlängern
-                            </Button>
-                            <Button onClick={() => handleLock(board)} data-testid={`lock-btn-${board.board_id}`} variant="outline" className="rounded-2xl border-[rgb(var(--color-accent-rgb)/0.28)] text-[var(--color-accent)] hover:bg-[rgb(var(--color-accent-rgb)/0.12)]">
-                              <Lock className="w-4 h-4 mr-2" /> Sperren
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </AdminSection>
-
-        <div className="space-y-6">
-          <AdminSection title="Weitere Bereiche" description="Nur das Nötige als kurzer Sprung.">
-            <div className="space-y-3">
-              <AdminLinkTile icon={TrendingUp} title="Umsatz" description="Tagesumsatz und Verteilung prüfen." onClick={() => navigate('/admin/revenue')} tone="emerald" cta="Zur Umsatzansicht" />
-              <AdminLinkTile icon={FileText} title="Reports" description="Sessions und CSV-Export." onClick={() => navigate('/admin/reports')} tone="blue" cta="Zu Reports" />
-              <AdminLinkTile icon={Settings} title="Einstellungen" description="Branding, Pricing und Kiosk-Verhalten." onClick={() => navigate('/admin/settings')} tone="amber" cta="Zu Einstellungen" />
-            </div>
-          </AdminSection>
+      <AdminSection title="Mehr" description="Selten gebraucht, schnell erreichbar.">
+        <div className="grid gap-3 md:grid-cols-3">
+          <AdminLinkTile icon={TrendingUp} title="Umsatz" description="Tagesumsatz prüfen." onClick={() => navigate('/admin/revenue')} tone="emerald" cta="Öffnen" />
+          <AdminLinkTile icon={FileText} title="Reports" description="Sessions & CSV." onClick={() => navigate('/admin/reports')} tone="blue" cta="Öffnen" />
+          <AdminLinkTile icon={Settings} title="Einstellungen" description="Branding, Pricing, Kiosk." onClick={() => navigate('/admin/settings')} tone="amber" cta="Öffnen" />
         </div>
-      </div>
+      </AdminSection>
 
       <Dialog open={showUnlockDialog} onOpenChange={setShowUnlockDialog}>
         <DialogContent className="border-[rgb(var(--color-border-rgb)/0.88)] bg-[rgb(var(--color-bg-rgb)/0.98)] p-0 text-[var(--color-text)] sm:max-w-xl overflow-hidden">
@@ -688,6 +609,15 @@ export default function AdminDashboard() {
                 <Input type="number" min="0" value={unlockCredits} onChange={(e) => setUnlockCredits(parseInt(e.target.value || '0', 10))} className="mt-3 h-12 rounded-2xl border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.54)] text-center text-xl text-[var(--color-text)]" />
               </div>
             )}
+            <div className="rounded-2xl border border-[rgb(var(--color-primary-rgb)/0.24)] bg-[rgb(var(--color-primary-rgb)/0.12)] p-4">
+              <label className="text-xs uppercase tracking-[0.24em] text-[var(--color-primary)]">Buchung</label>
+              <p className="mt-2 text-3xl font-semibold text-[var(--color-text)]">
+                {calculateExtendPrice(boardDetails[selectedBoard?.board_id], pricing, unlockCredits, unlockMinutes).toFixed(2)} €
+              </p>
+              <p className="mt-1 text-sm text-[var(--color-text-secondary)]">
+                Top-up wird jetzt auch im Umsatz mitgebucht.
+              </p>
+            </div>
           </div>
 
           <DialogFooter className="gap-2">

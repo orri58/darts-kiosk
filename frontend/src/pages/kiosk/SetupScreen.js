@@ -4,6 +4,7 @@ import Keyboard from 'react-simple-keyboard';
 import 'react-simple-keyboard/build/css/index.css';
 import { Button } from '../../components/ui/button';
 import { useI18n } from '../../context/I18nContext';
+import KioskHeader from '../../components/kiosk/KioskHeader';
 import axios from 'axios';
 import { toast } from 'sonner';
 
@@ -325,14 +326,12 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
     <div className="h-full w-full flex flex-col" data-testid="setup-screen">
       {/* Header */}
       <div className="border-b border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.88)] px-4 py-4 backdrop-blur lg:px-6">
-        <div className="mx-auto flex max-w-6xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <h1 className="text-xl font-heading font-bold uppercase tracking-wider text-[var(--color-text)] lg:text-2xl">
-              {branding.cafe_name}
-            </h1>
-            <p className="text-sm text-[var(--color-text-secondary)]">{t('game_preparation')}</p>
-          </div>
-          {remainingInfo && (
+        <KioskHeader
+          branding={branding}
+          eyebrow={t('game_preparation')}
+          title={branding.cafe_name}
+          subtitle={t('game_preparation')}
+          right={remainingInfo ? (
             <div className="flex items-center gap-3 rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.72)] px-4 py-2.5">
               {remainingInfo.type === 'credits' ? <Coins className="w-5 h-5 text-[var(--color-primary)]" /> : <Clock className="w-5 h-5 text-[var(--color-primary)]" />}
               <div className="text-right">
@@ -340,8 +339,9 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
                 <p className="text-xs uppercase text-[var(--color-text-secondary)]">{remainingInfo.label}</p>
               </div>
             </div>
-          )}
-        </div>
+          ) : null}
+          compact
+        />
       </div>
 
       {/* Main Content */}

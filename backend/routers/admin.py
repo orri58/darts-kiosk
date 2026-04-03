@@ -11,7 +11,7 @@ from pathlib import Path
 import os
 
 from backend.database import get_db
-from backend.models import User, Board, Session, AuditLog, SessionStatus, MatchResult, Player, Settings
+from backend.models import User, Board, Session, SessionCharge, AuditLog, SessionStatus, MatchResult, Player, Settings
 from backend.schemas import AuditLogResponse, SessionResponse
 from backend.dependencies import (
     get_current_user, require_admin, log_audit, DATA_DIR,
@@ -26,6 +26,17 @@ from backend.services.autodarts_desktop_service import autodarts_desktop
 from backend.services.readiness_service import readiness_service
 
 router = APIRouter()
+
+
+async def _session_charge_totals(db: AsyncSession, session_ids: list[str]) -> dict[str, float]:
+    if not session_ids:
+        return {}
+    result = await db.execute(
+        select(SessionCharge.session_id, func.sum(SessionCharge.amount))
+        .where(SessionCharge.session_id.in_(session_ids))
+        .group_by(SessionCharge.session_id)
+    )
+    return {session_id: float(total or 0.0) for session_id, total in result.all()}
 
 
 # ===== Audit Logs =====
@@ -93,6 +104,7 @@ async def get_revenue_summary(
         .where(Session.status.in_([SessionStatus.FINISHED.value, SessionStatus.EXPIRED.value, SessionStatus.CANCELLED.value]))
     )
     sessions = result.scalars().all()
+    charge_totals = await _session_charge_totals(db, [s.id for s in sessions])
 
     boards_result = await db.execute(select(Board))
     boards_map = {board.id: board for board in boards_result.scalars().all()}
@@ -106,7 +118,7 @@ async def get_revenue_summary(
         date_str = s.started_at.strftime("%Y-%m-%d") if s.started_at else "unknown"
         board = boards_map.get(s.board_id)
         board_name = board.name if board else (getattr(board, "board_id", None) or "Unknown")
-        price_total = float(s.price_total or 0)
+        price_total = float(charge_totals.get(s.id, s.price_total or 0) or 0)
 
         bucket = by_date.setdefault(date_str, {"total": 0.0, "count": 0, "by_board": {}})
         bucket["total"] += price_total
@@ -306,6 +318,7 @@ async def get_sessions_report(
 
     result = await db.execute(query)
     sessions = result.scalars().all()
+    charge_totals = await _session_charge_totals(db, [s.id for s in sessions])
 
     # Load boards for name lookup
     boards_result = await db.execute(select(Board))
@@ -330,8 +343,9 @@ async def get_sessions_report(
         board_bid = board.board_id if board else "?"
         created_by = users_map.get(s.unlocked_by_user_id, "-")
 
-        revenue_by_board[board_name] = revenue_by_board.get(board_name, 0) + (s.price_total or 0)
-        total_revenue += (s.price_total or 0)
+        booked_total = float(charge_totals.get(s.id, s.price_total or 0) or 0)
+        revenue_by_board[board_name] = revenue_by_board.get(board_name, 0) + booked_total
+        total_revenue += booked_total
 
         rows.append({
             "date": s.started_at.isoformat() if s.started_at else "",
@@ -339,7 +353,7 @@ async def get_sessions_report(
             "board_id": board_bid,
             "session_id": s.id,
             "pricing_mode": s.pricing_mode,
-            "price_total": s.price_total or 0,
+            "price_total": booked_total,
             "credits_total": s.credits_total,
             "credits_remaining": s.credits_remaining,
             "minutes_total": s.minutes_total,

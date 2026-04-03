@@ -33,16 +33,16 @@ const PILL_STYLES = {
 export function AdminPage({ eyebrow = 'Operator Console', title, description, actions, children }) {
   return (
     <div className="space-y-5" data-testid="admin-page-shell">
-      <div className="rounded-[1.75rem] border border-[rgb(var(--color-border-rgb)/0.86)] bg-[radial-gradient(circle_at_top_left,rgb(var(--color-primary-rgb)/0.16),transparent_28%),linear-gradient(180deg,rgb(var(--color-surface-rgb)/0.94),rgb(var(--color-bg-rgb)/0.98))] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.35)] md:p-6">
+      <div className="rounded-[1.5rem] border border-[rgb(var(--color-border-rgb)/0.86)] bg-[linear-gradient(180deg,rgb(var(--color-surface-rgb)/0.94),rgb(var(--color-bg-rgb)/0.98))] p-4 shadow-[0_16px_44px_rgba(0,0,0,0.22)] md:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0 space-y-3">
-            <span className="inline-flex items-center rounded-full border border-[rgb(var(--color-primary-rgb)/0.2)] bg-[rgb(var(--color-primary-rgb)/0.1)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
+            <span className="inline-flex items-center rounded-full border border-[rgb(var(--color-primary-rgb)/0.2)] bg-[rgb(var(--color-primary-rgb)/0.08)] px-3 py-1 text-[11px] font-medium tracking-[0.14em] text-[var(--color-primary)]">
               {eyebrow}
             </span>
             <div className="min-w-0">
-              <h1 className="break-words text-2xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] md:text-4xl">{title}</h1>
+              <h1 className="break-words text-2xl font-heading text-[var(--color-text)] md:text-3xl">{title}</h1>
               {description && (
-                <p className="mt-2 max-w-3xl break-words text-sm leading-6 text-[var(--color-text-secondary)] md:text-[15px]">{description}</p>
+                <p className="mt-1 max-w-3xl break-words text-sm leading-6 text-[var(--color-text-secondary)] md:text-[15px]">{description}</p>
               )}
             </div>
           </div>
@@ -148,7 +148,6 @@ export function AdminLinkTile({ icon: Icon, title, description, href, onClick, t
           <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)] transition group-hover:translate-x-0.5 group-hover:text-[var(--color-primary)]" />
           </div>
         <p className="mt-1 break-words text-sm leading-6 text-[var(--color-text-secondary)]">{description}</p>
-        <p className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">{cta}</p>
         </div>
       </Comp>
   );

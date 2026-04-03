@@ -112,6 +112,26 @@ class Session(Base):
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     
     board = relationship("Board", back_populates="sessions")
+    charges = relationship("SessionCharge", back_populates="session", cascade="all, delete-orphan")
+
+
+class SessionCharge(Base):
+    __tablename__ = "session_charges"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    session_id = Column(String(36), ForeignKey("sessions.id"), nullable=False, index=True)
+    kind = Column(String(30), nullable=False, default="unlock")
+    credits_added = Column(Integer, nullable=False, default=0)
+    minutes_added = Column(Integer, nullable=False, default=0)
+    amount = Column(Float, nullable=False, default=0.0)
+    currency = Column(String(10), nullable=False, default="EUR")
+    price_per_unit_snapshot = Column(Float, nullable=True)
+    created_by_user_id = Column(String(36), ForeignKey("users.id"), nullable=True)
+    note = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+
+    session = relationship("Session", back_populates="charges")
+    created_by = relationship("User")
 
 
 class AuditLog(Base):
@@ -342,6 +362,32 @@ DEFAULT_BRANDING = {
     "palette_id": "industrial",
     "font_preset": "industrial",
     "background_style": "solid"
+}
+
+DEFAULT_KIOSK_THEME = {
+    "palette_id": "industrial",
+    "font_preset": "industrial",
+    "background_style": "solid",
+}
+
+DEFAULT_ADMIN_THEME = {
+    "palette_id": "slate",
+}
+
+DEFAULT_KIOSK_LAYOUT = {
+    "preset": "balanced",
+    "header": {
+        "show_logo": True,
+        "show_title": True,
+        "show_subtitle": True,
+        "align": "left",
+        "logo_size": "md",
+    },
+    "locked_screen": {
+        "pairing_position": "bottom",
+        "show_community_widgets": False,
+        "panel_emphasis": "balanced",
+    },
 }
 
 DEFAULT_KIOSK_TEXTS = {

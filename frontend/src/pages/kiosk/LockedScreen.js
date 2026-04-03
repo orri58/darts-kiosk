@@ -3,6 +3,7 @@ import { Crown, Lock, Shield, ShieldCheck, Target, Trophy, Users, WalletCards } 
 import { useI18n } from '../../context/I18nContext';
 import { useSettings } from '../../context/SettingsContext';
 import { QRCodeSVG } from 'qrcode.react';
+import KioskHeader from '../../components/kiosk/KioskHeader';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -245,10 +246,11 @@ function PairingCode() {
 
 export default function LockedScreen({ branding, pricing, boardId }) {
   const { t } = useI18n();
-  const { kioskTexts } = useSettings();
+  const { kioskTexts, kioskLayout } = useSettings();
   const [qrConfig, setQrConfig] = useState(null);
   const [baseUrl, setBaseUrl] = useState('');
-  const showCommunityWidgets = Boolean(kioskTexts?.show_community_widgets);
+  const showCommunityWidgets = Boolean(kioskLayout?.locked_screen?.show_community_widgets);
+  const pairingPosition = kioskLayout?.locked_screen?.pairing_position || 'bottom';
 
   const formatPrice = (amount, currency = 'EUR') => `${amount.toFixed(2)} ${currency}`;
 
@@ -277,13 +279,7 @@ export default function LockedScreen({ branding, pricing, boardId }) {
       <div className="absolute inset-0 opacity-[0.08] texture-overlay" />
 
       <div className="relative z-10 flex h-full flex-col px-4 py-4 lg:px-8 lg:py-6">
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between rounded-3xl border border-[rgb(var(--color-border-rgb)/0.8)] bg-[rgb(var(--color-bg-rgb)/0.66)] px-4 py-3 backdrop-blur lg:px-5">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.28em] text-[var(--color-text-muted)]">Board {boardId}</p>
-            <h1 className="mt-1 text-xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] lg:text-2xl">{branding.cafe_name}</h1>
-            {branding.subtitle && <p className="text-sm text-[var(--color-text-secondary)]">{branding.subtitle}</p>}
-          </div>
-        </div>
+        <KioskHeader branding={branding} eyebrow={`Board ${boardId}`} compact />
 
         <div className="mx-auto grid w-full max-w-7xl flex-1 gap-5 py-5 lg:grid-cols-[1.25fr,0.75fr] lg:items-center lg:py-7">
           <div className="space-y-5">
@@ -331,6 +327,7 @@ export default function LockedScreen({ branding, pricing, boardId }) {
           </div>
 
           <div className="space-y-4">
+            {pairingPosition === 'side' ? <PairingCode /> : null}
             {qrConfig?.enabled && baseUrl ? (
               <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.58)] p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="lockscreen-qr">
                 <div className="flex items-center justify-between gap-4">
@@ -350,7 +347,7 @@ export default function LockedScreen({ branding, pricing, boardId }) {
         </div>
 
         <div className="mx-auto mt-auto w-full max-w-7xl">
-          <PairingCode />
+          {pairingPosition !== 'side' ? <PairingCode /> : null}
         </div>
       </div>
     </div>

@@ -56,6 +56,35 @@ Result:
 - frontend production build succeeded
 - release artifacts for Windows/Linux/source were generated successfully
 
+## Latest pass: 4.2.0 operator/product pass
+
+### What changed in this pass
+- introduced `SessionCharge` booking rows so unlocks and top-ups can be accounted for as real session revenue events
+- reports/revenue now include booked top-ups instead of only the initial unlock amount
+- split theme direction into `kiosk_theme` and `admin_theme`
+- added `kiosk_layout` settings for practical logo/header/lockscreen control
+- major kiosk screens now render the configured logo through a shared kiosk header
+- dashboard and admin shells were tightened to reduce noise and feel more operator-first on mobile and desktop
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+source .venv/bin/activate
+python -m compileall backend agent
+python -m pytest -q \
+  backend/tests/test_phase34_autodarts_triggers.py \
+  backend/tests/test_phase34_credits_pricing.py \
+  backend/tests/test_phase56_stability_installation.py \
+  backend/tests/test_phase789_local_core_validation.py
+cd frontend && npm run build
+```
+
+Result:
+- backend/agent compile check passed
+- focused backend validation passed (37 tests)
+- frontend production build succeeded
+
 It is still **not fully production-proven** until somebody does a real Windows + Autodarts validation pass.
 
 ## Latest pass: final hardening + release polish

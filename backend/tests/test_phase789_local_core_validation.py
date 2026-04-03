@@ -10,11 +10,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from backend.database import Base
 from backend.dependencies import hash_password
-from backend.models import Board, BoardStatus, PricingMode, Session, SessionStatus, User, UserRole
+from backend.models import Board, BoardStatus, PricingMode, Session, SessionCharge, SessionStatus, User, UserRole
 from backend.routers import admin as admin_router
 from backend.routers import boards as boards_router
 from backend.routers import kiosk as kiosk_router
-from backend.schemas import StartGameRequest, UnlockRequest
+from backend.schemas import ExtendRequest, StartGameRequest, UnlockRequest
 from backend.services import window_manager
 
 
@@ -398,3 +398,49 @@ async def test_revenue_summary_ignores_active_sessions_and_tolerates_null_prices
     assert summary["by_date"][date_key]["count"] == 2
     assert summary["by_date"][date_key]["by_board"]["Validation Board"] == 5.0
     assert summary["by_board"]["Validation Board"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_topup_booking_is_included_in_revenue_reporting(isolated_local_core_env):
+    await _unlock_board(
+        isolated_local_core_env,
+        pricing_mode=PricingMode.PER_PLAYER.value,
+        credits=3,
+        players_count=2,
+        price_total=6.0,
+    )
+
+    async with isolated_local_core_env.session_factory() as db:
+        await boards_router.extend_session(
+            isolated_local_core_env.board.board_id,
+            ExtendRequest(credits=1, price_total=2.0),
+            user=isolated_local_core_env.admin,
+            db=db,
+        )
+        board = (await db.execute(select(Board).where(Board.board_id == isolated_local_core_env.board.board_id))).scalar_one()
+        session = (
+            await db.execute(select(Session).where(Session.board_id == board.id).order_by(Session.started_at.desc()))
+        ).scalars().first()
+        session.status = SessionStatus.FINISHED.value
+        await db.commit()
+
+    async with isolated_local_core_env.session_factory() as db:
+        charges = (
+            await db.execute(select(SessionCharge).order_by(SessionCharge.created_at.asc()))
+        ).scalars().all()
+        summary = await admin_router.get_revenue_summary(days=7, admin=isolated_local_core_env.admin, db=db)
+        report = await admin_router.get_sessions_report(
+            date_from=None,
+            date_to=None,
+            board_id=None,
+            pricing_mode=None,
+            preset=None,
+            admin=isolated_local_core_env.admin,
+            db=db,
+        )
+
+    assert [charge.kind for charge in charges] == ["unlock", "topup"]
+    assert [float(charge.amount) for charge in charges] == [6.0, 2.0]
+    assert summary["total_revenue"] == 8.0
+    assert report["summary"]["total_revenue"] == 8.0
+    assert report["sessions"][0]["price_total"] == 8.0

@@ -38,10 +38,10 @@ import { PORTAL_SURFACE_ENABLED } from "./runtimeFeatures";
 
 function App() {
   return (
-    <AuthProvider>
-      <SettingsProvider>
-        <I18nProvider>
-        <BrowserRouter>
+    <BrowserRouter>
+      <AuthProvider>
+        <SettingsProvider>
+          <I18nProvider>
           <Routes>
             {/* Kiosk Routes */}
             <Route path="/kiosk" element={<KioskLayout />} />
@@ -90,21 +90,21 @@ function App() {
             <Route path="/" element={<Navigate to="/kiosk" replace />} />
             <Route path="*" element={<Navigate to="/kiosk" replace />} />
           </Routes>
-        </BrowserRouter>
-        </I18nProvider>
-        <Toaster 
-          position="bottom-center" 
-          theme="dark"
-          toastOptions={{
-            style: {
-              background: 'rgb(var(--color-surface-rgb) / 0.96)',
-              border: '1px solid rgb(var(--color-border-rgb) / 0.9)',
-              color: 'var(--color-text)',
-            },
-          }}
-        />
-      </SettingsProvider>
-    </AuthProvider>
+          </I18nProvider>
+          <Toaster 
+            position="bottom-center" 
+            theme="dark"
+            toastOptions={{
+              style: {
+                background: 'rgb(var(--color-surface-rgb) / 0.96)',
+                border: '1px solid rgb(var(--color-border-rgb) / 0.9)',
+                color: 'var(--color-text)',
+              },
+            }}
+          />
+        </SettingsProvider>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 

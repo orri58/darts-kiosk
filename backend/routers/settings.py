@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from backend.database import get_db
 from backend.models import User, Settings
-from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG, DEFAULT_LOCKSCREEN_QR, DEFAULT_OVERLAY_CONFIG, DEFAULT_POST_MATCH_DELAY, DEFAULT_AUTODARTS_TRIGGERS, DEFAULT_AUTODARTS_DESKTOP
+from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG, DEFAULT_LOCKSCREEN_QR, DEFAULT_OVERLAY_CONFIG, DEFAULT_POST_MATCH_DELAY, DEFAULT_AUTODARTS_TRIGGERS, DEFAULT_AUTODARTS_DESKTOP, DEFAULT_KIOSK_THEME, DEFAULT_ADMIN_THEME, DEFAULT_KIOSK_LAYOUT
 from backend.schemas import SettingsUpdate
 from backend.dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
 from backend.runtime_features import sanitize_pricing_settings
@@ -37,6 +37,63 @@ async def update_branding(data: SettingsUpdate, admin: User = Depends(require_ad
         db.add(setting)
     await db.flush()
     await log_audit(db, admin, "update_branding", "settings", "branding")
+    return setting.value
+
+
+@router.get("/settings/kiosk-theme")
+async def get_kiosk_theme(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "kiosk_theme", DEFAULT_KIOSK_THEME)
+
+
+@router.put("/settings/kiosk-theme")
+async def update_kiosk_theme(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "kiosk_theme"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="kiosk_theme", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_kiosk_theme", "settings", "kiosk_theme")
+    return setting.value
+
+
+@router.get("/settings/admin-theme")
+async def get_admin_theme(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "admin_theme", DEFAULT_ADMIN_THEME)
+
+
+@router.put("/settings/admin-theme")
+async def update_admin_theme(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "admin_theme"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="admin_theme", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_admin_theme", "settings", "admin_theme")
+    return setting.value
+
+
+@router.get("/settings/kiosk-layout")
+async def get_kiosk_layout(db: AsyncSession = Depends(get_db)):
+    return await get_or_create_setting(db, "kiosk_layout", DEFAULT_KIOSK_LAYOUT)
+
+
+@router.put("/settings/kiosk-layout")
+async def update_kiosk_layout(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Settings).where(Settings.key == "kiosk_layout"))
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = data.value
+    else:
+        setting = Settings(key="kiosk_layout", value=data.value)
+        db.add(setting)
+    await db.flush()
+    await log_audit(db, admin, "update_kiosk_layout", "settings", "kiosk_layout")
     return setting.value
 
 

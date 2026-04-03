@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Clock, Share2, Target, Trophy, Users, Wallet } from 'lucide-react';
+import KioskHeader from '../../components/kiosk/KioskHeader';
 
 const QR_DISPLAY_SECONDS = 60;
 
@@ -29,15 +30,16 @@ export default function MatchResultScreen({ branding, matchToken, session, onTim
     <div className="relative h-full w-full overflow-hidden bg-zinc-950" data-testid="match-result-screen">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(245,158,11,0.16),transparent_28%),linear-gradient(180deg,rgba(9,9,11,0.96),rgba(9,9,11,1))]" />
       <div className="relative z-10 flex h-full flex-col px-6 py-6 lg:px-10 lg:py-8">
-        <div className="mx-auto flex w-full max-w-7xl items-center justify-between rounded-3xl border border-zinc-800 bg-zinc-950/70 px-5 py-4 backdrop-blur">
-          <div>
-            <p className="text-[11px] uppercase tracking-[0.28em] text-zinc-500">Match result</p>
-            <h1 className="mt-1 text-2xl font-heading uppercase tracking-[0.08em] text-white">{branding?.cafe_name || 'Dart Zone'}</h1>
-          </div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-300">
-            <Trophy className="w-4 h-4" /> Spiel beendet
-          </div>
-        </div>
+        <KioskHeader
+          branding={branding}
+          eyebrow="Match result"
+          compact
+          right={(
+            <div className="inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-300">
+              <Trophy className="w-4 h-4" /> Spiel beendet
+            </div>
+          )}
+        />
 
         <div className="mx-auto grid w-full max-w-7xl flex-1 gap-6 py-8 lg:grid-cols-[1fr,0.85fr] lg:items-center">
           <div className="space-y-6">
