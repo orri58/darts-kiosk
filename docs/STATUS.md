@@ -3,6 +3,9 @@
 ## Executive summary
 
 The repo is in a better product state again:
+- board-PC readiness / preflight is now surfaced as a real in-product admin view instead of being half-hidden across setup and backend endpoints
+- diagnostics and support-bundle contents are now visible in the admin UI before export, so support can see what they are about to collect
+- maintenance/device/update surfaces are less self-contradictory: action buttons live in Device Ops, diagnostics live in Health/System, and dead-end duplicate controls were removed
 - the active operator flow is now **credits-only**
 - palette selection now propagates through a proper frontend theme-token pipeline instead of only touching a few isolated raw vars
 - live kiosk/overlay/public surfaces refresh settings so runtime theme changes can actually show up without manual reloads
@@ -17,6 +20,47 @@ The repo is in a better product state again:
 This is a meaningful cleanup/product pass, not just copy polish.
 
 It is still **not fully production-proven** until somebody does a real Windows + Autodarts validation pass.
+
+## Latest pass: board-PC readiness + diagnostics surface
+
+### What changed in this pass
+- added an authenticated `/api/system/readiness` snapshot focused on what a local board PC actually needs to be usable:
+  - setup completion
+  - default credential rotation state
+  - JWT / agent secrets presence + load state
+  - board-id / board-row alignment
+  - observer target prerequisites
+  - DB path, data/log/backup dirs, VERSION file, frontend build presence
+  - Windows Autodarts desktop prerequisite visibility
+- added `/api/system/support-snapshot`, mirroring the major support-bundle snapshots in readable JSON for the admin UI
+- support bundle export now includes the new `snapshot/readiness.json` so the exported artifact matches the visible diagnostics story
+- Health page now opens with a real **Board-PC readiness** surface:
+  - blocker/warning summary
+  - grouped checks
+  - local board identity
+  - local URLs / DB path
+  - recommended next actions
+- System page now treats **Diagnostics** as a first-class surface instead of just a raw log tail:
+  - visible support snapshot summary
+  - bundle contents preview
+  - current log files / screenshot counts / update artifact counts
+  - still includes the live log tail, but no longer makes that the only troubleshooting affordance
+- Device Ops now keeps the dangerous host controls in one place and surfaces the last action result inline, so success/failure is visible even after the toast disappears
+- Host & Dienste was cleaned up into a read-only inventory view; duplicate restart/reboot/autodarts buttons were removed so operators no longer see multiple competing control surfaces for the same thing
+- downloaded update assets now make installability explicit (`installierbar` vs `manuell / nicht direkt installierbar`) instead of silently showing a partial action model
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+python3 -m compileall backend
+cd frontend && npm run build
+```
+
+Result:
+- backend compiles cleanly with the new readiness/support snapshot service
+- frontend production build succeeds with the new Health/System/Device Ops surfaces
+- no live Windows validation was performed here; real-machine confirmation is still required for shell/device/autodarts recovery claims
 
 ## Latest pass: ops / maintenance / installation completion
 

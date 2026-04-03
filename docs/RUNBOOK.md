@@ -44,6 +44,15 @@ It now sets:
 - quick PIN for existing admin/staff users
 - generated JWT / agent secrets (optional, but recommended)
 
+After setup, use **Admin -> Health -> Board-PC readiness** as the practical preflight view.
+That screen now tells you, in one place, whether this machine is actually locally operable:
+- setup/credential rotation state
+- board-id and board-row alignment
+- observer target prerequisites
+- secrets load state
+- DB/data/log/build presence
+- local operator URLs
+
 ## 2. Expected healthy state
 
 A healthy board PC should have all of the following:
@@ -72,7 +81,9 @@ Replace `<BOARD_ID>` with the board id configured on that machine.
 ## 4. First checks when something feels off
 
 ### 4.1 Confirm board identity
-Check `backend\.env`:
+First look at **Admin -> Health -> Board-PC readiness**.
+
+Then, if needed, check `backend\.env`:
 - `BOARD_ID`
 - `AUTODARTS_MODE`
 - `AUTODARTS_HEADLESS`
@@ -163,7 +174,8 @@ Look here first:
 - `data\logs\app.log`
 - `logs\backend.log`
 - `data\autodarts_debug\`
-- Admin UI -> `System` -> `Logs` -> `Support-Bundle`
+- Admin UI -> `System` -> `Diagnostics` -> `Support snapshot`
+- Admin UI -> `System` -> `Diagnostics` -> `Support-Bundle exportieren`
 
 The support bundle now contains:
 - application logs
@@ -171,9 +183,14 @@ The support bundle now contains:
 - system info snapshot
 - health snapshot
 - setup/preflight snapshot
+- readiness snapshot
 - agent/device-ops snapshot
 - downloaded update assets + app backup snapshot
 - last updater result snapshot
+
+Practical rule:
+- if you only need a quick read, use the in-product **Diagnostics** snapshot first
+- if the issue is unclear or you are about to escalate, export the full support bundle before poking at the machine further
 
 Useful search terms:
 - `SESSION`
@@ -279,6 +296,7 @@ Practical rule:
 - if the kiosk shell or lockdown behaviour is the problem, switch to **Explorer** first so the machine becomes operable again
 - only then change shell/task-manager/autostart settings further
 - after shell changes, expect a sign-out/sign-in or reboot to be required
+- Device Ops now keeps the last result inline; do not rely only on short-lived toast messages when confirming whether an action actually landed
 
 ### Full rebuild after drift
 ```bat
@@ -317,6 +335,7 @@ Update/rollback intent is now:
 
 When an update looked suspicious, do **not** guess blindly:
 - check `System -> Updates` for downloaded packages, backup artifacts, and updater result
+- check `System -> Diagnostics` for readiness/support snapshot context
 - export a support bundle before further repair work
 - only then decide whether to retry install or trigger rollback
 
