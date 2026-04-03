@@ -15,7 +15,7 @@ echo.
 if "%EXIT_CODE%"=="0" (
     echo [OK] Smoke-Test erfolgreich.
 ) else (
-    echo [FAIL] Smoke-Test fehlgeschlagen. Bitte logs pruefen.
+    echo [FAIL] Smoke-Test fehlgeschlagen. Bitte data\logs\app.log und logs\backend.log pruefen.
 )
 
 echo.

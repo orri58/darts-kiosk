@@ -39,30 +39,25 @@ node --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo   [FAIL] Node.js nicht gefunden!
     echo          Download: https://nodejs.org/
-    echo          WICHTIG: Node 20 LTS installieren, NICHT Node 25+
+    echo          WICHTIG: Node 20 oder 22 LTS installieren
     set HAVE_ERRORS=1
-    goto check_yarn
+    goto check_npm
 )
 for /f %%i in ('node --version 2^>^&1') do set NODEVER=%%i
 echo   [OK]   Node.js %NODEVER%
-echo          Empfohlen: Node 20 LTS. Falls Probleme auftreten,
-echo          bitte https://nodejs.org/ und die LTS-Version installieren.
+echo          Empfohlen: Node 20 oder 22 LTS.
+echo          Bitte keine odd/ehemaligen preview Builds fuer den Kiosk-Pfad verwenden.
 
-:check_yarn
+:check_npm
 REM === 3. Paketmanager ===
 echo.
 echo [3/4] Paketmanager pruefen...
-call yarn --version >nul 2>&1
-if %ERRORLEVEL% EQU 0 (
-    echo   [OK]   yarn vorhanden
-    goto check_vcpp
-)
 npm --version >nul 2>&1
 if %ERRORLEVEL% EQU 0 (
-    echo   [OK]   npm vorhanden (yarn wird bei Setup installiert)
+    echo   [OK]   npm vorhanden
     goto check_vcpp
 )
-echo   [FAIL] Weder yarn noch npm gefunden!
+echo   [FAIL] npm nicht gefunden!
 set HAVE_ERRORS=1
 
 :check_vcpp
@@ -94,7 +89,7 @@ if %HAVE_ERRORS% EQU 0 if %HAVE_WARNS% EQU 0 (
 echo.
 echo   Empfohlene Versionen:
 echo     Python:  3.11 oder 3.12  (python.org)
-echo     Node.js: 20 LTS          (nodejs.org - LTS waehlen!)
+echo     Node.js: 20 oder 22 LTS  (nodejs.org - LTS waehlen!)
 echo     VC++:    x64 Redistributable
 echo ================================================================
 echo.

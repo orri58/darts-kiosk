@@ -1,6 +1,6 @@
 """
-Darts Kiosk — Windows Agent v3.4.0
-====================================
+Darts Kiosk — Windows Agent
+===========================
 
 Separate local process for OS-level kiosk management.
 Runs on the kiosk PC alongside the FastAPI backend.
@@ -38,7 +38,16 @@ from typing import Optional
 # CONFIGURATION
 # ═══════════════════════════════════════════════════════════════
 
-AGENT_VERSION = "3.4.1"
+def _read_agent_version() -> str:
+    version_file = Path(__file__).resolve().parent.parent / "VERSION"
+    try:
+        value = version_file.read_text(encoding="utf-8").strip()
+        return value or "dev"
+    except OSError:
+        return "dev"
+
+
+AGENT_VERSION = os.environ.get("DARTS_KIOSK_VERSION") or _read_agent_version()
 IS_WINDOWS = platform.system() == "Windows"
 
 # Defaults (overridable via CLI args or env)

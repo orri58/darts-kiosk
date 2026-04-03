@@ -97,12 +97,6 @@ if not defined LAN_IP (
     echo   [OK]   LAN-IP: !LAN_IP!
 )
 
-REM === Read Central Server URL from .env ===
-set "CENTRAL_URL="
-for /f "tokens=1,* delims==" %%a in ('type "backend\.env" 2^>nul ^| findstr "CENTRAL_SERVER_URL"') do (
-    set "CENTRAL_URL=%%b"
-)
-
 REM === Detect Google Chrome ===
 set "CHROME_PATH="
 for %%G in (
@@ -182,20 +176,16 @@ echo.
 echo   === Lokaler Zugriff ===
 echo   Kiosk:              http://localhost:!BACKEND_PORT!/kiosk/!BOARD_ID!
 echo   Admin-Panel:        http://localhost:!BACKEND_PORT!/admin
-echo   Betreiber-Portal:   http://localhost:!BACKEND_PORT!/operator
+echo   Health:             http://localhost:!BACKEND_PORT!/api/health
 echo.
 echo   === LAN-Zugriff (alle Geraete im Netzwerk) ===
 echo   Kiosk:              http://!LAN_IP!:!BACKEND_PORT!/kiosk/!BOARD_ID!
 echo   Admin-Panel:        http://!LAN_IP!:!BACKEND_PORT!/admin
-echo   Betreiber-Portal:   http://!LAN_IP!:!BACKEND_PORT!/operator
 echo.
-if defined CENTRAL_URL (
-echo   === Zentraler Server ===
-echo   URL:                !CENTRAL_URL!
-echo   Sync:               Automatisch (via License Sync Client^)
-echo   Proxy:              http://localhost:!BACKEND_PORT!/api/central/
+echo   Hinweis: Lokales Spiel haengt nicht von externer Erreichbarkeit ab.
+echo            Optionale zentrale/Portal-Surfaces sind nur relevant,
+echo            wenn sie bewusst separat konfiguriert wurden.
 echo.
-)
 echo   Zum Beenden: stop.bat oder Taste druecken
 echo.
 echo ================================================================

@@ -1,5 +1,5 @@
 @echo off
-REM Darts Kiosk Windows Agent — Start Script (v3.4.1)
+REM Darts Kiosk Windows Agent — Start Script
 REM ==================================================
 REM Starts the local Windows agent process.
 REM The agent runs on 127.0.0.1 (localhost only).
@@ -16,6 +16,10 @@ setlocal enabledelayedexpansion
 
 set "SCRIPT_DIR=%~dp0"
 set "ROOT_DIR=%SCRIPT_DIR%.."
+set "APP_VERSION=unknown"
+if exist "%ROOT_DIR%\VERSION" (
+    set /p APP_VERSION=<"%ROOT_DIR%\VERSION"
+)
 
 REM Activate venv if available
 if exist "%ROOT_DIR%\.venv\Scripts\activate.bat" (
@@ -23,7 +27,7 @@ if exist "%ROOT_DIR%\.venv\Scripts\activate.bat" (
 )
 
 REM Start agent (single instance guard built-in)
-echo [AGENT] Starting Darts Kiosk Agent v3.4.1...
+echo [AGENT] Starting Darts Kiosk Agent v!APP_VERSION!...
 echo [AGENT] Logs: %ROOT_DIR%\data\logs\agent.log
 echo [AGENT] Lock: %ROOT_DIR%\data\logs\agent.lock
 echo.

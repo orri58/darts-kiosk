@@ -216,13 +216,21 @@ echo.
 echo [7/7] Frontend-Pakete installieren (kann 3-5 Min dauern)...
 cd frontend
 
-call yarn --version >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
-    echo   yarn nicht gefunden, installiere via npm...
-    call npm install -g yarn >nul 2>&1
+if exist "package-lock.json" (
+    echo   Verwende npm ci (deterministisch ueber package-lock.json)...
+    call npm ci --no-audit --no-fund
+) else (
+    echo   package-lock.json fehlt - verwende npm install...
+    call npm install --no-audit --no-fund
 )
 
-call yarn install --frozen-lockfile 2>&1 || call yarn install 2>&1
+if %ERRORLEVEL% NEQ 0 (
+    echo   [FAIL] Frontend-Pakete konnten nicht installiert werden!
+    cd /d "%~dp0"
+    pause
+    exit /b 1
+)
+
 echo   [OK] Frontend-Pakete installiert
 cd /d "%~dp0"
 

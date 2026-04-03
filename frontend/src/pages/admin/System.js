@@ -841,10 +841,12 @@ export default function AdminSystem() {
                     </p>
                     <div className="space-y-2">
                       {downloadedAssets.map((a) => {
-                        // Extract version from filename: darts-kiosk-v1.7.0-windows.zip → 1.7.0
-                        const vMatch = a.name?.match(/v?([\d.]+)/);
-                        const assetVersion = vMatch ? vMatch[1] : '';
-                        const installable = Boolean(assetVersion && a.name?.includes('windows'));
+                        // Extract the full package version, including optional suffixes.
+                        // Example: darts-kiosk-v4.0.0-recovery-windows.zip → 4.0.0-recovery
+                        const versionMatch = a.name?.match(/^darts-kiosk-v(.+?)-(windows|linux|source)(?:\.|$)/i);
+                        const fallbackMatch = a.name?.match(/v?([\d.]+)/);
+                        const assetVersion = versionMatch?.[1] || fallbackMatch?.[1] || '';
+                        const installable = Boolean(assetVersion && /-windows\./i.test(a.name || ''));
                         return (
                           <div key={a.name} className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid={`downloaded-${a.name}`}>
                             <div className="flex items-center gap-2 min-w-0">
