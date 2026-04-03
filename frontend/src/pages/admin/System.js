@@ -352,7 +352,7 @@ export default function AdminSystem() {
       setUpdatePrep(prepRes.data);
 
       const dlRes = await axios.post(
-        `${API}/updates/download?asset_url=${encodeURIComponent(windowsAsset.api_url || windowsAsset.download_url)}&asset_name=${encodeURIComponent(windowsAsset.name)}`,
+        `${API}/updates/download?asset_url=${encodeURIComponent(windowsAsset.download_url || windowsAsset.api_url)}&asset_name=${encodeURIComponent(windowsAsset.name)}`,
         {},
         { headers }
       );

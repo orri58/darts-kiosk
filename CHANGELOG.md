@@ -4,6 +4,18 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.2.1] - 2026-04-04
+
+### Fixed
+- Direct update install now prefers the real public release asset download URL instead of accidentally routing public installs through the GitHub API asset URL.
+- Added lightweight archive validation so broken HTML/JSON error responses are rejected before they are treated as update packages.
+- System update UI now sends the correct preferred asset URL for Windows direct installs.
+
+### Validation
+- Backend compile check passed.
+- Frontend production build passed.
+- Release artifacts rebuilt successfully.
+
 ## [4.2.0] - 2026-04-03
 
 ### Added

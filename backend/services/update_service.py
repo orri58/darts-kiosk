@@ -329,6 +329,10 @@ class UpdateService:
                                 "percent": percent,
                             })
 
+            validation_error = self._validate_downloaded_asset(download_path, asset_name)
+            if validation_error:
+                raise ValueError(validation_error)
+
             self._download_progress[download_id].update({
                 "status": "completed",
                 "percent": 100,
@@ -377,7 +381,14 @@ class UpdateService:
             logger.info(f"[Download] No API URL cached, using browser URL with auth: {asset_url}")
             return asset_url, headers
 
-        # Public repo: browser URL works without auth
+        # Public repo: browser URL works without auth. If UI accidentally sends the
+        # GitHub API asset URL, remap it back to the public browser download URL.
+        if "api.github.com/repos/" in asset_url and "/releases/assets/" in asset_url:
+            public_url = self._find_browser_download_url_for_asset(asset_name)
+            if public_url:
+                logger.info(f"[Download] Rewriting public API asset URL to browser download URL: {public_url}")
+                return public_url, headers
+
         return asset_url, headers
 
     def _find_api_url_for_asset(self, asset_name: str) -> Optional[str]:
@@ -386,6 +397,32 @@ class UpdateService:
             for asset in release.assets:
                 if asset.get("name") == asset_name and asset.get("api_url"):
                     return asset["api_url"]
+        return None
+
+    def _find_browser_download_url_for_asset(self, asset_name: str) -> Optional[str]:
+        """Find the public browser download URL for an asset from the cached releases."""
+        for release in self._cached_releases:
+            for asset in release.assets:
+                if asset.get("name") == asset_name and asset.get("download_url"):
+                    return asset["download_url"]
+        return None
+
+    def _validate_downloaded_asset(self, download_path: Path, asset_name: str) -> Optional[str]:
+        """Lightweight validation to catch HTML/JSON error pages saved as assets."""
+        if not download_path.exists():
+            return "Download-Datei fehlt nach dem Download"
+
+        suffix = download_path.suffix.lower()
+        try:
+            with open(download_path, "rb") as f:
+                head = f.read(8)
+        except Exception as e:
+            return f"Download-Datei konnte nicht geprüft werden: {e}"
+
+        if suffix == ".zip" and not head.startswith(b"PK"):
+            return f"Download ist keine gültige ZIP-Datei: {asset_name}"
+        if suffix == ".gz" and head[:2] != b"\x1f\x8b":
+            return f"Download ist kein gültiges GZip-Archiv: {asset_name}"
         return None
 
     def get_download_progress(self, download_id: str) -> Optional[Dict]:

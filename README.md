@@ -2,7 +2,7 @@
 
 Local-first darts board control and kiosk software for venue operation.
 
-Current product release line: **v4.2.0**
+Current product release line: **v4.2.1**
 
 The current repo state is centered on a **protected local core**:
 - local auth, boards, sessions, settings, admin UI
