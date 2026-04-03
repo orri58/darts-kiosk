@@ -26,8 +26,6 @@ import {
   ChevronDown,
   ChevronRight,
   Monitor,
-  Power,
-  PlayCircle,
   Zap
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
@@ -99,6 +97,7 @@ export default function AdminSystem() {
   const [backups, setBackups] = useState(null);
   const [updates, setUpdates] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [supportSnapshot, setSupportSnapshot] = useState(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [restoring, setRestoring] = useState(null);
@@ -116,43 +115,29 @@ export default function AdminSystem() {
   const [appBackups, setAppBackups] = useState([]);
   const [updateResult, setUpdateResult] = useState(null);
   const [creatingAppBackup, setCreatingAppBackup] = useState(false);
-  const [autodartsDesktop, setAutodartsDesktop] = useState(null);
   const [agentStatus, setAgentStatus] = useState(null);
-  const [restartingAutodarts, setRestartingAutodarts] = useState(false);
-  const [restartingBackend, setRestartingBackend] = useState(false);
-  const [rebootingOS, setRebootingOS] = useState(false);
-  const [shuttingDownOS, setShuttingDownOS] = useState(false);
-  const [ensuringDesktop, setEnsuringDesktop] = useState(false);
   const headers = useMemo(() => ({ Authorization: `Bearer ${token}` }), [token]);
 
   const fetchAll = useCallback(async () => {
     try {
-      const [infoRes, backupsRes, updatesRes, logsRes] = await Promise.all([
+      const [infoRes, backupsRes, updatesRes, supportRes] = await Promise.all([
         axios.get(`${API}/system/info`, { headers }),
         axios.get(`${API}/backups`, { headers }),
         axios.get(`${API}/updates/status`, { headers }),
-        axios.get(`${API}/system/logs?lines=150`, { headers }),
+        axios.get(`${API}/system/support-snapshot`, { headers }),
       ]);
       setSysInfo(infoRes.data);
       setBackups(backupsRes.data);
       setUpdates(updatesRes.data);
       setUpdateHistory(updatesRes.data.update_history || []);
-      setLogs(logsRes.data.lines || []);
+      setSupportSnapshot(supportRes.data);
+      setLogs(supportRes.data?.logs?.tail_lines || []);
+      setAgentStatus(supportRes.data?.agent_status || null);
     } catch (err) {
       console.error('System fetch error', err);
     } finally {
       setLoading(false);
     }
-    // Fetch Autodarts Desktop status (separate, non-blocking)
-    try {
-      const adRes = await axios.get(`${API}/admin/system/autodarts-desktop-status`, { headers });
-      setAutodartsDesktop(adRes.data);
-    } catch { /* ignore — endpoint may not exist on older builds */ }
-
-    try {
-      const agentRes = await axios.get(`${API}/admin/agent/status`, { headers });
-      setAgentStatus(agentRes.data);
-    } catch { /* ignore — agent surface may not exist on older builds */ }
   }, [headers]);
 
   useEffect(() => {
@@ -184,21 +169,11 @@ export default function AdminSystem() {
     } catch { /* ignore */ }
   }, [headers]);
 
-  const fetchAgentStatus = useCallback(async () => {
-    try {
-      const res = await axios.get(`${API}/admin/agent/status`, { headers });
-      setAgentStatus(res.data);
-    } catch {
-      setAgentStatus(null);
-    }
-  }, [headers]);
-
   useEffect(() => {
     fetchDownloads();
     fetchAppBackups();
     fetchUpdateResult();
-    fetchAgentStatus();
-  }, [fetchDownloads, fetchAppBackups, fetchUpdateResult, fetchAgentStatus]);
+  }, [fetchDownloads, fetchAppBackups, fetchUpdateResult]);
 
   // Poll download progress
   useEffect(() => {
@@ -397,94 +372,6 @@ export default function AdminSystem() {
     } catch { /* ignore */ }
   };
 
-  const handleRestartAutodarts = async () => {
-    setRestartingAutodarts(true);
-    try {
-      await axios.post(`${API}/admin/system/restart-autodarts-desktop`, {}, { headers });
-      toast.success(t('autodarts_desktop') + ' neugestartet');
-      setTimeout(async () => {
-        try {
-          const res = await axios.get(`${API}/admin/system/autodarts-desktop-status`, { headers });
-          setAutodartsDesktop(res.data);
-        } catch { /* ignore */ }
-        setRestartingAutodarts(false);
-      }, 3000);
-    } catch (err) {
-      const detail = err.response?.data?.detail || 'Neustart fehlgeschlagen';
-      toast.error(detail);
-      setRestartingAutodarts(false);
-    }
-  };
-
-  const handleEnsureDesktop = async () => {
-    setEnsuringDesktop(true);
-    try {
-      const res = await axios.post(`${API}/admin/system/ensure-autodarts-desktop`, {}, { headers });
-      const d = res.data;
-      if (d.running_after) {
-        toast.success(d.message || 'Autodarts Desktop bereit');
-      } else {
-        toast.error(d.message || 'Autodarts Desktop konnte nicht gestartet werden');
-      }
-      // Refresh status
-      try {
-        const sr = await axios.get(`${API}/admin/system/autodarts-desktop-status`, { headers });
-        setAutodartsDesktop(sr.data);
-      } catch { /* ignore */ }
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Sicherstellen fehlgeschlagen');
-    } finally {
-      setEnsuringDesktop(false);
-    }
-  };
-
-  const handleRestartBackend = async () => {
-    if (!window.confirm(t('restart_backend_confirm'))) return;
-    setRestartingBackend(true);
-    try {
-      await axios.post(`${API}/admin/system/restart-backend`, {}, { headers });
-      toast.success(t('action_scheduled'));
-    } catch (err) {
-      toast.error(err.response?.data?.detail || 'Backend-Neustart fehlgeschlagen');
-    } finally {
-      setRestartingBackend(false);
-    }
-  };
-
-  const handleRebootOS = async () => {
-    if (!window.confirm(t('reboot_pc_confirm'))) return;
-    setRebootingOS(true);
-    try {
-      const res = await axios.post(`${API}/admin/system/reboot-os`, {}, { headers });
-      if (res.data.accepted) {
-        toast.success(res.data.message || t('action_scheduled'));
-      } else {
-        toast.error(res.data.error || t('not_supported_os'));
-      }
-    } catch (err) {
-      toast.error(err.response?.data?.detail || t('not_supported_os'));
-    } finally {
-      setRebootingOS(false);
-    }
-  };
-
-  const handleShutdownOS = async () => {
-    if (!window.confirm(t('shutdown_pc_confirm'))) return;
-    setShuttingDownOS(true);
-    try {
-      const res = await axios.post(`${API}/admin/system/shutdown-os`, {}, { headers });
-      if (res.data.accepted) {
-        toast.success(res.data.message || t('action_scheduled'));
-      } else {
-        toast.error(res.data.error || t('not_supported_os'));
-      }
-    } catch (err) {
-      toast.error(err.response?.data?.detail || t('not_supported_os'));
-    } finally {
-      setShuttingDownOS(false);
-    }
-  };
-
   const downloadBackup = async (filename) => {
     try {
       const res = await axios.get(`${API}/backups/download/${filename}`, {
@@ -561,7 +448,7 @@ export default function AdminSystem() {
     <AdminPage
       eyebrow="Maintenance & recovery"
       title={t('system')}
-      description="Host-nahe Wartungsfläche für Updates, Backups, Logs und Neustarts. Anders als Health zeigt diese Seite nicht primär Laufzeit-Signale, sondern die Eingriffe und Artefakte, die ein Operator im Problemfall wirklich braucht."
+      description="Host-nahe Wartungsfläche für Updates, Backups, Diagnostics und Device Ops. Anders als Health zeigt diese Seite nicht primär Laufzeit-Signale, sondern die Eingriffe und Artefakte, die ein Operator im Problemfall wirklich braucht."
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <AdminStatusPill tone="blue">
@@ -626,7 +513,7 @@ export default function AdminSystem() {
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
             <p className="font-medium text-white">Host-Aktionen</p>
-            Neustarts, Shutdown und Autodarts-Desktop-Steuerung bleiben hier, weil sie bewusst schwerer wiegende Operator-Eingriffe sind.
+            Bewusste Host-Eingriffe leben jetzt gesammelt unter <strong>Device Ops</strong>, damit Diagnose, Inventar und echte Aktionen nicht mehr doppelt oder widersprüchlich verteilt sind.
           </div>
         </div>
       </AdminSection>
@@ -640,7 +527,7 @@ export default function AdminSystem() {
             <Database className="w-4 h-4 mr-2" /> Backups
           </TabsTrigger>
           <TabsTrigger value="logs" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-logs">
-            <Terminal className="w-4 h-4 mr-2" /> Logs
+            <Terminal className="w-4 h-4 mr-2" /> Diagnostics
           </TabsTrigger>
           <TabsTrigger value="device" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black" data-testid="tab-device">
             <ShieldCheck className="w-4 h-4 mr-2" /> Device Ops
@@ -957,6 +844,7 @@ export default function AdminSystem() {
                         // Extract version from filename: darts-kiosk-v1.7.0-windows.zip → 1.7.0
                         const vMatch = a.name?.match(/v?([\d.]+)/);
                         const assetVersion = vMatch ? vMatch[1] : '';
+                        const installable = Boolean(assetVersion && a.name?.includes('windows'));
                         return (
                           <div key={a.name} className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid={`downloaded-${a.name}`}>
                             <div className="flex items-center gap-2 min-w-0">
@@ -966,7 +854,7 @@ export default function AdminSystem() {
                             </div>
                             <div className="flex gap-2 items-center">
                               <span className="text-xs text-zinc-600">{formatDate(a.downloaded_at)}</span>
-                              {assetVersion && a.name?.includes('windows') && (
+                              {installable ? (
                                 <Button
                                   size="sm"
                                   onClick={() => handleInstallUpdate(a.name, assetVersion)}
@@ -977,6 +865,8 @@ export default function AdminSystem() {
                                   <ArrowUpCircle className="w-3 h-3 mr-1" />
                                   {installing ? 'Installiert...' : `v${assetVersion} installieren`}
                                 </Button>
+                              ) : (
+                                <AdminStatusPill tone="amber">Manuell / nicht direkt installierbar</AdminStatusPill>
                               )}
                               <Button
                                 variant="ghost"
@@ -1245,46 +1135,143 @@ export default function AdminSystem() {
 
         {/* ===== Logs Tab ===== */}
         <TabsContent value="logs">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
+          <div className="space-y-6">
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardHeader>
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                  <div>
+                    <CardTitle className="text-white flex items-center gap-2">
+                      <Archive className="w-5 h-5 text-amber-500" /> Support snapshot & Bundle
+                    </CardTitle>
+                    <p className="text-sm text-zinc-400 mt-2">
+                      Dieselbe Sicht, die auch im Support-Bundle landet: Runtime-Status, Setup/Readiness, Agent-Lage, Update-Artefakte und aktueller Log-Tail.
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={fetchAll} variant="outline" size="sm" className="border-zinc-700 text-zinc-400 hover:text-white">
+                      <RefreshCw className="w-3 h-3 mr-1" /> Refresh
+                    </Button>
+                    <Button onClick={downloadLogBundle} className="bg-amber-500 hover:bg-amber-400 text-black" size="sm" data-testid="logs-download-btn">
+                      <Archive className="w-3 h-3 mr-1" /> Support-Bundle exportieren
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Readiness</p>
+                    <p className="mt-2 text-lg font-semibold text-white">{supportSnapshot?.readiness?.summary?.status || '–'}</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {supportSnapshot?.readiness?.summary?.fail_count || 0} Blocker · {supportSnapshot?.readiness?.summary?.warn_count || 0} Hinweise
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Agent / Device Ops</p>
+                    <p className="mt-2 text-lg font-semibold text-white">
+                      {supportSnapshot?.agent_status?.agent_online ? 'Agent online' : 'Fallback / lokal'}
+                    </p>
+                    <p className="mt-1 text-xs text-zinc-500">Quelle: {supportSnapshot?.agent_status?.source || '–'}</p>
+                  </div>
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Update-Artefakte</p>
+                    <p className="mt-2 text-lg font-semibold text-white">
+                      {(supportSnapshot?.downloaded_assets?.count || 0) + (supportSnapshot?.app_backups?.count || 0)}
+                    </p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {supportSnapshot?.downloaded_assets?.count || 0} Downloads · {supportSnapshot?.app_backups?.count || 0} App-Backups
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                    <p className="text-[11px] uppercase tracking-[0.24em] text-zinc-500">Artefakte</p>
+                    <p className="mt-2 text-lg font-semibold text-white">{supportSnapshot?.screenshots?.count || 0} Screenshots</p>
+                    <p className="mt-1 text-xs text-zinc-500">{supportSnapshot?.logs?.files?.length || 0} Logdatei(en) im Bundle</p>
+                  </div>
+                </div>
+
+                <div className="grid gap-4 xl:grid-cols-[0.95fr,1.05fr]">
+                  <div className="rounded-3xl border border-zinc-800 bg-zinc-950/70 p-4">
+                    <p className="text-sm font-semibold uppercase tracking-[0.22em] text-zinc-400">Bundle-Inhalt</p>
+                    <div className="mt-3 space-y-2 text-sm text-zinc-300">
+                      {(supportSnapshot?.support_bundle?.includes || []).map((entry) => (
+                        <div key={entry} className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-3 py-2 font-mono text-xs text-zinc-400">
+                          {entry}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-3xl border border-zinc-800 bg-zinc-950/70 p-4">
+                    <p className="text-sm font-semibold uppercase tracking-[0.22em] text-zinc-400">Sofort sichtbar im Snapshot</p>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+                        <p className="text-zinc-500 text-xs">System</p>
+                        <p className="mt-1 text-white">v{supportSnapshot?.system_info?.version || '–'} · {supportSnapshot?.system_info?.mode || '–'}</p>
+                        <p className="mt-1 text-xs text-zinc-500 break-all">DB: {supportSnapshot?.system_info?.database?.path || '–'}</p>
+                      </div>
+                      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+                        <p className="text-zinc-500 text-xs">Setup</p>
+                        <p className="mt-1 text-white">{supportSnapshot?.setup_status?.is_complete ? 'Abgeschlossen' : 'Offen'}</p>
+                        <p className="mt-1 text-xs text-zinc-500">Secrets: {supportSnapshot?.secrets_status?.loaded_in_env ? 'geladen' : 'prüfen'}</p>
+                      </div>
+                      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+                        <p className="text-zinc-500 text-xs">Health</p>
+                        <p className="mt-1 text-white">{supportSnapshot?.health?.status || '–'}</p>
+                        <p className="mt-1 text-xs text-zinc-500">Observer: {supportSnapshot?.health?.observer_metrics?.failed || 0} Fehler</p>
+                      </div>
+                      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3">
+                        <p className="text-zinc-500 text-xs">Letztes Update-Ergebnis</p>
+                        <p className="mt-1 text-white">
+                          {supportSnapshot?.update_result?.has_result
+                            ? supportSnapshot?.update_result?.result?.success
+                              ? 'Erfolgreich'
+                              : 'Fehlgeschlagen'
+                            : 'Keins vorhanden'}
+                        </p>
+                        <p className="mt-1 text-xs text-zinc-500">{supportSnapshot?.update_result?.result?.target_version ? `Ziel: v${supportSnapshot.update_result.result.target_version}` : '–'}</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-zinc-900 border-zinc-800">
+              <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-white flex items-center gap-2">
-                    <Terminal className="w-5 h-5 text-amber-500" /> Anwendungs-Logs
+                    <Terminal className="w-5 h-5 text-amber-500" /> Aktueller Log-Tail
                   </CardTitle>
-                <div className="flex gap-2">
-                  <Button onClick={fetchAll} variant="outline" size="sm" className="border-zinc-700 text-zinc-400 hover:text-white">
-                    <RefreshCw className="w-3 h-3 mr-1" /> Refresh
-                  </Button>
-                  <Button onClick={downloadLogBundle} variant="outline" size="sm" className="border-zinc-700 text-zinc-400 hover:text-white" data-testid="logs-download-btn">
-                    <Archive className="w-3 h-3 mr-1" /> Support-Bundle
-                  </Button>
+                  <AdminStatusPill tone="blue">
+                    {logs.length} Zeilen
+                  </AdminStatusPill>
                 </div>
-              </div>
-              <p className="text-xs text-zinc-500 mt-2">
-                Zeigt den aktuellen Tail der App-Logs. Das ist bewusst kein vollständiger OS-Journal-Viewer.
-              </p>
-            </CardHeader>
-            <CardContent>
-              <div
-                className="bg-zinc-950 border border-zinc-800 rounded-sm p-4 font-mono text-xs leading-relaxed max-h-[500px] overflow-y-auto"
-                data-testid="log-viewer"
-              >
-                {logs.length > 0 ? (
-                  logs.map((line, i) => {
-                    const isError = line.includes('"ERROR"') || line.includes('"level": "ERROR"');
-                    const isWarn = line.includes('"WARNING"') || line.includes('"level": "WARNING"');
-                    return (
-                      <div key={i} className={`whitespace-pre-wrap break-all ${isError ? 'text-red-400' : isWarn ? 'text-amber-400' : 'text-zinc-400'}`}>
-                        {line}
-                      </div>
-                    );
-                  })
-                ) : (
-                  <p className="text-zinc-600">Keine Logs vorhanden</p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+                <p className="text-xs text-zinc-500 mt-2">
+                  Schnelllesbare Live-Sicht. Für vollständige Artefakte, zusätzliche Dateien und Snapshots bitte das Support-Bundle ziehen.
+                </p>
+              </CardHeader>
+              <CardContent>
+                <div
+                  className="bg-zinc-950 border border-zinc-800 rounded-sm p-4 font-mono text-xs leading-relaxed max-h-[500px] overflow-y-auto"
+                  data-testid="log-viewer"
+                >
+                  {logs.length > 0 ? (
+                    logs.map((line, i) => {
+                      const isError = line.includes('"ERROR"') || line.includes('"level": "ERROR"');
+                      const isWarn = line.includes('"WARNING"') || line.includes('"level": "WARNING"');
+                      return (
+                        <div key={i} className={`whitespace-pre-wrap break-all ${isError ? 'text-red-400' : isWarn ? 'text-amber-400' : 'text-zinc-400'}`}>
+                          {line}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <p className="text-zinc-600">Keine Logs vorhanden</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
 
         {/* ===== Device Ops Tab ===== */}
@@ -1298,6 +1285,11 @@ export default function AdminSystem() {
                 <p className="text-sm text-zinc-400">
                   Nutzt bevorzugt den lokalen Windows-Agenten und faellt fuer sichere Recovery-Faelle auf bestehende Backend-Pfade zurueck.
                 </p>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <AdminStatusPill tone="blue">1. Erst Zustand lesen</AdminStatusPill>
+                  <AdminStatusPill tone="amber">2. Dann gezielt eingreifen</AdminStatusPill>
+                  <AdminStatusPill tone="red">Explorer zuerst, wenn der Shell-Lockdown Ärger macht</AdminStatusPill>
+                </div>
               </CardHeader>
             </Card>
             <AgentTab
@@ -1342,149 +1334,69 @@ export default function AdminSystem() {
             </CardContent>
           </Card>
 
-          {/* System Controls (v3.3.1) */}
-          <Card className="bg-zinc-900 border-zinc-800" data-testid="system-controls-card">
+          <Card className="bg-zinc-900 border-zinc-800">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
-                <Zap className="w-5 h-5 text-amber-500" /> {t('system_controls')}
+                <Zap className="w-5 h-5 text-amber-500" /> Maintenance inventory
               </CardTitle>
-              <p className="text-sm text-zinc-400">{t('system_controls_desc')}</p>
+              <p className="text-sm text-zinc-400">
+                Nur Lesesicht: welche Recovery-/Support-Artefakte aktuell wirklich vorhanden sind. Eingriffe passieren bewusst in Device Ops, Updates oder Backups.
+              </p>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                {/* Restart Backend */}
-                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
-                  <div>
-                    <p className="text-sm text-white font-medium">{t('restart_backend')}</p>
-                    <p className="text-xs text-zinc-500">{t('restart_backend_desc')}</p>
-                  </div>
-                  <Button
-                    onClick={handleRestartBackend}
-                    disabled={restartingBackend}
-                    variant="outline"
-                    size="sm"
-                    className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
-                    data-testid="restart-backend-btn"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${restartingBackend ? 'animate-spin' : ''}`} />
-                    {restartingBackend ? t('restarting') : t('restart_backend')}
-                  </Button>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                  <p className="text-xs text-zinc-500 uppercase tracking-[0.22em]">Readiness</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{supportSnapshot?.readiness?.summary?.status || '–'}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{supportSnapshot?.readiness?.summary?.check_count || 0} Checks</p>
                 </div>
-
-                {/* Reboot PC */}
-                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
-                  <div>
-                    <p className="text-sm text-white font-medium">{t('reboot_pc')}</p>
-                    <p className="text-xs text-zinc-500">{t('reboot_pc_desc')}</p>
-                  </div>
-                  <Button
-                    onClick={handleRebootOS}
-                    disabled={rebootingOS}
-                    variant="outline"
-                    size="sm"
-                    className="border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
-                    data-testid="reboot-os-btn"
-                  >
-                    <RotateCcw className={`w-3.5 h-3.5 mr-1.5 ${rebootingOS ? 'animate-spin' : ''}`} />
-                    {rebootingOS ? t('restarting') : t('reboot_pc')}
-                  </Button>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                  <p className="text-xs text-zinc-500 uppercase tracking-[0.22em]">Support-Logs</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{supportSnapshot?.logs?.files?.length || 0}</p>
+                  <p className="mt-1 text-xs text-zinc-500 break-all">{supportSnapshot?.logs?.dir || '–'}</p>
                 </div>
-
-                {/* Shutdown PC */}
-                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
-                  <div>
-                    <p className="text-sm text-white font-medium">{t('shutdown_pc')}</p>
-                    <p className="text-xs text-zinc-500">{t('shutdown_pc_desc')}</p>
-                  </div>
-                  <Button
-                    onClick={handleShutdownOS}
-                    disabled={shuttingDownOS}
-                    variant="outline"
-                    size="sm"
-                    className="border-red-500/30 text-red-400 hover:bg-red-500/10"
-                    data-testid="shutdown-os-btn"
-                  >
-                    <Power className={`w-3.5 h-3.5 mr-1.5 ${shuttingDownOS ? 'animate-spin' : ''}`} />
-                    {shuttingDownOS ? t('restarting') : t('shutdown_pc')}
-                  </Button>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                  <p className="text-xs text-zinc-500 uppercase tracking-[0.22em]">Screenshots</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{supportSnapshot?.screenshots?.count || 0}</p>
+                  <p className="mt-1 text-xs text-zinc-500 break-all">{supportSnapshot?.screenshots?.dir || '–'}</p>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                  <p className="text-xs text-zinc-500 uppercase tracking-[0.22em]">Secrets</p>
+                  <p className="mt-2 text-lg font-semibold text-white">{supportSnapshot?.secrets_status?.loaded_in_env ? 'geladen' : 'prüfen'}</p>
+                  <p className="mt-1 text-xs text-zinc-500 break-all">{supportSnapshot?.secrets_status?.file_path || '–'}</p>
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          {/* Autodarts Desktop Supervision (v3.2.0, enhanced v3.3.1) */}
-          <Card className="bg-zinc-900 border-zinc-800" data-testid="autodarts-desktop-card">
+          <Card className="bg-zinc-900 border-zinc-800">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
-                <Monitor className="w-5 h-5 text-amber-500" /> {t('autodarts_desktop')}
+                <Monitor className="w-5 h-5 text-amber-500" /> Device snapshot
               </CardTitle>
-              <p className="text-sm text-zinc-400">{t('autodarts_desktop_desc')}</p>
+              <p className="text-sm text-zinc-400">
+                Was die Maintenance-Fläche aktuell über Agent, Shell und lokale Board-Zuordnung weiß – ohne doppelte Buttons und ohne falsche Versprechen.
+              </p>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {/* Status indicator */}
-                <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm">
-                  <span className="text-sm text-zinc-400">Status</span>
-                  <div className="flex items-center gap-2">
-                    {autodartsDesktop?.supported ? (
-                      <>
-                        <div className={`w-2.5 h-2.5 rounded-full ${autodartsDesktop?.running ? 'bg-emerald-500' : 'bg-red-500'}`} />
-                        <span className={`text-sm font-medium ${autodartsDesktop?.running ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {autodartsDesktop?.running ? t('autodarts_running') : t('autodarts_not_running')}
-                        </span>
-                        {autodartsDesktop?.pid && (
-                          <span className="text-xs text-zinc-500 font-mono ml-1">(PID: {autodartsDesktop.pid})</span>
-                        )}
-                      </>
-                    ) : (
-                      <span className="text-sm text-zinc-500">{t('autodarts_not_supported')}</span>
-                    )}
-                  </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                  <p className="text-xs text-zinc-500 uppercase tracking-[0.22em]">Device Ops Quelle</p>
+                  <p className="mt-2 text-white">{agentStatus?.source === 'agent' ? 'Windows-Agent' : 'Lokaler Fallback'}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{agentStatus?.agent_online ? 'Agent erreichbar' : 'Keine Agent-Verbindung – lokale Recovery bleibt nutzbar'}</p>
                 </div>
-
-                {/* Config info */}
-                {autodartsDesktop && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="p-2 bg-zinc-800/30 rounded-sm">
-                      <p className="text-xs text-zinc-500">{t('autodarts_configured')}</p>
-                      <p className="text-sm text-white">{autodartsDesktop.configured ? 'Ja' : 'Nein'}</p>
-                    </div>
-                    <div className="p-2 bg-zinc-800/30 rounded-sm">
-                      <p className="text-xs text-zinc-500">{t('autodarts_enabled')}</p>
-                      <p className="text-sm text-white">{autodartsDesktop.enabled ? 'Ja' : 'Nein'}</p>
-                    </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                  <p className="text-xs text-zinc-500 uppercase tracking-[0.22em]">Lokales Board</p>
+                  <p className="mt-2 text-white">{supportSnapshot?.readiness?.board?.board_id || supportSnapshot?.readiness?.local_board_id || '–'}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{supportSnapshot?.readiness?.board?.name || 'Kein Board gemappt'}</p>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3 md:col-span-2">
+                  <p className="text-xs text-zinc-500 uppercase tracking-[0.22em]">Empfohlene Reihenfolge bei Ärger</p>
+                  <div className="mt-2 space-y-2 text-sm text-zinc-300">
+                    <p>1. Diagnostics lesen und Bundle ziehen.</p>
+                    <p>2. Wenn der Lockdown/Shell das Problem ist: zuerst in Device Ops auf Explorer umstellen.</p>
+                    <p>3. Danach gezielt Backend/Autodarts/Task-Manager anfassen – nicht alles gleichzeitig drücken.</p>
                   </div>
-                )}
-
-                {/* Error display */}
-                {autodartsDesktop?.last_error && (
-                  <div className="p-2 bg-red-500/10 border border-red-500/20 rounded-sm">
-                    <p className="text-xs text-red-400">Letzter Fehler: {autodartsDesktop.last_error}</p>
-                  </div>
-                )}
-
-                {/* Action buttons */}
-                <div className="flex gap-2">
-                  <Button
-                    onClick={handleRestartAutodarts}
-                    disabled={restartingAutodarts || ensuringDesktop}
-                    variant="outline"
-                    className="flex-1 border-amber-500/30 text-amber-400 hover:bg-amber-500/10"
-                    data-testid="restart-autodarts-btn"
-                  >
-                    <RotateCcw className={`w-4 h-4 mr-2 ${restartingAutodarts ? 'animate-spin' : ''}`} />
-                    {restartingAutodarts ? t('restarting') : t('restart_autodarts')}
-                  </Button>
-                  <Button
-                    onClick={handleEnsureDesktop}
-                    disabled={ensuringDesktop || restartingAutodarts}
-                    variant="outline"
-                    className="flex-1 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10"
-                    data-testid="ensure-autodarts-btn"
-                  >
-                    <PlayCircle className={`w-4 h-4 mr-2 ${ensuringDesktop ? 'animate-spin' : ''}`} />
-                    {ensuringDesktop ? t('ensuring') : t('ensure_autodarts')}
-                  </Button>
                 </div>
               </div>
             </CardContent>

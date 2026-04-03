@@ -85,6 +85,7 @@ function formatUptime(s) {
 export default function AgentTab({ agentStatus, setAgentStatus, headers, t, fetchAll }) {
   const [confirm, setConfirm] = useState(null);
   const [actionInProgress, setActionInProgress] = useState(null);
+  const [lastResult, setLastResult] = useState(null);
 
   const agentOnline = agentStatus?.agent_online === true;
   const source = agentStatus?.source;
@@ -96,15 +97,31 @@ export default function AgentTab({ agentStatus, setAgentStatus, headers, t, fetc
       const res = await axios.post(`${API}${endpoint}`, body, { headers, timeout: 8000 });
       const via = res.data?.via === 'agent' ? ' (Agent)' : ' (Fallback)';
       toast.success(`${successMsg}${via}`);
+      setLastResult({
+        ok: true,
+        action: successMsg,
+        message: res.data?.message || res.data?.detail || successMsg,
+        via: res.data?.via || 'fallback',
+        at: new Date().toISOString(),
+      });
       // Refresh agent status
       setTimeout(async () => {
         try {
           const r = await axios.get(`${API}/admin/agent/status`, { headers });
           setAgentStatus(r.data);
+          fetchAll?.();
         } catch { /* ignore */ }
       }, 2000);
     } catch (err) {
-      toast.error(`Fehler: ${err.response?.data?.detail || err.message}`);
+      const message = err.response?.data?.detail || err.message;
+      toast.error(`Fehler: ${message}`);
+      setLastResult({
+        ok: false,
+        action: successMsg,
+        message,
+        via: 'error',
+        at: new Date().toISOString(),
+      });
     } finally {
       setActionInProgress(null);
     }
@@ -127,6 +144,26 @@ export default function AgentTab({ agentStatus, setAgentStatus, headers, t, fetc
 
   return (
     <div className="space-y-4">
+      {lastResult && (
+        <Card className={`${lastResult.ok ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-red-500/10 border-red-500/30'}`} data-testid="agent-last-result-card">
+          <CardContent className="p-4">
+            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+              <div>
+                <p className={`text-sm font-semibold ${lastResult.ok ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {lastResult.ok ? 'Letzte Device-Op erfolgreich' : 'Letzte Device-Op fehlgeschlagen'}
+                </p>
+                <p className="mt-1 text-sm text-white">{lastResult.action}</p>
+                <p className="mt-1 text-xs text-zinc-400">{lastResult.message}</p>
+              </div>
+              <div className="text-xs text-zinc-500">
+                <div>Pfad: {lastResult.via}</div>
+                <div>{new Date(lastResult.at).toLocaleString('de-DE')}</div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Agent Status Header */}
       <Card className="bg-zinc-900 border-zinc-800" data-testid="agent-status-card">
         <CardHeader className="pb-3">

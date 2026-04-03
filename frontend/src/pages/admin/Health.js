@@ -36,6 +36,18 @@ const HEALTH_META = {
   unhealthy: { label: 'Kritisch', tone: 'red', icon: XCircle },
 };
 
+const READINESS_META = {
+  ready: { label: 'Einsatzbereit', tone: 'emerald', icon: ShieldCheck },
+  warning: { label: 'Mit Hinweisen', tone: 'amber', icon: AlertTriangle },
+  blocked: { label: 'Nicht bereit', tone: 'red', icon: XCircle },
+};
+
+const CHECK_STATUS_META = {
+  ok: { label: 'OK', tone: 'emerald' },
+  warn: { label: 'Prüfen', tone: 'amber' },
+  fail: { label: 'Blocker', tone: 'red' },
+};
+
 function formatDateTime(value) {
   if (!value) return '–';
   return new Date(value).toLocaleString('de-DE', {
@@ -61,6 +73,7 @@ export default function AdminHealth() {
   const { token } = useAuth();
   const { t } = useI18n();
   const [health, setHealth] = useState(null);
+  const [readiness, setReadiness] = useState(null);
   const [backups, setBackups] = useState(null);
   const [screenshots, setScreenshots] = useState([]);
   const [screenshotUrls, setScreenshotUrls] = useState({});
@@ -70,13 +83,15 @@ export default function AdminHealth() {
 
   const fetchHealth = useCallback(async () => {
     try {
-      const [healthRes, backupsRes, screenshotsRes] = await Promise.all([
+      const [healthRes, readinessRes, backupsRes, screenshotsRes] = await Promise.all([
         axios.get(`${API}/health/detailed`, { headers }),
+        axios.get(`${API}/system/readiness`, { headers }),
         axios.get(`${API}/backups`, { headers }),
         axios.get(`${API}/health/screenshots`, { headers }),
       ]);
 
       setHealth(healthRes.data);
+      setReadiness(readinessRes.data);
       setBackups(backupsRes.data);
       setScreenshots(screenshotsRes.data || []);
     } catch (error) {
@@ -137,6 +152,15 @@ export default function AdminHealth() {
     const agents = Object.entries(health?.agent_status || {});
     const offlineAgents = agents.filter(([, agent]) => !agent.is_online).length;
     const recentBackups = backups?.backups || [];
+    const readinessChecks = readiness?.checks || [];
+    const readinessGroups = Object.entries(
+      readinessChecks.reduce((acc, check) => {
+        const bucket = acc[check.group] || [];
+        bucket.push(check);
+        acc[check.group] = bucket;
+        return acc;
+      }, {})
+    );
 
     return {
       agents,
@@ -146,8 +170,12 @@ export default function AdminHealth() {
       recentErrors: health?.recent_errors || [],
       latestBackup: recentBackups[0] || null,
       backupCount: backups?.stats?.total_backups || 0,
+      readinessChecks,
+      readinessGroups,
+      readinessFailCount: readiness?.summary?.fail_count || 0,
+      readinessWarnCount: readiness?.summary?.warn_count || 0,
     };
-  }, [health, backups]);
+  }, [health, backups, readiness]);
 
   if (loading) {
     return (
@@ -163,6 +191,12 @@ export default function AdminHealth() {
     icon: Activity,
   };
   const StatusIcon = meta.icon;
+  const readinessMeta = READINESS_META[readiness?.status] || {
+    label: readiness?.status || 'Unbekannt',
+    tone: 'neutral',
+    icon: ShieldCheck,
+  };
+  const ReadinessIcon = readinessMeta.icon;
 
   return (
     <AdminPage
@@ -195,6 +229,20 @@ export default function AdminHealth() {
           tone={meta.tone}
         />
         <AdminStatCard
+          icon={ReadinessIcon}
+          label="Board-PC Readiness"
+          value={readinessMeta.label}
+          hint={readiness?.board?.exists ? `${readiness.board.board_id} · ${readiness.board.name || 'ohne Namen'}` : 'Lokales Board fehlt oder ist unklar'}
+          tone={readinessMeta.tone}
+        />
+        <AdminStatCard
+          icon={AlertTriangle}
+          label="Blockierende Checks"
+          value={metrics.readinessFailCount}
+          hint={`${metrics.readinessWarnCount} weitere Hinweise`}
+          tone={metrics.readinessFailCount > 0 ? 'red' : metrics.readinessWarnCount > 0 ? 'amber' : 'emerald'}
+        />
+        <AdminStatCard
           icon={Clock}
           label="Uptime"
           value={formatUptime(health?.uptime_seconds || 0)}
@@ -216,6 +264,143 @@ export default function AdminHealth() {
           tone={metrics.observerSuccessRate >= 80 ? 'emerald' : metrics.observerEvents > 0 ? 'amber' : 'neutral'}
         />
       </AdminStatsGrid>
+
+      <AdminSection
+        title="Board-PC readiness"
+        description="Kompakte Preflight-Sicht dafür, ob dieser Rechner lokal sinnvoll betrieben und supportet werden kann. Keine Buzzwords, nur die Checks, die im Problemfall wirklich zählen."
+        actions={
+          <AdminStatusPill tone={readinessMeta.tone}>
+            <ReadinessIcon className="w-3 h-3" /> {readinessMeta.label}
+          </AdminStatusPill>
+        }
+      >
+        <div className="grid gap-6 xl:grid-cols-[1.2fr,0.8fr]">
+          <div className="space-y-4">
+            {(metrics.readinessFailCount > 0 || metrics.readinessWarnCount > 0) && (
+              <div className={`rounded-3xl border px-5 py-4 ${metrics.readinessFailCount > 0 ? 'border-red-500/30 bg-red-500/10' : 'border-amber-500/30 bg-amber-500/10'}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <AdminStatusPill tone={metrics.readinessFailCount > 0 ? 'red' : 'amber'}>
+                    {metrics.readinessFailCount > 0 ? 'Blocker vorhanden' : 'Hinweise vorhanden'}
+                  </AdminStatusPill>
+                  <p className="text-sm text-white">
+                    {metrics.readinessFailCount > 0
+                      ? `${metrics.readinessFailCount} Check(s) blockieren eine saubere lokale Betriebsbereitschaft.`
+                      : `${metrics.readinessWarnCount} Check(s) sollten vor dem nächsten echten Einsatz überprüft werden.`}
+                  </p>
+                </div>
+                <div className="mt-3 grid gap-2 md:grid-cols-2">
+                  {metrics.readinessChecks
+                    .filter((check) => check.status !== 'ok')
+                    .slice(0, 6)
+                    .map((check) => {
+                      const checkMeta = CHECK_STATUS_META[check.status] || CHECK_STATUS_META.warn;
+                      return (
+                        <div key={check.key} className="rounded-2xl border border-white/10 bg-black/20 px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm font-medium text-white">{check.label}</p>
+                            <AdminStatusPill tone={checkMeta.tone}>{checkMeta.label}</AdminStatusPill>
+                          </div>
+                          <p className="mt-1 text-xs text-zinc-300 break-all">{check.detail}</p>
+                          {check.remediation && <p className="mt-2 text-xs text-zinc-500">{check.remediation}</p>}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            )}
+
+            <div className="grid gap-4 md:grid-cols-2">
+              {metrics.readinessGroups.map(([groupName, groupChecks]) => (
+                <div key={groupName} className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm font-semibold uppercase tracking-[0.18em] text-zinc-400">{groupName}</p>
+                    <AdminStatusPill
+                      tone={groupChecks.some((item) => item.status === 'fail') ? 'red' : groupChecks.some((item) => item.status === 'warn') ? 'amber' : 'emerald'}
+                    >
+                      {groupChecks.filter((item) => item.status === 'ok').length}/{groupChecks.length} ok
+                    </AdminStatusPill>
+                  </div>
+                  <div className="mt-3 space-y-3">
+                    {groupChecks.map((check) => {
+                      const checkMeta = CHECK_STATUS_META[check.status] || CHECK_STATUS_META.warn;
+                      return (
+                        <div key={check.key} className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3">
+                          <div className="flex items-center justify-between gap-3">
+                            <p className="text-sm text-white">{check.label}</p>
+                            <AdminStatusPill tone={checkMeta.tone}>{checkMeta.label}</AdminStatusPill>
+                          </div>
+                          <p className="mt-1 text-xs text-zinc-500 break-all">{check.detail}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-lg font-semibold text-white">Lokales Board</p>
+                  <p className="text-sm text-zinc-500">Die Identität dieses Rechners muss zu Board-ID und Ziel-URLs passen.</p>
+                </div>
+                <AdminStatusPill tone={readiness?.board?.exists ? 'emerald' : 'red'}>
+                  {readiness?.board?.exists ? 'Gefunden' : 'Fehlt'}
+                </AdminStatusPill>
+              </div>
+              <div className="mt-4 space-y-3 text-sm">
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+                  <p className="text-zinc-500">Board-ID</p>
+                  <p className="mt-1 font-mono text-white">{readiness?.board?.board_id || readiness?.local_board_id || '–'}</p>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+                  <p className="text-zinc-500">Board-Konfiguration</p>
+                  <p className="mt-1 text-white">{readiness?.board?.name || 'Kein Name verfügbar'}</p>
+                  <p className="mt-1 text-xs text-zinc-500">Status: {readiness?.board?.status || 'unbekannt'}</p>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+                  <p className="text-zinc-500">Observer-Ziel</p>
+                  <p className="mt-1 break-all font-mono text-xs text-zinc-300">{readiness?.board?.autodarts_target_url || 'Nicht gesetzt'}</p>
+                </div>
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+                  <p className="text-zinc-500">Agent-API</p>
+                  <p className="mt-1 break-all font-mono text-xs text-zinc-300">{readiness?.board?.agent_api_base_url || 'Nicht gesetzt'}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-5">
+              <p className="text-lg font-semibold text-white">Lokale Operator-URLs</p>
+              <div className="mt-4 space-y-3">
+                {Object.entries(readiness?.local_urls || {}).map(([key, value]) => (
+                  <div key={key} className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+                    <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">{key}</p>
+                    <p className="mt-1 break-all font-mono text-xs text-zinc-200">{value}</p>
+                  </div>
+                ))}
+                <div className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-zinc-500">Datenbank</p>
+                  <p className="mt-1 break-all font-mono text-xs text-zinc-200">{readiness?.runtime?.database_path || '–'}</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-5">
+              <p className="text-lg font-semibold text-white">Nächste sinnvolle Schritte</p>
+              <div className="mt-4 space-y-2">
+                {(readiness?.recommended_actions || []).map((step, index) => (
+                  <div key={`${index}-${step}`} className="rounded-2xl border border-zinc-800 bg-zinc-950/80 px-4 py-3 text-sm text-zinc-300">
+                    <span className="mr-2 text-zinc-500">{index + 1}.</span>
+                    {step}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </AdminSection>
 
       <div className="grid gap-6 xl:grid-cols-[1.15fr,0.85fr]">
         <div className="space-y-6">

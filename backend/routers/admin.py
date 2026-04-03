@@ -23,6 +23,7 @@ from backend.services.setup_wizard import (
 )
 from backend.services.system_service import system_service
 from backend.services.autodarts_desktop_service import autodarts_desktop
+from backend.services.readiness_service import readiness_service
 
 router = APIRouter()
 
@@ -210,6 +211,21 @@ async def get_system_info(admin: User = Depends(require_admin)):
     return system_service.get_system_info()
 
 
+@router.get("/system/readiness")
+async def get_system_readiness(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Operator-facing readiness/preflight snapshot for the local board PC."""
+    return await readiness_service.build_readiness_snapshot(db)
+
+
+@router.get("/system/support-snapshot")
+async def get_support_snapshot(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Human-readable support snapshot that mirrors the support bundle contents."""
+    from backend.routers.admin_agent import _agent_status_or_fallback
+
+    agent_status = await _agent_status_or_fallback(db)
+    return await readiness_service.build_support_snapshot(db, agent_status)
+
+
 @router.get("/system/logs")
 async def get_system_logs(lines: int = 200, admin: User = Depends(require_admin)):
     """Tail recent application logs"""
@@ -219,25 +235,19 @@ async def get_system_logs(lines: int = 200, admin: User = Depends(require_admin)
 @router.get("/system/logs/bundle")
 async def download_log_bundle(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
     """Download a support bundle with logs plus core runtime snapshots."""
-    from dataclasses import asdict
-
     from backend.routers.admin_agent import _agent_status_or_fallback
-    from backend.services.setup_wizard import get_stored_secrets
-    from backend.services.update_service import update_service
-    from backend.services.updater_service import updater_service
-
+    agent_status = await _agent_status_or_fallback(db)
+    snapshot = await readiness_service.build_support_snapshot(db, agent_status)
     extras = {
-        "snapshot/system_info.json": system_service.get_system_info(),
-        "snapshot/health.json": asdict(health_monitor.get_health()),
-        "snapshot/setup_status.json": (await check_setup_status(db)).model_dump(),
-        "snapshot/agent_status.json": await _agent_status_or_fallback(db),
-        "snapshot/downloaded_assets.json": {"assets": update_service.list_downloaded_assets()},
-        "snapshot/app_backups.json": {"backups": updater_service.list_app_backups()},
-        "snapshot/update_result.json": {"result": updater_service.get_update_result()},
-        "snapshot/secrets_status.json": {
-            "has_jwt_secret": bool(get_stored_secrets().get('JWT_SECRET')),
-            "has_agent_secret": bool(get_stored_secrets().get('AGENT_SECRET')),
-        },
+        "snapshot/system_info.json": snapshot["system_info"],
+        "snapshot/health.json": snapshot["health"],
+        "snapshot/setup_status.json": snapshot["setup_status"],
+        "snapshot/readiness.json": snapshot["readiness"],
+        "snapshot/agent_status.json": snapshot["agent_status"],
+        "snapshot/downloaded_assets.json": snapshot["downloaded_assets"],
+        "snapshot/app_backups.json": snapshot["app_backups"],
+        "snapshot/update_result.json": snapshot["update_result"],
+        "snapshot/secrets_status.json": snapshot["secrets_status"],
     }
 
     bundle = system_service.create_log_bundle(extras)
