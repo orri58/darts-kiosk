@@ -18,6 +18,9 @@ echo.
 
 REM === Configuration ===
 set "BACKEND_PORT=8001"
+set "AGENT_PORT=8003"
+set "AGENT_SECRET="
+set "AUTODARTS_EXE_PATH="
 
 REM === Pre-flight: .env ===
 if not exist "backend\.env" (
@@ -35,6 +38,9 @@ if not exist "backend\.env" (
 call :load_env_value BOARD_ID BOARD_ID
 if not defined BOARD_ID set "BOARD_ID=BOARD-1"
 call :load_env_value BACKEND_PORT BACKEND_PORT
+call :load_env_value AGENT_PORT AGENT_PORT
+call :load_env_value AGENT_SECRET AGENT_SECRET
+call :load_env_value AUTODARTS_EXE_PATH AUTODARTS_EXE_PATH
 
 REM === Pre-flight: venv ===
 if exist ".venv\Scripts\activate.bat" (
@@ -67,11 +73,15 @@ if not exist "run_backend.py" (
 
 REM === Create directories ===
 if not exist "logs" mkdir "logs"
+if not exist "data\logs" mkdir "data\logs"
 if not exist "data\db" mkdir "data\db"
 if not exist "data\downloads" mkdir "data\downloads"
 if not exist "data\app_backups" mkdir "data\app_backups"
 if not exist "data\chrome_profile\!BOARD_ID!" mkdir "data\chrome_profile\!BOARD_ID!"
 if not exist "data\kiosk_ui_profile" mkdir "data\kiosk_ui_profile"
+if not exist "frontend\build" (
+    echo [WARN] frontend\build fehlt - fuehre setup_windows.bat aus, falls die UI nicht laedt.
+)
 
 REM === Kill old processes ===
 echo [1/5] Alte Prozesse beenden...
@@ -142,8 +152,34 @@ if !BACKEND_READY!==0 (
 REM === Start Agent ===
 echo [4/5] Windows Agent starten...
 if exist "agent\start_agent.bat" (
-    start "Darts Agent" /MIN cmd /c "cd /d "%~dp0agent" && start_agent.bat"
-    echo   [OK] Agent gestartet
+    if exist "agent\setup_autostart.py" (
+        python "agent\setup_autostart.py" >nul 2>&1
+    )
+    start "Darts Agent" /MIN cmd /c ""%~dp0agent\start_agent.bat""
+    echo   [OK] Agent gestartet (Port !AGENT_PORT!)
+
+    set "AGENT_READY=0"
+    for /L %%i in (1,1,8) do (
+        if !AGENT_READY!==0 (
+            curl -sf "http://127.0.0.1:!AGENT_PORT!/status" >nul 2>&1
+            if !ERRORLEVEL!==0 (
+                set "AGENT_READY=1"
+                echo   [OK]   Agent erreichbar
+            ) else (
+                timeout /t 2 /nobreak >nul
+            )
+        )
+    )
+    if !AGENT_READY!==0 echo   [WARN] Agent noch nicht erreichbar - pruefe data\logs\agent.log
+
+    if !AGENT_READY!==0 if defined AUTODARTS_EXE_PATH if exist "!AUTODARTS_EXE_PATH!" (
+        powershell -NoProfile -ExecutionPolicy Bypass -Command "$body = @{ exe_path = $env:AUTODARTS_EXE_PATH } | ConvertTo-Json -Compress; Invoke-RestMethod -Uri ('http://127.0.0.1:' + $env:AGENT_PORT + '/autodarts/ensure') -Method Post -Headers @{ 'X-Agent-Secret' = $env:AGENT_SECRET } -ContentType 'application/json' -Body $body | Out-Null" >nul 2>&1
+        if !ERRORLEVEL!==0 (
+            echo   [WARN] Autodarts Desktop konnte nicht automatisch angestossen werden
+        ) else (
+            echo   [OK]   Autodarts Desktop vorbereitet
+        )
+    )
 ) else (
     echo   [INFO] Kein Agent vorhanden - uebersprungen
 )

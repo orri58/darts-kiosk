@@ -3,6 +3,10 @@
 ## Executive summary
 
 The repo is in a better product state again:
+- Windows bring-up now has a real one-click entry (`release/windows/install.bat`) instead of only a loose collection of helper scripts
+- startup/runtime defaults are cleaner: single seeded board, normalized agent health checks, and aligned agent port defaults
+- update flow is closer to a product surface: direct install is promoted in the admin UI instead of only exposing package-prep internals
+- admin shell and maintenance surfaces are less verbose and wrap more safely on narrow screens
 - board-PC readiness / preflight is now surfaced as a real in-product admin view instead of being half-hidden across setup and backend endpoints
 - diagnostics and support-bundle contents are now visible in the admin UI before export, so support can see what they are about to collect
 - maintenance/device/update surfaces are less self-contradictory: action buttons live in Device Ops, diagnostics live in Health/System, and dead-end duplicate controls were removed
@@ -19,6 +23,38 @@ The repo is in a better product state again:
 - release/build/docs now align better around the current product shape: npm-based frontend packaging on Windows, shared release-script usage in CI, and less misleading central-heavy deployment copy
 
 This is a meaningful cleanup/product pass, not just copy polish.
+
+## Latest pass: installer + update UX + admin professional pass
+
+### What changed in this pass
+- added `release/windows/install.bat` as the new one-click Windows bootstrap/install entrypoint
+- `setup_windows.bat` now builds the frontend during setup and prepares app-backup/runtime folders
+- built Windows env examples now default to `AGENT_PORT=8003` and `GITHUB_REPO=orri58/darts-kiosk`
+- agent defaults/docs were aligned on port `8003`
+- agent health monitor now normalizes malformed agent URLs and checks the real `/status` endpoint before falling back
+- update-service repo parsing now strips a trailing slash so misconfigured `owner/repo/` values do not break GitHub checks
+- admin sidebar and page shells were reduced in label/meta noise and improved for text wrapping / responsive overflow
+- System → Updates now exposes a direct **Jetzt installieren** path for installable Windows release assets
+- startup no longer recreates `BOARD-2`; only the local default board is seeded automatically
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+source .venv/bin/activate
+python -m pytest -q \
+  backend/tests/test_phase34_autodarts_triggers.py \
+  backend/tests/test_phase34_credits_pricing.py \
+  backend/tests/test_phase56_stability_installation.py \
+  backend/tests/test_phase789_local_core_validation.py
+cd frontend && npm run build
+cd .. && bash release/build_release.sh
+```
+
+Result:
+- focused backend validation passed
+- frontend production build succeeded
+- release artifacts for Windows/Linux/source were generated successfully
 
 It is still **not fully production-proven** until somebody does a real Windows + Autodarts validation pass.
 

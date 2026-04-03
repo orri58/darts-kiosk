@@ -32,17 +32,18 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 REM === 1. Directories ===
-echo [1/7] Verzeichnisse erstellen...
+echo [1/8] Verzeichnisse erstellen...
 if not exist "data" mkdir data
 if not exist "data\db" mkdir data\db
 if not exist "data\assets" mkdir data\assets
 if not exist "data\assets\sounds" mkdir data\assets\sounds
 if not exist "data\backups" mkdir data\backups
+if not exist "data\app_backups" mkdir data\app_backups
 if not exist "logs" mkdir logs
 echo   [OK]
 
 REM === 2. Backend .env ===
-echo [2/7] Konfiguration pruefen...
+echo [2/8] Konfiguration pruefen...
 if exist "backend\.env" (
     echo   [OK] backend\.env existiert bereits
     goto check_frontend_env
@@ -62,6 +63,7 @@ echo   Erstelle backend\.env ...
     echo DATA_DIR=./data
     echo JWT_SECRET=darts-local-dev-secret-change-in-production
     echo AGENT_SECRET=agent-local-dev-secret
+    echo AGENT_PORT=8003
     echo CORS_ORIGINS=*
     echo MODE=STANDALONE
     echo BOARD_ID=BOARD-1
@@ -71,7 +73,7 @@ echo   Erstelle backend\.env ...
     echo AUTODARTS_MOCK=false
     echo UPDATE_CHECK_ENABLED=true
     echo UPDATE_CHECK_INTERVAL_HOURS=24
-    echo GITHUB_REPO=
+    echo GITHUB_REPO=orri58/darts-kiosk
     echo GITHUB_TOKEN=
 ) > backend\.env
 echo   [OK] backend\.env erstellt
@@ -92,7 +94,7 @@ echo   [OK] frontend\.env erstellt
 :create_venv
 REM === 3. Python venv ===
 echo.
-echo [3/7] Python-Umgebung erstellen...
+echo [3/8] Python-Umgebung erstellen...
 if exist ".venv\Scripts\activate.bat" (
     echo   [OK] .venv existiert bereits
     goto activate_venv
@@ -112,7 +114,7 @@ echo   [OK] .venv aktiviert
 
 REM === 4. Backend dependencies ===
 echo.
-echo [4/7] Python-Pakete installieren (kann 2-3 Min dauern)...
+echo [4/8] Python-Pakete installieren (kann 2-3 Min dauern)...
 python -m pip install --upgrade pip >nul 2>&1
 
 echo   Installiere greenlet (kritische Abhaengigkeit)...
@@ -150,7 +152,7 @@ if exist "agent\requirements.txt" (
 
 REM === 5. Validate critical imports ===
 echo.
-echo [5/7] Kritische Abhaengigkeiten validieren...
+echo [5/8] Kritische Abhaengigkeiten validieren...
 set IMPORT_FAIL=0
 
 python -c "import greenlet" 2>nul
@@ -174,7 +176,7 @@ if %IMPORT_FAIL% NEQ 0 (
 
 REM === 6. Playwright ===
 echo.
-echo [6/7] Playwright-Browser installieren (kann 3-5 Min dauern)...
+echo [6/8] Playwright-Browser installieren (kann 3-5 Min dauern)...
 python -m playwright install chromium 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo   [WARN] Playwright konnte nicht installiert werden
@@ -213,7 +215,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 REM === 7. Frontend ===
 echo.
-echo [7/7] Frontend-Pakete installieren (kann 3-5 Min dauern)...
+echo [7/8] Frontend-Pakete installieren (kann 3-5 Min dauern)...
 cd frontend
 
 if exist "package-lock.json" (
@@ -232,7 +234,33 @@ if %ERRORLEVEL% NEQ 0 (
 )
 
 echo   [OK] Frontend-Pakete installiert
+
+echo   Erstelle Production-Build...
+call npm run build
+if %ERRORLEVEL% NEQ 0 (
+    echo   [FAIL] Frontend-Build fehlgeschlagen!
+    cd /d "%~dp0"
+    pause
+    exit /b 1
+)
+
+echo   [OK] Frontend-Build erstellt
 cd /d "%~dp0"
+
+REM === 8. Agent / Autostart bootstrap ===
+echo.
+echo [8/8] Agent-Startpfad vorbereiten...
+if exist "agent\setup_autostart.py" (
+    python agent\setup_autostart.py >nul 2>&1
+    if %ERRORLEVEL% EQU 0 (
+        echo   [OK] Agent-Autostart registriert
+    ) else (
+        echo   [WARN] Agent-Autostart konnte nicht automatisch registriert werden
+        echo          Bei Bedarf spaeter als Admin erneut ausfuehren: python agent\setup_autostart.py
+    )
+) else (
+    echo   [INFO] Kein Agent-Autostart-Skript gefunden
+)
 
 REM === Done ===
 echo.
@@ -244,6 +272,9 @@ echo   1. backend\.env pruefen (mindestens BOARD_ID und JWT_SECRET)
 echo   2. setup_profile.bat ausfuehren (Autodarts-Login + Extensions)
 echo   3. start.bat ausfuehren
 echo   4. smoke_test.bat ausfuehren
+echo.
+echo   Fuer den kuerzesten Weg beim naechsten Board-PC:
+echo   - install.bat (Ein-Klick-Installer)
 echo.
 echo   Enthaltene Komponenten:
 echo   - Lokales Backend / Local-first Runtime

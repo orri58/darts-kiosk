@@ -65,6 +65,20 @@ function formatDate(isoStr) {
   return new Date(isoStr).toLocaleString('de-DE');
 }
 
+function parseAssetVersion(name = '') {
+  const versionMatch = name.match(/^darts-kiosk-v(.+?)-(windows|linux|source)(?:\.|$)/i);
+  const fallbackMatch = name.match(/v?(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)/i);
+  return versionMatch?.[1] || fallbackMatch?.[1] || '';
+}
+
+function getPreferredWindowsAsset(release) {
+  return (release?.assets || []).find((asset) => /-windows\.zip$/i.test(asset.name || '')) || null;
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function ChangelogBlock({ body }) {
   const [expanded, setExpanded] = useState(false);
   if (!body) return null;
@@ -111,6 +125,7 @@ export default function AdminSystem() {
   const [updateHistory, setUpdateHistory] = useState([]);
   const [expandedRelease, setExpandedRelease] = useState(null);
   const [installing, setInstalling] = useState(false);
+  const [installingTarget, setInstallingTarget] = useState('');
   const [rollbackInProgress, setRollbackInProgress] = useState(false);
   const [appBackups, setAppBackups] = useState([]);
   const [updateResult, setUpdateResult] = useState(null);
@@ -269,6 +284,29 @@ export default function AdminSystem() {
     }
   };
 
+  const beginUpdateResultPolling = useCallback(() => {
+    setTimeout(() => {
+      const pollInterval = setInterval(async () => {
+        try {
+          const r = await axios.get(`${API}/updates/result`, { headers });
+          if (r.data.has_result) {
+            setUpdateResult(r.data.result);
+            clearInterval(pollInterval);
+            setInstalling(false);
+            setInstallingTarget('');
+          }
+        } catch {
+          // Backend might be restarting — keep polling
+        }
+      }, 5000);
+      setTimeout(() => {
+        clearInterval(pollInterval);
+        setInstalling(false);
+        setInstallingTarget('');
+      }, 180000);
+    }, 10000);
+  }, [headers]);
+
   const handleInstallUpdate = async (assetFilename, targetVersion) => {
     if (!window.confirm(
       `Update auf v${targetVersion} installieren?\n\n` +
@@ -276,6 +314,7 @@ export default function AdminSystem() {
       `Laufzeitdaten (Datenbank, Chrome-Profil, .env) werden NICHT ueberschrieben.`
     )) return;
     setInstalling(true);
+    setInstallingTarget(targetVersion);
     try {
       const res = await axios.post(
         `${API}/updates/install?asset_filename=${encodeURIComponent(assetFilename)}&target_version=${encodeURIComponent(targetVersion)}`,
@@ -283,27 +322,77 @@ export default function AdminSystem() {
         { headers }
       );
       toast.success(res.data.message || 'Update gestartet');
-      // Poll for result after a delay
-      setTimeout(() => {
-        const pollInterval = setInterval(async () => {
-          try {
-            const r = await axios.get(`${API}/updates/result`, { headers });
-            if (r.data.has_result) {
-              setUpdateResult(r.data.result);
-              clearInterval(pollInterval);
-              setInstalling(false);
-            }
-          } catch {
-            // Backend might be restarting — keep polling
-          }
-        }, 5000);
-        // Stop polling after 3 minutes
-        setTimeout(() => { clearInterval(pollInterval); setInstalling(false); }, 180000);
-      }, 10000);
+      beginUpdateResultPolling();
     } catch (err) {
       const detail = err.response?.data?.detail || 'Installation fehlgeschlagen';
       toast.error(detail);
       setInstalling(false);
+      setInstallingTarget('');
+    }
+  };
+
+  const handleDirectInstallRelease = async (release) => {
+    const windowsAsset = getPreferredWindowsAsset(release);
+    if (!windowsAsset) {
+      toast.error('Kein installierbares Windows-Paket in diesem Release gefunden');
+      return;
+    }
+
+    if (!window.confirm(
+      `Update auf v${release.version} direkt installieren?\n\n` +
+      `Ablauf: Backup -> Download -> Validierung -> Installation -> Neustart.\n` +
+      `Datenbank, Chrome-Profile und .env bleiben erhalten.`
+    )) return;
+
+    setInstalling(true);
+    setInstallingTarget(release.version);
+
+    try {
+      const prepRes = await axios.post(`${API}/updates/prepare?target_version=${encodeURIComponent(release.version)}`, {}, { headers });
+      setUpdatePrep(prepRes.data);
+
+      const dlRes = await axios.post(
+        `${API}/updates/download?asset_url=${encodeURIComponent(windowsAsset.api_url || windowsAsset.download_url)}&asset_name=${encodeURIComponent(windowsAsset.name)}`,
+        {},
+        { headers }
+      );
+
+      const downloadId = dlRes.data.download_id;
+      setDownloading(downloadId);
+      setDownloadProgress({ status: 'downloading', percent: 0, asset_name: windowsAsset.name });
+
+      let finalProgress = null;
+      for (let attempt = 0; attempt < 240; attempt += 1) {
+        const progressRes = await axios.get(`${API}/updates/download/${downloadId}`, { headers });
+        finalProgress = progressRes.data;
+        setDownloadProgress(finalProgress);
+        if (finalProgress.status === 'completed') break;
+        if (finalProgress.status === 'failed') {
+          throw new Error(finalProgress.error || 'Download fehlgeschlagen');
+        }
+        await wait(1500);
+      }
+
+      if (!finalProgress || finalProgress.status !== 'completed') {
+        throw new Error('Download-Timeout');
+      }
+
+      setDownloading(null);
+      await fetchDownloads();
+
+      const installRes = await axios.post(
+        `${API}/updates/install?asset_filename=${encodeURIComponent(windowsAsset.name)}&target_version=${encodeURIComponent(release.version)}`,
+        {},
+        { headers }
+      );
+
+      toast.success(installRes.data.message || `Update v${release.version} gestartet`);
+      beginUpdateResultPolling();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || err.message || 'Direkt-Installation fehlgeschlagen');
+      setInstalling(false);
+      setInstallingTarget('');
+      setDownloading(null);
     }
   };
 
@@ -446,9 +535,9 @@ export default function AdminSystem() {
 
   return (
     <AdminPage
-      eyebrow="Maintenance & recovery"
+      eyebrow="System & Updates"
       title={t('system')}
-      description="Host-nahe Wartungsfläche für Updates, Backups, Diagnostics und Device Ops. Anders als Health zeigt diese Seite nicht primär Laufzeit-Signale, sondern die Eingriffe und Artefakte, die ein Operator im Problemfall wirklich braucht."
+      description="Updates installieren, Backups verwalten und den Board-PC im Griff behalten — ohne Wartungsroman in der Oberfläche."
       actions={
         <div className="flex flex-wrap items-center gap-2">
           <AdminStatusPill tone="blue">
@@ -493,27 +582,28 @@ export default function AdminSystem() {
       </AdminStatsGrid>
 
       <AdminSection
-        title="Wartungslogik dieser Seite"
-        description="Klare Trennung statt UI-Dopplung."
+        title="Schnellzugriff"
+        description="Die wichtigsten Wartungswege ohne Umwege."
         actions={
           <div className="flex flex-wrap gap-2 text-xs">
-            <AdminStatusPill tone="blue">Health = Diagnose</AdminStatusPill>
-            <AdminStatusPill tone="amber">System = Eingriffe</AdminStatusPill>
+            <AdminStatusPill tone="blue">Diagnose</AdminStatusPill>
+            <AdminStatusPill tone="amber">Updates</AdminStatusPill>
+            <AdminStatusPill tone="violet">Backups</AdminStatusPill>
           </div>
         }
       >
         <div className="grid gap-3 lg:grid-cols-3 text-sm leading-6 text-zinc-400">
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-            <p className="font-medium text-white">Updates</p>
-            GitHub-basierter Update-Flow ist optional. Wenn kein Repo konfiguriert ist, bleibt dieser Tab bewusst eine nüchterne Wartungsansicht statt falscher One-click-Magie.
+            <p className="font-medium text-white">Direkt aktualisieren</p>
+            Neue Versionen können hier geprüft, geladen und direkt installiert werden — mit Backup davor.
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-            <p className="font-medium text-white">Backups & Logs</p>
-            Hier liegen die verwaltbaren Artefakte: DB-Backups, App-Backups, Download-Pakete und das exportierbare Support-Bundle mit Laufzeit-Snapshots.
+            <p className="font-medium text-white">Backups & Support</p>
+            App-Backups, Downloads und das Support-Bundle liegen gebündelt an einer Stelle.
           </div>
           <div className="rounded-2xl border border-zinc-800 bg-zinc-900/70 p-4">
-            <p className="font-medium text-white">Host-Aktionen</p>
-            Bewusste Host-Eingriffe leben jetzt gesammelt unter <strong>Device Ops</strong>, damit Diagnose, Inventar und echte Aktionen nicht mehr doppelt oder widersprüchlich verteilt sind.
+            <p className="font-medium text-white">Device Ops</p>
+            Neustart, Autodarts, Shell und Host-Aktionen bleiben gesammelt unter Device Ops.
           </div>
         </div>
       </AdminSection>
@@ -639,8 +729,8 @@ export default function AdminSystem() {
                         <span className="text-2xl font-mono text-white font-bold" data-testid="update-current-version">
                           v{updates?.current_version || '1.0.0'}
                         </span>
-                        <p className="text-xs text-emerald-500/80 mt-1 font-mono" data-testid="update-build-tag">
-                          Build: production-hardened | Update-System aktiv
+                        <p className="mt-1 text-xs font-mono text-emerald-500/80" data-testid="update-build-tag">
+                          Release-Kanal: stable · Update-System aktiv
                         </p>
                       </div>
                     </div>
@@ -683,9 +773,9 @@ export default function AdminSystem() {
 
                 {/* New Version Available */}
                 {githubReleases?.update_available && (
-                  <div className="p-4 bg-emerald-500/10 border border-emerald-500/30 rounded-sm" data-testid="update-available-banner">
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1">
+                  <div className="rounded-3xl border border-emerald-500/30 bg-emerald-500/10 p-5" data-testid="update-available-banner">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="min-w-0 flex-1">
                         <p className="text-emerald-400 font-medium flex items-center gap-2 text-lg">
                           <ArrowUpCircle className="w-5 h-5" />
                           v{githubReleases.latest_version} verfuegbar
@@ -693,15 +783,30 @@ export default function AdminSystem() {
                         <p className="text-sm text-zinc-400 mt-1">{githubReleases.latest_name}</p>
                         <ChangelogBlock body={githubReleases.latest_body} />
                       </div>
-                      <Button
-                        onClick={() => handlePrepareUpdate(githubReleases.latest_version)}
-                        disabled={preparingUpdate}
-                        className="bg-emerald-600 hover:bg-emerald-700 text-white flex-shrink-0"
-                        data-testid="prepare-update-btn"
-                      >
-                        <ShieldCheck className="w-4 h-4 mr-2" />
-                        {preparingUpdate ? 'Vorbereiten...' : 'Update vorbereiten'}
-                      </Button>
+                      <div className="flex flex-col gap-2 sm:flex-row xl:flex-col xl:items-stretch">
+                        <Button
+                          onClick={() => handleDirectInstallRelease({
+                            version: githubReleases.latest_version,
+                            assets: githubReleases.latest_assets || [],
+                          })}
+                          disabled={installing || rollbackInProgress || preparingUpdate || downloading}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                          data-testid="direct-install-latest-btn"
+                        >
+                          <ArrowUpCircle className="w-4 h-4 mr-2" />
+                          {installing && installingTarget === githubReleases.latest_version ? 'Installiert...' : 'Jetzt installieren'}
+                        </Button>
+                        <Button
+                          onClick={() => handlePrepareUpdate(githubReleases.latest_version)}
+                          disabled={preparingUpdate || installing}
+                          variant="outline"
+                          className="border-zinc-700 text-zinc-300 hover:text-white"
+                          data-testid="prepare-update-btn"
+                        >
+                          <ShieldCheck className="w-4 h-4 mr-2" />
+                          {preparingUpdate ? 'Vorbereiten...' : 'Details / Pakete'}
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -741,13 +846,13 @@ export default function AdminSystem() {
                         <p className="text-xs text-zinc-500 uppercase tracking-wider mb-2">Verfuegbare Pakete</p>
                         <div className="space-y-2">
                           {updatePrep.download_links.map((dl, i) => (
-                            <div key={i} className="flex items-center justify-between p-2 bg-zinc-800/50 rounded-sm">
-                              <div className="flex items-center gap-2 min-w-0">
+                            <div key={i} className="flex flex-col gap-3 rounded-2xl bg-zinc-800/50 p-3 lg:flex-row lg:items-center lg:justify-between">
+                              <div className="flex min-w-0 items-center gap-2">
                                 <FileDown className="w-4 h-4 text-zinc-500 flex-shrink-0" />
-                                <span className="text-sm text-zinc-300 truncate">{dl.label}</span>
+                                <span className="min-w-0 break-words text-sm text-zinc-300">{dl.label}</span>
                                 <span className="text-xs text-zinc-600">{formatBytes(dl.size)}</span>
                               </div>
-                              <div className="flex gap-2 flex-shrink-0">
+                              <div className="flex flex-wrap gap-2 flex-shrink-0">
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -841,20 +946,16 @@ export default function AdminSystem() {
                     </p>
                     <div className="space-y-2">
                       {downloadedAssets.map((a) => {
-                        // Extract the full package version, including optional suffixes.
-                        // Example: darts-kiosk-v4.0.0-recovery-windows.zip → 4.0.0-recovery
-                        const versionMatch = a.name?.match(/^darts-kiosk-v(.+?)-(windows|linux|source)(?:\.|$)/i);
-                        const fallbackMatch = a.name?.match(/v?([\d.]+)/);
-                        const assetVersion = versionMatch?.[1] || fallbackMatch?.[1] || '';
+                        const assetVersion = parseAssetVersion(a.name);
                         const installable = Boolean(assetVersion && /-windows\./i.test(a.name || ''));
                         return (
-                          <div key={a.name} className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid={`downloaded-${a.name}`}>
-                            <div className="flex items-center gap-2 min-w-0">
+                          <div key={a.name} className="flex flex-col gap-3 rounded-2xl bg-zinc-800/50 p-3 lg:flex-row lg:items-center lg:justify-between" data-testid={`downloaded-${a.name}`}>
+                            <div className="flex min-w-0 items-center gap-2">
                               <Package className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                              <span className="text-sm text-white font-mono truncate">{a.name}</span>
+                              <span className="min-w-0 break-all text-sm text-white font-mono">{a.name}</span>
                               <span className="text-xs text-zinc-500">{formatBytes(a.size)}</span>
                             </div>
-                            <div className="flex gap-2 items-center">
+                            <div className="flex flex-wrap gap-2 items-center lg:justify-end">
                               <span className="text-xs text-zinc-600">{formatDate(a.downloaded_at)}</span>
                               {installable ? (
                                 <Button
@@ -865,7 +966,7 @@ export default function AdminSystem() {
                                   data-testid={`install-btn-${a.name}`}
                                 >
                                   <ArrowUpCircle className="w-3 h-3 mr-1" />
-                                  {installing ? 'Installiert...' : `v${assetVersion} installieren`}
+                                  {installing && installingTarget === assetVersion ? 'Installiert...' : `v${assetVersion} installieren`}
                                 </Button>
                               ) : (
                                 <AdminStatusPill tone="amber">Manuell / nicht direkt installierbar</AdminStatusPill>
@@ -894,23 +995,34 @@ export default function AdminSystem() {
                       {githubReleases.releases.map((r) => (
                         <div key={r.tag} data-testid={`release-${r.tag}`}>
                           <div
-                            className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm cursor-pointer hover:bg-zinc-800/70 transition-colors"
+                            className="flex flex-col gap-3 rounded-2xl bg-zinc-800/50 p-3 transition-colors hover:bg-zinc-800/70 lg:flex-row lg:items-center lg:justify-between"
                             onClick={() => setExpandedRelease(expandedRelease === r.tag ? null : r.tag)}
                           >
-                            <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <div className="flex min-w-0 items-center gap-3 flex-1">
                               {r.is_current
                                 ? <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
                                 : r.is_newer
                                   ? <ArrowUpCircle className="w-4 h-4 text-amber-500 flex-shrink-0" />
                                   : <Clock className="w-4 h-4 text-zinc-600 flex-shrink-0" />
                               }
-                              <span className="text-white font-mono">{r.tag}</span>
-                              <span className="text-xs text-zinc-500 truncate">{r.name}</span>
+                              <span className="break-all text-white font-mono">{r.tag}</span>
+                              <span className="min-w-0 break-words text-xs text-zinc-500">{r.name}</span>
                               {r.is_prerelease && <span className="text-xs px-2 py-0.5 rounded bg-amber-500/20 text-amber-400">pre</span>}
                               {r.is_current && <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">aktiv</span>}
                               {r.published_at && <span className="text-xs text-zinc-600 ml-auto">{formatDate(r.published_at)}</span>}
                             </div>
-                            <div className="flex items-center gap-2 ml-2">
+                            <div className="flex flex-wrap items-center gap-2 lg:ml-2">
+                              {r.is_newer && !r.is_prerelease && getPreferredWindowsAsset(r) && (
+                                <Button
+                                  size="sm"
+                                  onClick={(e) => { e.stopPropagation(); handleDirectInstallRelease(r); }}
+                                  disabled={installing || rollbackInProgress || preparingUpdate || downloading}
+                                  className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+                                >
+                                  <ArrowUpCircle className="w-3 h-3 mr-1" />
+                                  {installing && installingTarget === r.version ? 'Installiert...' : 'Jetzt installieren'}
+                                </Button>
+                              )}
                               {r.is_newer && !r.is_prerelease && (
                                 <Button
                                   size="sm"
@@ -919,7 +1031,7 @@ export default function AdminSystem() {
                                   disabled={preparingUpdate}
                                   className="border-zinc-700 text-zinc-400 hover:text-white text-xs"
                                 >
-                                  Update
+                                  Pakete
                                 </Button>
                               )}
                               {expandedRelease === r.tag

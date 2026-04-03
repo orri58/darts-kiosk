@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration from environment
 _AGENT_HOST = os.environ.get("AGENT_HOST", "127.0.0.1")
-_AGENT_PORT = os.environ.get("AGENT_PORT", "8002")
+_AGENT_PORT = os.environ.get("AGENT_PORT", "8003")
 _AGENT_SECRET = os.environ.get("AGENT_SECRET", "")
 _AGENT_TIMEOUT = 3.0  # seconds — hard limit per user requirement
 

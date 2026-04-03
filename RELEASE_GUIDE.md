@@ -18,7 +18,7 @@ The goal is simple: **one source of truth for versioning and packaging**, with t
 Current example:
 
 ```text
-4.0.0-recovery
+4.1.0
 ```
 
 That value is consumed by:
@@ -35,7 +35,8 @@ echo "4.0.1" > VERSION
 ```
 
 Use plain semver when possible (`MAJOR.MINOR.PATCH`).
-If a release needs an explicit suffix during stabilization, a suffix like `-rc1` or `-recovery` is acceptable as long as the Git tag and uploaded assets use the same string.
+Use stable semver for product releases (`4.1.0`, `4.1.1`, `4.2.0`).
+Only use suffixes for real pre-releases (`-rc.1`, `-beta.1`) and keep the Git tag + uploaded assets identical.
 
 ---
 
@@ -74,9 +75,9 @@ darts-kiosk-v{VERSION}-source.zip
 Example for the current repo state:
 
 ```text
-darts-kiosk-v4.0.0-recovery-windows.zip
-darts-kiosk-v4.0.0-recovery-linux.tar.gz
-darts-kiosk-v4.0.0-recovery-source.zip
+darts-kiosk-v4.1.0-windows.zip
+darts-kiosk-v4.1.0-linux.tar.gz
+darts-kiosk-v4.1.0-source.zip
 ```
 
 ---
@@ -130,14 +131,14 @@ bash release/build_release.sh
 ### Step 2 — commit the version bump
 
 ```bash
-git add VERSION
-git commit -m "Bump version to v4.0.1"
+git add VERSION CHANGELOG.md release/source/RELEASE_NOTES.md
+git commit -m "Release v4.1.0"
 ```
 
 ### Step 3 — tag the release
 
 ```bash
-git tag v4.0.1
+git tag v4.1.0
 git push origin main --tags
 ```
 
@@ -167,9 +168,9 @@ The admin UI update flow is intentionally optional and maintenance-focused.
 Typical operator flow:
 1. **System → Updates**
 2. check GitHub releases
-3. prepare update
-4. download a release asset to the local machine
-5. install from the downloaded Windows package
+3. use **Jetzt installieren** for the direct Windows path, or inspect packages manually if needed
+4. let the app create a backup + download + validate the release package
+5. let the updater restart + verify the install
 6. if needed, roll back from an app backup
 
 Protected runtime state is not supposed to be overwritten by normal app updates:
@@ -184,12 +185,11 @@ Protected runtime state is not supposed to be overwritten by normal app updates:
 ## 6. Windows board-PC notes
 
 The intended Windows operator path is:
-1. `check_requirements.bat`
-2. `setup_windows.bat`
-3. edit `backend\.env`
-4. `setup_profile.bat`
-5. `start.bat`
-6. `smoke_test.bat`
+1. `install.bat`
+2. edit `backend\.env`
+3. `setup_profile.bat`
+4. `start.bat`
+5. `smoke_test.bat`
 
 Important current assumptions:
 - frontend install on Windows now uses **npm**, matching the shared release build

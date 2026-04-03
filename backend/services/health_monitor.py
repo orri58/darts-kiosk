@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from dataclasses import dataclass, field, asdict
 from collections import deque
+from urllib.parse import urlparse
 import httpx
 
 logger = logging.getLogger(__name__)
@@ -142,8 +143,11 @@ class HealthMonitor:
 
         try:
             start_time = datetime.now(timezone.utc)
+            normalized_base = self._normalize_agent_url(agent_url)
             async with httpx.AsyncClient(timeout=self.AGENT_TIMEOUT) as client:
-                response = await client.get(f"{agent_url}/api/agent/health")
+                response = await client.get(f"{normalized_base}/status")
+                if response.status_code == 404:
+                    response = await client.get(f"{normalized_base}/api/agent/health")
             latency = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
 
             if response.status_code == 200:
@@ -160,6 +164,16 @@ class HealthMonitor:
             health.consecutive_failures += 1
             if health.consecutive_failures >= 3:
                 logger.warning(f"Agent {board_id} appears offline: {e}")
+
+    @staticmethod
+    def _normalize_agent_url(agent_url: str) -> str:
+        url = (agent_url or "").strip()
+        if not url:
+            return "http://127.0.0.1:8003"
+        parsed = urlparse(url)
+        if not parsed.scheme:
+            url = f"http://{url.lstrip('/')}"
+        return url.rstrip('/')
 
     def record_observer_event(self, success: bool, error: str = "", screenshot_path: Optional[str] = None):
         """Record an observer event (success or failure)."""

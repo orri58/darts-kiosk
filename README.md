@@ -2,6 +2,8 @@
 
 Local-first darts board control and kiosk software for venue operation.
 
+Current product release line: **v4.1.0**
+
 The current repo state is centered on a **protected local core**:
 - local auth, boards, sessions, settings, admin UI
 - observer-first Autodarts integration via Playwright/Chrome
@@ -14,6 +16,7 @@ There is also an **optional central adapter ring** in the tree, but it is **not 
 ## Current reality
 
 What is in good shape now:
+- one-click Windows bring-up via `release/windows/install.bat`
 - board unlock / lock flow
 - local session persistence
 - authoritative match start/finish handling for the protected local core
@@ -114,6 +117,7 @@ REACT_APP_BACKEND_URL=http://localhost:8001 npm start
 ## Windows operator path
 
 For a real board PC, the intended operator flow is via:
+- `release/windows/install.bat`
 - `release/windows/check_requirements.bat`
 - `release/windows/setup_windows.bat`
 - `release/windows/setup_profile.bat`

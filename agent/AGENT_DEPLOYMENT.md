@@ -1,5 +1,5 @@
 # Darts Kiosk Windows Agent — Deployment Guide
-## Version 3.4.5
+## Version 4.1.0
 
 ---
 
@@ -28,14 +28,14 @@ Der Agent liest das Secret automatisch aus `backend/.env`:
 ```
 AGENT_SECRET=dein-geheimes-passwort
 ```
-Optional kann auch `AGENT_PORT=8002` gesetzt werden (Standard: 8002).
+Optional kann auch `AGENT_PORT=8003` gesetzt werden (Standard: 8003).
 
 ## 3. Manueller Start (Test)
 ```cmd
 cd agent
 start_agent.bat
 ```
-Pruefe im Browser: `http://127.0.0.1:8002/status`
+Pruefe im Browser: `http://127.0.0.1:8003/status`
 
 ## 4. Autostart einrichten (Produktion)
 
@@ -96,7 +96,7 @@ Wenn der Agent nicht laeuft:
 | Problem | Loesung |
 |---|---|
 | Agent startet nicht | `data/logs/agent.log` pruefen |
-| Port belegt | `AGENT_PORT=8003` in backend/.env setzen |
+| Port anpassen | `AGENT_PORT=8003` in backend/.env setzen oder auf freien Port wechseln |
 | Doppelte Instanz | `data/logs/agent.lock` loeschen, Agent neu starten |
 | Task nicht registriert | `python setup_autostart.py` als Admin ausfuehren |
 | Kein Python gefunden | `.venv` erstellen oder Python zum PATH hinzufuegen |

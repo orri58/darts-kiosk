@@ -1,40 +1,46 @@
-# Darts Kiosk — Release Notes v4.0.0-recovery
+# Darts Kiosk — Release Notes v4.1.0
 
-## Local-first hardening / release polish
+## Productization pass: installer, update UX, admin cleanup
 
-This release is not about adding new central-heavy product scope.
-It is mainly a cleanup and stabilization release around the current board-PC baseline.
+Darts Kiosk 4.1.0 is a product-shaping release.
+The focus is not on adding new central-heavy scope, but on making the local board-PC runtime feel and behave more like a real installable product.
 
-### Highlights
+## Highlights
 
-#### 1. Local operator surface is clearer
-- admin runtime surfaces are more deliberately split between **Health**, **System**, and **Device Ops**
-- diagnostics and support-bundle contents are visible before export
-- operator messaging is more explicit about what is local-first vs optional
+### 1. Better Windows installation path
+- new `release/windows/install.bat` provides a one-click bootstrap for a board PC
+- `setup_windows.bat` now builds the frontend during setup instead of stopping at dependency install
+- Windows setup/runtime now aligns around the real local stack: backend, agent, frontend build, logs, downloads, and app backups
+- generated Windows bundle examples now include the correct GitHub repo and agent port defaults
 
-#### 2. Credits-only active flow stays the baseline
-- active local unlock flow stays credits-first
-- authoritative billing still happens on real match start using the actual player situation
-- older time/game wording was further reduced where it was misleading in the main operator path
+### 2. Agent startup and health are cleaner
+- Windows startup now prepares and launches the agent more deliberately
+- agent defaults now align on port `8003`
+- agent health monitoring now checks the actual status endpoint and normalizes malformed agent URLs
+- pairing code visibility is now conditional instead of always-on kiosk clutter
 
-#### 3. Packaging/release surface is less noisy
-- Windows setup now installs frontend dependencies via **npm**, matching the shared release build
-- release automation is aligned around the shared `release/build_release.sh` script
-- stale version-pinned release docs/examples were refreshed to the current repo/product shape
-- Windows/manual deployment docs now describe the local-first board-PC path instead of implying central dependency as the norm
+### 3. Update flow is closer to a real product
+- System → Updates now exposes a direct **Jetzt installieren** path for Windows release packages
+- the flow is now framed as: backup → download → validate → install → restart
+- trailing-slash repo config issues (`owner/repo/`) no longer break update checks
 
-#### 4. Diagnostics/operator polish
-- start/smoke helper messaging now points operators at the right logs
-- Windows helper output emphasizes that local play does not depend on external reachability
-- agent runtime/version output now follows the repo `VERSION` file instead of stale hardcoded version strings
+### 4. Operator UI is less noisy
+- admin sidebar is slimmer and less label-heavy
+- long titles/descriptions wrap more safely instead of crashing into edges
+- dashboard control area keeps boards visible after unlock so top-ups are immediate
+- system/update surfaces push the primary action forward instead of burying it in explanation text
+- kiosk lockscreen removes admin/footer noise and shows pairing only when needed
 
-## Validation performed for this repo-side pass
+### 5. Board bootstrap behavior is saner
+- startup no longer recreates `BOARD-2`
+- the local-first default is a single seeded board (`BOARD-1`), with additional boards created intentionally by the operator
+
+## Validation performed for this release
 
 Executed successfully:
 
 ```bash
 source .venv/bin/activate
-python -m compileall backend agent
 python -m pytest -q \
   backend/tests/test_phase34_autodarts_triggers.py \
   backend/tests/test_phase34_credits_pricing.py \
@@ -45,15 +51,13 @@ cd .. && bash release/build_release.sh
 ```
 
 Observed result:
-- backend + agent compile cleanly
 - focused backend suite passed
 - frontend production build passed cleanly
 - release artifacts were generated successfully for Windows/Linux/source
 
-## Still not proven by this repo-side release pass
+## Still not proven by this repo-side pass
 
 Real-machine validation is still required for:
-- actual Windows board-PC installation
-- Autodarts login/profile handling on the target machine
-- kiosk/window focus behavior on real hardware
-- install/update/rollback behavior using the packaged release on a real machine
+- a full Windows board-PC installation from a fresh host
+- long-running Autodarts desktop/session behavior on venue hardware
+- live update/rollback behavior on a real machine after the new direct-install flow

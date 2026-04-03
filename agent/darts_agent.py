@@ -51,7 +51,7 @@ AGENT_VERSION = os.environ.get("DARTS_KIOSK_VERSION") or _read_agent_version()
 IS_WINDOWS = platform.system() == "Windows"
 
 # Defaults (overridable via CLI args or env)
-DEFAULT_PORT = 8002
+DEFAULT_PORT = 8003
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8001"
 

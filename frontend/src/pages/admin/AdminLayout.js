@@ -106,7 +106,7 @@ export default function AdminLayout() {
 
       <aside
         className={`
-          fixed top-0 left-0 z-40 flex h-full w-72 transform flex-col border-r border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.98)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] transition-transform duration-200
+          fixed top-0 left-0 z-40 flex h-full w-64 transform flex-col border-r border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.98)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] transition-transform duration-200
           lg:translate-x-0
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
@@ -124,20 +124,9 @@ export default function AdminLayout() {
               {isAdmin ? 'Admin' : 'Staff'}
             </AdminStatusPill>
           </div>
-
-          <div className="mt-4 rounded-2xl border border-[rgb(var(--color-border-rgb)/0.78)] bg-[rgb(var(--color-surface-rgb)/0.72)] p-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-[var(--color-text)]">
-              <MonitorSpeaker className="h-4 w-4 text-[var(--color-primary)]" />
-              Operator-Fokus
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <AdminStatusPill tone="emerald">Local mode</AdminStatusPill>
-              <AdminStatusPill tone="blue">Kiosk ready</AdminStatusPill>
-              {isAdmin && <AdminStatusPill tone="amber">Config write</AdminStatusPill>}
-            </div>
-            <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">
-              Schnell freischalten, Credits nachbuchen, Boards prüfen. Der Rest steht hinten an.
-            </p>
+          <div className="mt-4 flex items-center gap-2 text-xs text-[var(--color-text-secondary)]">
+            <MonitorSpeaker className="h-4 w-4 text-[var(--color-primary)]" />
+            <span className="truncate">Schnell freischalten, nachbuchen, prüfen.</span>
           </div>
         </div>
 
@@ -171,27 +160,6 @@ export default function AdminLayout() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <span className="block font-medium truncate">{t(item.labelKey)}</span>
-                          <span className="block text-xs text-[var(--color-text-muted)] truncate">
-                            {item.path === '/admin'
-                                ? 'Live-Status & Schnellaktionen'
-                              : item.path === '/admin/boards'
-                                ? 'Boards, Ziele und Kiosk'
-                              : item.path === '/admin/revenue'
-                                  ? 'Umsatz und Trends'
-                                  : item.path === '/admin/reports'
-                                    ? 'Session-Reports & CSV'
-                                    : item.path === '/admin/settings'
-                                      ? 'Branding, Pricing, Triggers'
-                                      : item.path === '/admin/leaderboard'
-                                        ? 'Spielerbindung & Rankings'
-                                        : item.path === '/admin/users'
-                                          ? 'Logins und Rollen'
-                                          : item.path === '/admin/discovery'
-                                            ? 'LAN-Discovery & Pairing'
-                                            : item.path === '/admin/health'
-                                              ? 'Runtime, Agents & Diagnose'
-                                              : 'Wartung, Updates & Hostzugriff'}
-                          </span>
                         </div>
                       </NavLink>
                     ))}

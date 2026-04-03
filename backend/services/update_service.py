@@ -27,7 +27,7 @@ def _read_version() -> str:
         return os.environ.get('APP_VERSION', '0.0.0')
 
 CURRENT_VERSION = _read_version()
-GITHUB_REPO = os.environ.get('GITHUB_REPO', '')
+GITHUB_REPO = os.environ.get('GITHUB_REPO', '').strip().strip('/')
 GITHUB_API = "https://api.github.com"
 DOWNLOADS_DIR = DATA_DIR / 'downloads'
 DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
@@ -73,13 +73,17 @@ class UpdateService:
 
     @staticmethod
     def _parse_version(v: str) -> tuple:
+        import re
+
         clean = v.lstrip('v').strip()
+        match = re.match(r'^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$', clean)
+        if match:
+            return tuple(int(part) for part in match.groups())
+
         parts = []
         for p in clean.split('.'):
-            try:
-                parts.append(int(p))
-            except ValueError:
-                parts.append(0)
+            m = re.match(r'^(\d+)', p)
+            parts.append(int(m.group(1)) if m else 0)
         while len(parts) < 3:
             parts.append(0)
         return tuple(parts[:3])

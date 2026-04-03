@@ -35,18 +35,18 @@ export function AdminPage({ eyebrow = 'Operator Console', title, description, ac
     <div className="space-y-5" data-testid="admin-page-shell">
       <div className="rounded-[1.75rem] border border-[rgb(var(--color-border-rgb)/0.86)] bg-[radial-gradient(circle_at_top_left,rgb(var(--color-primary-rgb)/0.16),transparent_28%),linear-gradient(180deg,rgb(var(--color-surface-rgb)/0.94),rgb(var(--color-bg-rgb)/0.98))] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.35)] md:p-6">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="space-y-3">
+          <div className="min-w-0 space-y-3">
             <span className="inline-flex items-center rounded-full border border-[rgb(var(--color-primary-rgb)/0.2)] bg-[rgb(var(--color-primary-rgb)/0.1)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">
               {eyebrow}
             </span>
-            <div>
-              <h1 className="text-2xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] md:text-4xl">{title}</h1>
+            <div className="min-w-0">
+              <h1 className="break-words text-2xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] md:text-4xl">{title}</h1>
               {description && (
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--color-text-secondary)] md:text-[15px]">{description}</p>
+                <p className="mt-2 max-w-3xl break-words text-sm leading-6 text-[var(--color-text-secondary)] md:text-[15px]">{description}</p>
               )}
             </div>
           </div>
-          {actions ? <div className="flex flex-wrap items-center gap-3">{actions}</div> : null}
+          {actions ? <div className="flex flex-wrap items-center gap-3 lg:justify-end">{actions}</div> : null}
         </div>
       </div>
       {children}
@@ -61,8 +61,8 @@ export function AdminSection({ title, description, actions, children, className,
         <CardHeader className="border-b border-[rgb(var(--color-border-rgb)/0.8)] bg-[rgb(var(--color-bg-rgb)/0.3)] px-5 py-4 md:px-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div className="space-y-1">
-              {title ? <CardTitle className="text-lg text-[var(--color-text)]">{title}</CardTitle> : null}
-              {description ? <p className="text-sm text-[var(--color-text-secondary)]">{description}</p> : null}
+              {title ? <CardTitle className="break-words text-lg text-[var(--color-text)]">{title}</CardTitle> : null}
+              {description ? <p className="break-words text-sm text-[var(--color-text-secondary)]">{description}</p> : null}
             </div>
             {actions ? <div className="flex flex-wrap items-center gap-2">{actions}</div> : null}
           </div>
@@ -88,8 +88,8 @@ export function AdminStatCard({ icon: Icon, label, value, hint, tone = 'neutral'
         ) : null}
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[var(--color-text-secondary)]">{label}</p>
-          <p className="mt-2 truncate text-3xl font-semibold text-[var(--color-text)]">{value}</p>
-          {hint ? <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{hint}</p> : null}
+          <p className="mt-2 break-words text-2xl font-semibold text-[var(--color-text)] sm:text-3xl">{value}</p>
+          {hint ? <p className="mt-1 break-words text-sm text-[var(--color-text-secondary)]">{hint}</p> : null}
         </div>
       </div>
     </div>
@@ -144,10 +144,10 @@ export function AdminLinkTile({ icon: Icon, title, description, href, onClick, t
       ) : null}
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-          <p className="font-medium text-[var(--color-text)]">{title}</p>
+          <p className="break-words font-medium text-[var(--color-text)]">{title}</p>
           <ChevronRight className="h-4 w-4 text-[var(--color-text-muted)] transition group-hover:translate-x-0.5 group-hover:text-[var(--color-primary)]" />
           </div>
-        <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{description}</p>
+        <p className="mt-1 break-words text-sm leading-6 text-[var(--color-text-secondary)]">{description}</p>
         <p className="mt-3 text-xs font-semibold uppercase tracking-[0.24em] text-[var(--color-primary)]">{cta}</p>
         </div>
       </Comp>

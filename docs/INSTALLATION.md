@@ -37,6 +37,7 @@ Local play should still work without the central server once the machine is set 
 
 Windows operators mainly use:
 - `release/windows/check_requirements.bat`
+- `release/windows/install.bat`
 - `release/windows/setup_windows.bat`
 - `release/windows/setup_profile.bat`
 - `release/windows/start.bat`
@@ -47,12 +48,12 @@ Windows operators mainly use:
 
 From the repo root on the Windows machine:
 
-1. Run `release/windows/check_requirements.bat`
-2. Run `release/windows/setup_windows.bat`
-3. Edit `backend\.env`
+1. Easiest path: run `release/windows/install.bat`
+2. If you want the manual path: `release/windows/check_requirements.bat` → `release/windows/setup_windows.bat`
+3. Review `backend\.env`
 4. Run `release/windows/setup_profile.bat`
 5. Run `release/windows/start.bat`
-6. Open `http://localhost:3000/setup` (or just `http://localhost:3000/admin/login` and let it redirect)
+6. Open `http://localhost:8001/setup` (or `http://localhost:8001/admin/login` and let it redirect)
 7. Complete the setup wizard
 8. Run `release/windows/smoke_test.bat`
 
@@ -85,7 +86,7 @@ Notes:
 
 ## Board assignment
 
-The app seeds `BOARD-1` and `BOARD-2` on first startup.
+The app now seeds only the local default board (`BOARD-1`) on first startup.
 
 Recommended flow:
 1. decide which physical board this PC owns
@@ -96,6 +97,10 @@ Recommended flow:
 6. rename the board/location in Admin if needed
 
 If you want a different board id, create/update it in Admin first, then align `BOARD_ID` in `backend\.env`.
+
+Important current default runtime values:
+- `AGENT_PORT=8003`
+- `GITHUB_REPO=orri58/darts-kiosk`
 
 ## Autodarts setup
 
@@ -178,10 +183,10 @@ If this machine runs directly from a git checkout:
 If your release bundle ships `update.bat`, use that bundle’s documented flow and still finish with `smoke_test.bat`.
 
 Admin-side update flow expectation:
-1. download or select the package
-2. create a pre-update app backup
-3. stage + validate the package
-4. launch the updater
+1. check for updates in **System → Updates**
+2. use **Jetzt installieren** for the direct Windows flow, or inspect packages manually if needed
+3. the system creates an app backup automatically
+4. download + validation + install are prepared for you
 5. let the updater perform restart + health/version check
 6. keep rollback material available until the board passes smoke + operator checks
 
