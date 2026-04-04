@@ -85,6 +85,40 @@ Result:
 - focused backend validation passed (37 tests)
 - frontend production build succeeded
 
+## Latest pass: 4.4.2 release hotfix — fix setup completion + websocket runtime contract
+
+### What changed in this pass
+- fixed a release-blocking setup regression in `backend/routers/admin.py`: setup completion called `is_setup_complete(db)` even though the function accepts no DB argument, causing `/api/setup/complete` to fail with a 500
+- repaired the websocket runtime contract across backend + frontend:
+  - backend now accepts both `/api/ws/boards` and `/api/ws/boards/{board_id}`
+  - legacy non-API aliases `/ws/boards` and `/ws/boards/{board_id}` also work to reduce breakage risk on already-shipped clients
+  - websocket manager now supports both old broadcast call styles (`broadcast(event, data)` and `broadcast(board_id, event, data)`)
+  - websocket payloads now expose both `event` and `type` for compatibility
+  - frontend `useBoardWS` now targets the correct `/api/ws/boards...` path, supports both old/new hook signatures, and forwards `(eventType, data)` to callers as expected
+- removed the lingering reconnect-hook warning in `useBoardWS` by replacing the unstable self-reference with a ref-based reconnect callback path
+- added focused regression tests for:
+  - setup completion calling `is_setup_complete()` without a DB arg
+  - websocket manager support for both global and board-scoped broadcast contracts
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+source .venv/bin/activate
+python -m pytest -q \
+  backend/tests/test_v441_backup_service_exports.py \
+  backend/tests/test_v442_setup_and_ws_contracts.py \
+  backend/tests/test_v430_scheduler_terminal_cleanup.py \
+  backend/tests/test_v440_session_consistency.py
+cd frontend && npm run build
+```
+
+Result:
+- setup completion regression path passed
+- websocket contract regression path passed
+- previous hotfix/stability suites still passed
+- frontend production build passed without the previous websocket hook warning
+
 ## Latest pass: 4.4.1 release hotfix — restore backup service startup contract
 
 ### What changed in this pass

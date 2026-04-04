@@ -4,6 +4,24 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.2] - 2026-04-04
+
+### Fixed
+- Fixed first-run setup completion crashing with `TypeError: is_setup_complete() takes 0 positional arguments but 1 was given`.
+- Repaired the realtime websocket contract across backend and frontend:
+  - backend now accepts both global and board-scoped websocket endpoints
+  - websocket manager now supports both legacy and current broadcast call signatures
+  - websocket payloads now expose both `event` and `type` for compatibility
+  - frontend websocket hook now uses the correct path and forwards `(eventType, data)` correctly to consumers
+- Removed the lingering reconnect-hook warning in `useBoardWS`.
+
+### Validation
+- Backup service export regression suite passed.
+- Setup + websocket contract regression suite passed.
+- Scheduler terminal cleanup regression suite passed.
+- Session consistency detection/repair regression suite passed.
+- Frontend production build passed.
+
 ## [4.4.1] - 2026-04-04
 
 ### Fixed

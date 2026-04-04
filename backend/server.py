@@ -316,16 +316,25 @@ async def get_base_url(request: Request):
 # ===== WebSocket Endpoint for Real-Time Board Status =====
 
 @app.websocket("/api/ws/boards")
-async def ws_boards(ws: WebSocket):
-    """WebSocket endpoint for live board status updates"""
-    await board_ws.connect(ws)
+@app.websocket("/api/ws/boards/{board_id}")
+@app.websocket("/ws/boards")
+@app.websocket("/ws/boards/{board_id}")
+async def ws_boards(ws: WebSocket, board_id: str | None = None):
+    """WebSocket endpoint for live board status updates."""
+    await board_ws.connect(ws, board_id)
     try:
         while True:
-            await ws.receive_text()
+            message = await ws.receive_text()
+            try:
+                payload = json.loads(message)
+            except Exception:
+                payload = None
+            if isinstance(payload, dict) and payload.get("type") == "ping":
+                await ws.send_text(json.dumps({"event": "pong", "type": "pong", "data": {"board_id": board_id}}))
     except WebSocketDisconnect:
         pass
     finally:
-        await board_ws.disconnect(ws)
+        await board_ws.disconnect(ws, board_id)
 
 
 # ===== SPA Catch-All (MUST be last) =====

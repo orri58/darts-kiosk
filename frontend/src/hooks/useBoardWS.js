@@ -3,7 +3,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 function buildWsUrl(boardId) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.host;
-  return `${protocol}//${host}/ws/boards/${encodeURIComponent(boardId)}`;
+  return boardId
+    ? `${protocol}//${host}/api/ws/boards/${encodeURIComponent(boardId)}`
+    : `${protocol}//${host}/api/ws/boards`;
 }
 
 function nextDelay(attempt) {
@@ -12,12 +14,16 @@ function nextDelay(attempt) {
   return Math.max(1000, base + jitter);
 }
 
-export function useBoardWS(boardId, onEvent) {
+export function useBoardWS(boardIdOrHandler, maybeOnEvent) {
+  const boardId = typeof boardIdOrHandler === 'function' ? null : boardIdOrHandler;
+  const onEvent = typeof boardIdOrHandler === 'function' ? boardIdOrHandler : maybeOnEvent;
+
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const staleTimerRef = useRef(null);
   const heartbeatTimerRef = useRef(null);
   const reconnectAttemptRef = useRef(0);
+  const connectRef = useRef(() => {});
   const onEventRef = useRef(onEvent);
   const [connected, setConnected] = useState(false);
   const [transport, setTransport] = useState('polling');
@@ -56,7 +62,7 @@ export function useBoardWS(boardId, onEvent) {
     reconnectTimerRef.current = setTimeout(() => {
       reconnectTimerRef.current = null;
       reconnectAttemptRef.current += 1;
-      connect();
+      connectRef.current();
     }, delay);
   }, [boardId]);
 
@@ -94,8 +100,10 @@ export function useBoardWS(boardId, onEvent) {
       scheduleStaleCheck();
       try {
         const payload = JSON.parse(event.data);
-        if (payload?.type === 'pong' || payload?.type === 'heartbeat') return;
-        onEventRef.current?.(payload);
+        const eventType = payload?.event || payload?.type;
+        const data = payload?.data ?? payload;
+        if (eventType === 'pong' || eventType === 'heartbeat') return;
+        onEventRef.current?.(eventType, data);
       } catch {
         // ignore malformed messages
       }
@@ -115,6 +123,10 @@ export function useBoardWS(boardId, onEvent) {
       scheduleReconnect();
     };
   }, [boardId, scheduleReconnect, scheduleStaleCheck]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     clearTimers();

@@ -202,7 +202,7 @@ async def get_setup_status(db: AsyncSession = Depends(get_db)):
 @router.post("/setup/complete")
 async def complete_first_setup(config: SetupConfig, db: AsyncSession = Depends(get_db)):
     """Complete first-run setup with secure credentials"""
-    if await is_setup_complete(db):
+    if is_setup_complete():
         raise HTTPException(status_code=403, detail="Setup already completed")
     if len(config.admin_password) < 8:
         raise HTTPException(status_code=400, detail="Admin password must be at least 8 characters")
