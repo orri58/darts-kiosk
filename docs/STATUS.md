@@ -85,6 +85,32 @@ Result:
 - focused backend validation passed (37 tests)
 - frontend production build succeeded
 
+## Latest pass: 4.3.0 stability wave 1
+
+### What changed in this pass
+- websocket fanout was hardened so one slow/dead client is less likely to stall the whole realtime path
+- client websocket transport got reconnect backoff and heartbeat behavior
+- server websocket endpoint now understands ping/pong keepalive messages
+- SQLite backups now use native snapshotting plus integrity validation instead of raw live-file copies
+- restore flow validates backup contents before replacing the live database
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+source .venv/bin/activate
+python -m compileall backend
+python -m pytest -q \
+  backend/tests/test_phase56_stability_installation.py \
+  backend/tests/test_phase789_local_core_validation.py
+cd frontend && npm run build
+```
+
+Result:
+- backend compile check passed
+- focused backend validation passed
+- frontend production build succeeded
+
 It is still **not fully production-proven** until somebody does a real Windows + Autodarts validation pass.
 
 ## Latest pass: final hardening + release polish

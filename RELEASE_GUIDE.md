@@ -18,7 +18,7 @@ The goal is simple: **one source of truth for versioning and packaging**, with t
 Current example:
 
 ```text
-4.2.0
+4.3.0
 ```
 
 That value is consumed by:
@@ -75,9 +75,9 @@ darts-kiosk-v{VERSION}-source.zip
 Example for the current repo state:
 
 ```text
-darts-kiosk-v4.2.0-windows.zip
-darts-kiosk-v4.2.0-linux.tar.gz
-darts-kiosk-v4.2.0-source.zip
+darts-kiosk-v4.3.0-windows.zip
+darts-kiosk-v4.3.0-linux.tar.gz
+darts-kiosk-v4.3.0-source.zip
 ```
 
 ---
@@ -132,13 +132,13 @@ bash release/build_release.sh
 
 ```bash
 git add VERSION CHANGELOG.md release/source/RELEASE_NOTES.md
-git commit -m "Release v4.2.0"
+git commit -m "Release v4.3.0"
 ```
 
 ### Step 3 — tag the release
 
 ```bash
-git tag v4.2.0
+git tag v4.3.0
 git push origin main --tags
 ```
 

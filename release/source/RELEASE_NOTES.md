@@ -1,31 +1,27 @@
-# Darts Kiosk — Release Notes v4.2.3
+# Darts Kiosk — Release Notes v4.3.0
 
-## Hardening patch: setup, update extraction, auth boundaries
+## Stability wave 1: safer backups and stronger realtime foundations
 
-Darts Kiosk 4.2.3 is a security and hardening patch for the local product.
-It focuses on preventing takeover of already-initialized systems, rejecting unsafe update archives, and removing a few unnecessarily weak defaults.
+Darts Kiosk 4.3.0 starts the dedicated stability phase after the 4.2.x product/hardening releases.
+This first wave focuses on two practical areas that matter on real board PCs: safer SQLite backups and more resilient realtime transport behavior.
 
 ## What changed
 
-### 1. Setup cannot be rerun after initialization
-- `POST /api/setup/complete` now refuses to run once setup has already been completed
-- this closes the biggest local/LAN takeover hole for initialized installs
+### 1. SQLite backups are now snapshot-based and validated
+- backup creation now uses SQLite's native backup mechanism instead of copying the live DB file directly
+- backup snapshots are validated with `PRAGMA integrity_check`
+- restore flow validates backup contents before replacing the live database
+- this improves confidence in recovery, support exports, and pre-update safety
 
-### 2. Update ZIP extraction is hardened
-- update staging now validates ZIP members before extraction
-- absolute paths and `..` traversal entries are rejected
-- unsafe archives are refused before files are unpacked into staging
+### 2. WebSocket fanout is more robust
+- websocket broadcast fanout now avoids holding the connection lock while awaiting every client send
+- dead/slow sockets are pruned more safely
+- this reduces the chance that one problematic client degrades all other realtime consumers
 
-### 3. Secret handling is less predictable
-- JWT and agent auth no longer fall back to static hardcoded secrets
-- if real secrets are missing, the runtime now uses ephemeral generated secrets instead of predictable defaults
-
-### 4. Rebind-device action is stricter
-- device rebind now requires superadmin rather than any admin user
-
-### 5. CSV export no longer needs token-in-URL
-- admin reports now export CSV through authenticated header-based download flow
-- this avoids leaking JWTs into copied URLs, browser history, or logs
+### 3. Realtime transport foundation is stronger
+- board websocket hook now uses reconnect backoff and heartbeat behavior
+- server websocket endpoint now understands `ping` / `pong`
+- this gives kiosk/admin realtime transport a more reliable base for the next stability passes
 
 ## Validation performed for this release
 
@@ -35,8 +31,6 @@ Executed successfully:
 source .venv/bin/activate
 python -m compileall backend
 python -m pytest -q \
-  backend/tests/test_phase34_autodarts_triggers.py \
-  backend/tests/test_phase34_credits_pricing.py \
   backend/tests/test_phase56_stability_installation.py \
   backend/tests/test_phase789_local_core_validation.py
 cd frontend && npm run build
@@ -44,10 +38,10 @@ cd frontend && npm run build
 
 Observed result:
 - backend compile check passed
-- focused backend suite passed (39 tests)
+- focused backend validation suite passed
 - frontend production build passed
 
-## Still worth doing next
-- safer SQLite backup creation
-- lifecycle unification for scheduler-triggered session endings
-- more explicit support/trust indicators in admin UI
+## Still planned for the next stability pass
+- unified session-end lifecycle between scheduler and kiosk finalize path
+- adaptive kiosk polling / more push-first board state handling
+- stricter support-bundle/runtime diagnostics flow

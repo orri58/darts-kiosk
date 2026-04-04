@@ -4,6 +4,22 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.3.0] - 2026-04-04
+
+### Changed
+- Realtime runtime now has a stronger foundation: websocket fanout is more resilient, websocket clients support reconnect/backoff/heartbeat behavior, and the server understands ping/pong keepalive messages.
+- SQLite backups now use native SQLite snapshotting and integrity checks instead of raw live-file copying.
+- Restore flow now validates backup contents before replacing the live database.
+
+### Stability
+- Better protection against one slow/dead websocket client degrading all other realtime listeners.
+- Safer backup artifacts for support, recovery, and update preparation.
+
+### Validation
+- Backend compile check passed.
+- Focused backend validation suite passed.
+- Frontend production build passed.
+
 ## [4.2.3] - 2026-04-04
 
 ### Fixed
