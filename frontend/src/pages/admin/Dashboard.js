@@ -386,7 +386,7 @@ export default function AdminDashboard() {
         ))}
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[1.2fr,0.8fr]">
+      <div className="grid gap-5 2xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
         <AdminSection
           title="Dart Control"
           description="Alle Boards direkt im Zugriff — auch nach dem Freischalten, damit Nachbuchen sofort geht."
@@ -401,7 +401,7 @@ export default function AdminDashboard() {
               Noch keine Boards vorhanden.
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
               {actionBoards.map((board) => {
                 const session = boardDetails[board.board_id];
                 const isLocked = board.status === 'locked';
@@ -410,7 +410,7 @@ export default function AdminDashboard() {
                 const PrimaryIcon = isLocked ? Unlock : Plus;
 
                 return (
-                <div key={`quick-${board.board_id}`} className="theme-panel rounded-3xl border p-4 theme-primary-glow">
+                <div key={`quick-${board.board_id}`} className="theme-panel min-w-0 rounded-3xl border p-4 theme-primary-glow">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-base font-semibold text-[var(--color-text)]">{board.name}</p>
@@ -436,7 +436,7 @@ export default function AdminDashboard() {
                       </div>
                     )}
                   </div>
-                  <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <div className="mt-4 grid gap-2 lg:grid-cols-2">
                     <Button
                       onClick={() => (isLocked ? handleQuickUnlock(board) : openExtendDialog(board))}
                       className="h-11 rounded-2xl bg-[var(--color-primary)] text-[hsl(var(--primary-foreground))] hover:opacity-90"

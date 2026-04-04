@@ -136,6 +136,17 @@ def release_instance_lock():
 TASK_NAME = "DartsKioskAgent"
 
 
+def is_elevated() -> bool:
+    """Best-effort admin/elevation check on Windows."""
+    if not IS_WINDOWS:
+        return False
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
 def get_autostart_status() -> dict:
     """Check if the agent is registered in Windows Task Scheduler."""
     if not IS_WINDOWS:
@@ -576,11 +587,11 @@ class KioskControlManager:
 # ═══════════════════════════════════════════════════════════════
 
 def detect_kiosk_window() -> dict:
-    """Check if the Kiosk Chrome window is visible."""
+    """Detect kiosk Chrome process/window using command line + visible window matching."""
     if not IS_WINDOWS:
         return {"detected": False, "reason": "not_windows"}
     try:
-        ps_script = '''
+        ps_script = r'''
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -591,30 +602,53 @@ public class WinEnum {
     [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWinProc cb, IntPtr lParam);
     [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int count);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
-    public static List<string> titles = new List<string>();
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    public static List<object> windows = new List<object>();
     public static bool Callback(IntPtr hWnd, IntPtr lParam) {
         if (!IsWindowVisible(hWnd)) return true;
-        var sb = new StringBuilder(256);
-        GetWindowText(hWnd, sb, 256);
+        var sb = new StringBuilder(512);
+        GetWindowText(hWnd, sb, 512);
         var t = sb.ToString();
-        if (t.Length > 0) titles.Add(t);
+        if (t.Length == 0) return true;
+        uint pid;
+        GetWindowThreadProcessId(hWnd, out pid);
+        windows.Add(new { pid = pid, title = t });
         return true;
     }
 }
-"@
-[WinEnum]::titles.Clear()
+[WinEnum]::windows.Clear()
 [WinEnum]::EnumWindows([WinEnum+EnumWinProc]::new([WinEnum], "Callback"), [IntPtr]::Zero) | Out-Null
-$kiosk = [WinEnum]::titles | Where-Object { $_ -like "*DartsKiosk*" -or $_ -like "*Darts Kiosk*" -or $_ -like "*localhost:8001*" }
-if ($kiosk) { Write-Output "FOUND:$($kiosk[0])" } else { Write-Output "NOT_FOUND" }
+$visibleWindows = @([WinEnum]::windows)
+$chromeWindows = @($visibleWindows | Where-Object { $_.title -match 'chrome|autodarts|runde|darts' })
+$kioskProcs = @(Get-CimInstance Win32_Process -Filter "name='chrome.exe'" | Where-Object {
+    $cmd = if ($null -eq $_.CommandLine) { '' } else { $_.CommandLine }
+    $cmd -match 'kiosk_ui_profile' -or $cmd -match '--app-name=DartsKiosk' -or $cmd -match '/kiosk/'
+})
+$windowMatch = $null
+if ($kioskProcs.Count -gt 0) {
+    $pids = @($kioskProcs | ForEach-Object { [uint32]$_.ProcessId })
+    $windowMatch = @($visibleWindows | Where-Object { $pids -contains ([uint32]$_.pid) } | Select-Object -First 1)
+}
+$result = [ordered]@{
+    detected = ($kioskProcs.Count -gt 0)
+    visible = ($windowMatch.Count -gt 0)
+    pid = if ($kioskProcs.Count -gt 0) { [int]$kioskProcs[0].ProcessId } else { $null }
+    title = if ($windowMatch.Count -gt 0) { $windowMatch[0].title } else { $null }
+    reason = if ($kioskProcs.Count -eq 0) { 'no_kiosk_process' } elseif ($windowMatch.Count -eq 0) { 'process_running_window_not_visible' } else { 'window_visible' }
+    match = if ($kioskProcs.Count -gt 0) { 'command_line' } else { $null }
+    visible_titles = @($chromeWindows | Select-Object -ExpandProperty title | Select-Object -First 6)
+}
+$result | ConvertTo-Json -Depth 4 -Compress
 '''
         result = subprocess.run(
             ["powershell", "-NoProfile", "-Command", ps_script],
             **_SUBPROCESS_SAFE,
         )
         stdout = (result.stdout or "").strip()
-        if stdout.startswith("FOUND:"):
-            return {"detected": True, "title": stdout.split(":", 1)[1]}
-        return {"detected": False}
+        if not stdout:
+            return {"detected": False, "reason": "empty_result"}
+        payload = json.loads(stdout)
+        return payload if isinstance(payload, dict) else {"detected": False, "reason": "invalid_result", "raw": stdout}
     except Exception as e:
         return {"detected": False, "error": str(e)}
 
@@ -707,6 +741,7 @@ class AgentHandler(BaseHTTPRequestHandler):
             "platform": platform.system(),
             "platform_release": platform.release(),
             "is_windows": IS_WINDOWS,
+            "elevated": is_elevated(),
             "uptime_s": int(uptime),
             "heartbeat": datetime.now(timezone.utc).isoformat(),
             "pid": os.getpid(),

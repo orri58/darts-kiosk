@@ -4,6 +4,20 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.3] - 2026-04-04
+
+### Fixed
+- Fixed kiosk browser supervision so the launcher restarts the dedicated kiosk Chrome process instead of considering any random `chrome.exe` good enough.
+- Improved kiosk window detection to identify the kiosk process via command line markers and surface PID/visibility/reason diagnostics.
+- Added explicit elevated/admin visibility to agent status so permission-related device-ops failures are easier to understand.
+- Improved the Device Ops “Kiosk window” panel so it no longer appears blank when diagnostics exist.
+- Relaxed the admin dashboard layout so the board-control area behaves more responsively on medium widths.
+
+### Validation
+- Agent/admin router Python compile sanity passed.
+- Existing backend regression suites passed (`12 passed`).
+- Frontend production build passed.
+
 ## [4.4.2] - 2026-04-04
 
 ### Fixed

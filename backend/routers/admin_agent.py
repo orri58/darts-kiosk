@@ -61,12 +61,14 @@ async def _fallback_status(db: AsyncSession) -> dict:
     config = await _autodarts_config(db)
 
     try:
-        from agent.darts_agent import detect_kiosk_window, get_autostart_status
+        from agent.darts_agent import detect_kiosk_window, get_autostart_status, is_elevated
         kiosk_window = detect_kiosk_window()
         autostart = get_autostart_status()
+        elevated = is_elevated()
     except Exception as exc:
         kiosk_window = {"detected": False, "error": str(exc), "reason": "fallback_import_failed"}
         autostart = {"supported": IS_WINDOWS, "registered": False, "error": str(exc)}
+        elevated = False
 
     shell = windows_kiosk_control.get_shell_status(_detect_kiosk_shell_path())
     task_manager = _normalize_task_manager_status(windows_kiosk_control.get_task_manager_status())
@@ -77,6 +79,7 @@ async def _fallback_status(db: AsyncSession) -> dict:
         "platform": platform.system(),
         "platform_release": platform.release(),
         "is_windows": IS_WINDOWS,
+        "elevated": elevated,
         "autodarts": autodarts_desktop.get_status(config=config),
         "kiosk_window": kiosk_window,
         "shell": shell,

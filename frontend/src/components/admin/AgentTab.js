@@ -205,6 +205,13 @@ export default function AgentTab({ agentStatus, setAgentStatus, headers, t, fetc
               {agentStatus.pid && (
                 <StatusRow icon={Info} label="PID" value={agentStatus.pid} testId="agent-pid" />
               )}
+              <StatusRow
+                icon={Shield}
+                label="Rechte"
+                value={agentStatus.elevated ? 'Administrator / erhöht' : 'Normaler Benutzer'}
+                valueClass={agentStatus.elevated ? 'text-emerald-400' : 'text-amber-400'}
+                testId="agent-elevated"
+              />
               {/* Autostart Status */}
               {agentStatus.autostart && (
                 <div className="flex items-center justify-between p-3 bg-zinc-800/50 rounded-sm" data-testid="agent-autostart-status">
@@ -359,7 +366,29 @@ export default function AgentTab({ agentStatus, setAgentStatus, headers, t, fetc
                 )}
               </span>
             </div>
-            {kioskWin.title && <p className="text-xs text-zinc-600 mt-1 font-mono ml-6">{kioskWin.title}</p>}
+            <div className="ml-6 mt-1 space-y-1">
+              {kioskWin.title && <p className="text-xs text-zinc-600 font-mono">{kioskWin.title}</p>}
+              {kioskWin.pid && <p className="text-xs text-zinc-600 font-mono">PID: {kioskWin.pid}</p>}
+              {!kioskWin.title && kioskWin.reason && (
+                <p className="text-xs text-zinc-600">
+                  {kioskWin.reason === 'process_running_window_not_visible'
+                    ? 'Kiosk-Prozess läuft, aber aktuell kein sichtbares Fenster erkannt.'
+                    : kioskWin.reason === 'no_kiosk_process'
+                      ? 'Kein dedizierter Kiosk-Chrome-Prozess gefunden.'
+                      : kioskWin.reason}
+                </p>
+              )}
+              {Array.isArray(kioskWin.visible_titles) && kioskWin.visible_titles.length > 0 && (
+                <p className="text-[11px] text-zinc-700">
+                  Sichtbare Fenster: {kioskWin.visible_titles.slice(0, 3).join(' · ')}
+                </p>
+              )}
+              {!agentStatus.elevated && (
+                <p className="text-[11px] text-amber-500/80">
+                  Für Taskmanager-/Shell-Schutz sollte der Agent erhöht laufen.
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}

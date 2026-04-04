@@ -164,15 +164,15 @@ REM ============================================================================
         set "BACKEND_RESTART_COUNT=0"
     )
 
-    REM --- Check Chrome ---
-    tasklist /FI "IMAGENAME eq chrome.exe" 2>nul | find /I "chrome.exe" >nul
+    REM --- Check Kiosk Chrome (specific process/profile, not any random chrome.exe) ---
+    call :is_kiosk_chrome_running
     if !ERRORLEVEL! NEQ 0 (
         set /a "CHROME_RESTART_COUNT+=1"
-        call :log "CHROME_CRASH erkannt (Restart !CHROME_RESTART_COUNT!/!MAX_CHROME_RESTARTS!)"
-        call :bootlog "[BOOT] CHROME_CRASH detected (restart !CHROME_RESTART_COUNT!)"
+        call :log "KIOSK_CHROME_MISSING erkannt (Restart !CHROME_RESTART_COUNT!/!MAX_CHROME_RESTARTS!)"
+        call :bootlog "[BOOT] KIOSK_CHROME_MISSING detected (restart !CHROME_RESTART_COUNT!)"
 
         if !CHROME_RESTART_COUNT! GEQ !MAX_CHROME_RESTARTS! (
-            call :log "KRITISCH: Max Chrome-Restarts erreicht - warte 60s dann Reset"
+            call :log "KRITISCH: Max Kiosk-Chrome-Restarts erreicht - warte 60s dann Reset"
             timeout /t 60 /nobreak >nul
             set "CHROME_RESTART_COUNT=0"
         )
@@ -182,6 +182,7 @@ REM ============================================================================
     ) else (
         set "CHROME_RESTART_COUNT=0"
     )
+
 
 goto :monitor_loop
 
@@ -203,7 +204,8 @@ REM ============================================================================
     goto :eof
 
 :start_chrome
-    REM Kill existing kiosk chrome
+    REM Kill existing kiosk chrome (profile-specific if possible, then title fallback)
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$procs = Get-CimInstance Win32_Process -Filter \"name='chrome.exe'\" | Where-Object { $cmd = if ($null -eq $_.CommandLine) { '' } else { $_.CommandLine }; $cmd -match 'kiosk_ui_profile' -or $cmd -match '--app-name=DartsKiosk' -or $cmd -match '/kiosk/' }; foreach ($p in $procs) { try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch {} }" >nul 2>&1
     taskkill /F /FI "WINDOWTITLE eq DartsKiosk*" >nul 2>&1
     timeout /t 1 /nobreak >nul
 
@@ -225,6 +227,10 @@ REM ============================================================================
         call :log "FEHLER: Chrome nicht gefunden"
     )
     goto :eof
+
+:is_kiosk_chrome_running
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$found = @(Get-CimInstance Win32_Process -Filter \"name='chrome.exe'\" | Where-Object { $cmd = if ($null -eq $_.CommandLine) { '' } else { $_.CommandLine }; $cmd -match 'kiosk_ui_profile' -or $cmd -match '--app-name=DartsKiosk' -or $cmd -match '/kiosk/' }).Count -gt 0; if ($found) { exit 0 } else { exit 1 }" >nul 2>&1
+    exit /b %ERRORLEVEL%
 
 :log
     echo [%date% %time%] %~1 >> "!LAUNCHER_LOG!" 2>nul

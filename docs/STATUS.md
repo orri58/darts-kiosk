@@ -85,6 +85,40 @@ Result:
 - focused backend validation passed (37 tests)
 - frontend production build succeeded
 
+## Latest pass: 4.4.3 release hotfix — kiosk watchdog + window diagnostics + dashboard layout
+
+### What changed in this pass
+- fixed kiosk browser supervision in `kiosk/darts_launcher.bat`: the launcher no longer treats any random `chrome.exe` as healthy; it now specifically checks for the kiosk Chrome process via command line markers (`kiosk_ui_profile`, `--app-name=DartsKiosk`, `/kiosk/`) and restarts the kiosk browser if that dedicated process is gone
+- hardened kiosk process cleanup before relaunch by terminating the profile-specific kiosk Chrome process, not just title-matched windows
+- upgraded agent-side kiosk detection in `agent/darts_agent.py`:
+  - detects kiosk Chrome by process command line instead of relying only on a visible window title
+  - reports whether the kiosk process exists even when no visible kiosk window is found
+  - returns PID, match reason, visibility state, and a shortlist of visible relevant window titles for diagnostics
+  - reports whether the agent currently runs elevated/admin on Windows
+- exposed the improved elevated/kiosk-window diagnostics via admin agent fallback status in `backend/routers/admin_agent.py`
+- improved Device Ops UI in `frontend/src/components/admin/AgentTab.js` so the “Kiosk window” block now shows useful diagnostics instead of appearing empty when the kiosk process is present but not visibly matched
+- improved dashboard responsiveness in `frontend/src/pages/admin/Dashboard.js` by relaxing the main split/grid breakpoints and preventing the board-control cards/buttons from getting squeezed too aggressively on medium widths
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+python3 -m py_compile agent/darts_agent.py backend/routers/admin_agent.py
+source .venv/bin/activate
+python -m pytest -q \
+  backend/tests/test_v441_backup_service_exports.py \
+  backend/tests/test_v442_setup_and_ws_contracts.py \
+  backend/tests/test_v430_scheduler_terminal_cleanup.py \
+  backend/tests/test_v440_session_consistency.py
+cd frontend && npm run build
+```
+
+Result:
+- agent/admin router import sanity passed
+- previous backend regression suites still passed (`12 passed`)
+- frontend production build passed
+- kiosk browser supervision now targets the real kiosk Chrome process instead of any arbitrary Chrome instance
+
 ## Latest pass: 4.4.2 release hotfix — fix setup completion + websocket runtime contract
 
 ### What changed in this pass
