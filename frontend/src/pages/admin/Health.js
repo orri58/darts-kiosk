@@ -75,6 +75,8 @@ export default function AdminHealth() {
   const [health, setHealth] = useState(null);
   const [readiness, setReadiness] = useState(null);
   const [backups, setBackups] = useState(null);
+  const [consistency, setConsistency] = useState(null);
+  const [repairingBoardId, setRepairingBoardId] = useState('');
   const [screenshots, setScreenshots] = useState([]);
   const [screenshotUrls, setScreenshotUrls] = useState({});
   const [loading, setLoading] = useState(true);
@@ -83,16 +85,18 @@ export default function AdminHealth() {
 
   const fetchHealth = useCallback(async () => {
     try {
-      const [healthRes, readinessRes, backupsRes, screenshotsRes] = await Promise.all([
+      const [healthRes, readinessRes, backupsRes, consistencyRes, screenshotsRes] = await Promise.all([
         axios.get(`${API}/health/detailed`, { headers }),
         axios.get(`${API}/system/readiness`, { headers }),
         axios.get(`${API}/backups`, { headers }),
+        axios.get(`${API}/system/session-consistency`, { headers }),
         axios.get(`${API}/health/screenshots`, { headers }),
       ]);
 
       setHealth(healthRes.data);
       setReadiness(readinessRes.data);
       setBackups(backupsRes.data);
+      setConsistency(consistencyRes.data);
       setScreenshots(screenshotsRes.data || []);
     } catch (error) {
       console.error('Failed to fetch health:', error);
@@ -148,6 +152,21 @@ export default function AdminHealth() {
     };
   }, [screenshots, headers]);
 
+  const handleRepairBoard = useCallback(async (boardId) => {
+    if (!boardId) return;
+    if (!window.confirm(`Konsistenz-Reparatur für ${boardId} ausführen?`)) return;
+
+    setRepairingBoardId(boardId);
+    try {
+      await axios.post(`${API}/system/session-consistency/repair/${encodeURIComponent(boardId)}`, {}, { headers });
+      await fetchHealth();
+    } catch (error) {
+      console.error('Failed to repair board consistency:', error);
+    } finally {
+      setRepairingBoardId('');
+    }
+  }, [headers, fetchHealth]);
+
   const metrics = useMemo(() => {
     const agents = Object.entries(health?.agent_status || {});
     const offlineAgents = agents.filter(([, agent]) => !agent.is_online).length;
@@ -174,8 +193,12 @@ export default function AdminHealth() {
       readinessGroups,
       readinessFailCount: readiness?.summary?.fail_count || 0,
       readinessWarnCount: readiness?.summary?.warn_count || 0,
+      consistencyBoards: consistency?.boards || [],
+      consistencyFindings: consistency?.findings || [],
+      consistencyCriticalCount: consistency?.summary?.critical_count || 0,
+      consistencyWarningCount: consistency?.summary?.warning_count || 0,
     };
-  }, [health, backups, readiness]);
+  }, [health, backups, readiness, consistency]);
 
   if (loading) {
     return (
@@ -263,7 +286,85 @@ export default function AdminHealth() {
           hint={`${metrics.observerEvents} erfasste Observer-Events`}
           tone={metrics.observerSuccessRate >= 80 ? 'emerald' : metrics.observerEvents > 0 ? 'amber' : 'neutral'}
         />
+        <AdminStatCard
+          icon={AlertTriangle}
+          label="Lifecycle-Issues"
+          value={metrics.consistencyFindings.length}
+          hint={`${metrics.consistencyCriticalCount} kritisch · ${metrics.consistencyWarningCount} warnend`}
+          tone={metrics.consistencyCriticalCount > 0 ? 'red' : metrics.consistencyWarningCount > 0 ? 'amber' : 'emerald'}
+        />
       </AdminStatsGrid>
+
+      <AdminSection
+        title="Session / Board consistency"
+        description="Erkennt Runtime-Widersprüche zwischen Board-Status, aktiver Session und terminalen Lifecycle-Zuständen. Genau das Zeug, das nach Restarts oder kaputten Observer-Enden später Ärger macht."
+        actions={
+          <AdminStatusPill tone={metrics.consistencyCriticalCount > 0 ? 'red' : metrics.consistencyWarningCount > 0 ? 'amber' : 'emerald'}>
+            {metrics.consistencyFindings.length} Finding(s)
+          </AdminStatusPill>
+        }
+      >
+        {metrics.consistencyFindings.length > 0 ? (
+          <div className="grid gap-4 xl:grid-cols-[1.05fr,0.95fr]">
+            <div className="space-y-3">
+              {metrics.consistencyFindings.map((finding, index) => (
+                <div key={`${finding.board_id}-${finding.code}-${index}`} className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <AdminStatusPill tone={finding.severity === 'critical' ? 'red' : finding.severity === 'warning' ? 'amber' : 'blue'}>
+                      {finding.severity}
+                    </AdminStatusPill>
+                    <AdminStatusPill tone="neutral">{finding.board_id}</AdminStatusPill>
+                    <span className="text-xs uppercase tracking-[0.2em] text-zinc-500">{finding.code}</span>
+                  </div>
+                  <p className="mt-3 text-sm font-medium text-white">{finding.summary}</p>
+                  <p className="mt-2 text-sm text-zinc-400">{finding.detail}</p>
+                  <p className="mt-2 text-xs text-zinc-500">Empfehlung: {finding.recommended_action}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                    <span>Board: {finding.board_status || '–'}</span>
+                    <span>Session: {finding.session_status || '–'}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-3">
+              {metrics.consistencyBoards.map((board) => (
+                <div key={board.board_id} className="rounded-3xl border border-zinc-800 bg-zinc-900/70 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-white font-medium">{board.board_id}</p>
+                      <p className="text-xs text-zinc-500">{board.name || 'Ohne Namen'} · Status: {board.board_status}</p>
+                    </div>
+                    <AdminStatusPill tone={board.issues?.length ? (board.issues.some((item) => item.severity === 'critical') ? 'red' : 'amber') : 'emerald'}>
+                      {board.issues?.length || 0} Issues
+                    </AdminStatusPill>
+                  </div>
+                  <div className="mt-3 rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3 text-xs text-zinc-400">
+                    <p>Aktive Sessions: {board.active_session_count}</p>
+                    <p className="mt-1 break-all">Letzte Session: {board.latest_session?.id || '–'} · {board.latest_session?.status || 'keine'}</p>
+                  </div>
+                  {board.issues?.length > 0 && (
+                    <Button
+                      onClick={() => handleRepairBoard(board.board_id)}
+                      disabled={repairingBoardId === board.board_id}
+                      className="mt-3 w-full bg-amber-500 text-black hover:bg-amber-400"
+                    >
+                      <RefreshCw className={`mr-2 h-4 w-4 ${repairingBoardId === board.board_id ? 'animate-spin' : ''}`} />
+                      {repairingBoardId === board.board_id ? 'Repair läuft…' : 'Safe repair ausführen'}
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <AdminEmptyState
+            icon={ShieldCheck}
+            title="Keine Board-/Session-Widersprüche erkannt"
+            description="Lifecycle sieht konsistent aus. Genau so will man das nach Restarts und Timeout-Enden haben."
+          />
+        )}
+      </AdminSection>
 
       <AdminSection
         title="Board-PC readiness"

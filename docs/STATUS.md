@@ -85,6 +85,44 @@ Result:
 - focused backend validation passed (37 tests)
 - frontend production build succeeded
 
+## Latest pass: 4.4.0 consistency diagnostics + safe repair
+
+### What changed in this pass
+- added a dedicated `session_consistency_service` that inspects each board against its latest/active sessions and emits deterministic lifecycle findings
+- detects key field-failure states such as:
+  - active-looking board without an active session
+  - locked board with a still-active stale/terminal session
+  - multiple active sessions on one board
+  - `blocked_pending` without a matching per-player credit-gate scenario
+  - `in_game` boards whose session is already terminal by expiry/capacity
+  - finished/expired/cancelled latest sessions where the board never returned to locked
+- added admin API endpoints for runtime consistency inspection and safe per-board repair
+- safe repair can now normalize common contradictions by:
+  - locking orphan-active boards
+  - collapsing duplicate active sessions to the newest survivor
+  - finalizing stale terminal sessions
+  - restoring a wrongly locked board to unlocked when an actually valid active session remains
+  - triggering shared terminal cleanup when repair closes a terminal lifecycle state
+- expanded Admin Health with a dedicated Session/Board consistency surface, including findings, per-board issue counts, and a one-click safe repair action
+- added focused regression tests for detection + repair of the main stale/orphan/duplicate session states
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+source .venv/bin/activate
+python -m pytest -q \
+  backend/tests/test_v430_scheduler_terminal_cleanup.py \
+  backend/tests/test_v440_session_consistency.py
+cd frontend && npm run build
+```
+
+Result:
+- scheduler terminal cleanup regression suite passed
+- new session consistency detection/repair suite passed
+- frontend production build succeeded with the new admin diagnostics surface
+- live Windows + Autodarts field validation is still the next required step before claiming full recovery proof
+
 ## Latest pass: 4.3.1 scheduler terminal cleanup hardening
 
 ### What changed in this pass

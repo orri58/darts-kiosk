@@ -4,6 +4,22 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.0] - 2026-04-04
+
+### Added
+- Runtime session/board consistency diagnostics for detecting stale lifecycle mismatches after restarts, timeouts, or partial observer cleanup.
+- Admin API + Health UI surface for reviewing lifecycle findings per board and triggering a one-click safe repair.
+- Safe-repair path for common contradictions such as orphan active board states, duplicate active sessions, and terminal sessions that never cleaned up fully.
+
+### Changed
+- Recovery diagnostics are now more operationally visible instead of being spread across logs, health signals, and implicit runtime behavior.
+- Shared terminal cleanup is reused when a consistency repair closes a stale terminal lifecycle state.
+
+### Validation
+- Scheduler terminal cleanup regression suite passed.
+- Session consistency detection/repair regression suite passed.
+- Frontend production build passed.
+
 ## [4.3.0] - 2026-04-04
 
 ### Changed

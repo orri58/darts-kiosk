@@ -24,6 +24,7 @@ from backend.services.setup_wizard import (
 from backend.services.system_service import system_service
 from backend.services.autodarts_desktop_service import autodarts_desktop
 from backend.services.readiness_service import readiness_service
+from backend.services.session_consistency_service import session_consistency_service
 
 router = APIRouter()
 
@@ -238,6 +239,35 @@ async def get_support_snapshot(admin: User = Depends(require_admin), db: AsyncSe
 
     agent_status = await _agent_status_or_fallback(db)
     return await readiness_service.build_support_snapshot(db, agent_status)
+
+
+@router.get("/system/session-consistency")
+async def get_session_consistency(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Runtime consistency diagnostics for board/session lifecycle mismatches."""
+    return await session_consistency_service.build_snapshot(db)
+
+
+@router.post("/system/session-consistency/repair/{board_id}")
+async def repair_session_consistency(board_id: str, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    """Safe repair for common board/session lifecycle mismatches."""
+    try:
+        result = await session_consistency_service.repair_board(db, board_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Board not found")
+
+    await log_audit(
+        db,
+        admin,
+        action="session_consistency_repair",
+        entity_type="board",
+        entity_id=board_id,
+        details={
+            "board_id": board_id,
+            "actions": result.get("actions", []),
+            "cleanup_triggered": result.get("cleanup_triggered", False),
+        },
+    )
+    return result
 
 
 @router.get("/system/logs")
