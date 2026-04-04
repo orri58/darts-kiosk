@@ -6,9 +6,8 @@ import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
-from contextlib import asynccontextmanager
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import AsyncSessionLocal
@@ -76,10 +75,11 @@ class SessionScheduler:
     
     async def _check_expired_sessions(self):
         """Check and expire time-based sessions"""
+        boards_to_cleanup: list[str] = []
         async with AsyncSessionLocal() as db:
             try:
                 now = datetime.now(timezone.utc)
-                
+
                 # Find sessions that have expired (per_time mode)
                 result = await db.execute(
                     select(Session)
@@ -89,14 +89,13 @@ class SessionScheduler:
                     .where(Session.expires_at <= now)
                 )
                 expired_sessions = result.scalars().all()
-                
+
                 for session in expired_sessions:
-                    # Get the board
                     board_result = await db.execute(
                         select(Board).where(Board.id == session.board_id)
                     )
                     board = board_result.scalar_one_or_none()
-                    
+
                     if board:
                         # Only auto-lock if NOT in game (let them finish current game)
                         if board.status != BoardStatus.IN_GAME.value:
@@ -104,35 +103,38 @@ class SessionScheduler:
                             session.ended_at = now
                             session.ended_reason = "time_expired"
                             board.status = BoardStatus.LOCKED.value
-                            
+                            boards_to_cleanup.append(board.board_id)
+
                             logger.info(f"Session expired (time): {session.id[:8]} on {board.board_id}")
                         else:
-                            # Flag that session should lock after current game
                             logger.info(f"Session time expired but game in progress: {board.board_id}")
-                
+
                 await db.commit()
-                
+
             except Exception as e:
                 logger.error(f"Error checking expired sessions: {e}")
                 await db.rollback()
+                return
+
+        for board_id in boards_to_cleanup:
+            await self._run_terminal_cleanup(board_id, close_reason="scheduler_time_expired")
     
     async def _check_idle_sessions(self):
         """Check and lock idle sessions in UNLOCKED state"""
+        boards_to_cleanup: list[str] = []
         async with AsyncSessionLocal() as db:
             try:
                 idle_timeout = await self._get_idle_timeout(db)
                 now = datetime.now(timezone.utc)
                 idle_threshold = now - timedelta(minutes=idle_timeout)
-                
-                # Find boards that are UNLOCKED but idle (no game started)
+
                 result = await db.execute(
                     select(Board)
                     .where(Board.status == BoardStatus.UNLOCKED.value)
                 )
                 unlocked_boards = result.scalars().all()
-                
+
                 for board in unlocked_boards:
-                    # Get active session
                     session_result = await db.execute(
                         select(Session)
                         .where(Session.board_id == board.id)
@@ -140,32 +142,40 @@ class SessionScheduler:
                         .order_by(Session.started_at.desc())
                     )
                     session = session_result.scalar_one_or_none()
-                    
+
                     if session:
-                        # Check if session has been idle (no game started)
-                        # We use session.updated_at or started_at to track last activity
                         last_activity = session.updated_at or session.started_at
-                        
+
                         if last_activity:
-                            # Make timezone-aware if naive
                             if last_activity.tzinfo is None:
                                 last_activity = last_activity.replace(tzinfo=timezone.utc)
-                            
+
                             if last_activity < idle_threshold:
-                                # Session is idle - lock it
                                 session.status = SessionStatus.CANCELLED.value
                                 session.ended_at = now
                                 session.ended_reason = "idle_timeout"
                                 board.status = BoardStatus.LOCKED.value
-                                
+                                boards_to_cleanup.append(board.board_id)
+
                                 logger.info(f"Session idle timeout: {session.id[:8]} on {board.board_id}")
-                
+
                 await db.commit()
-                
+
             except Exception as e:
                 logger.error(f"Error checking idle sessions: {e}")
                 await db.rollback()
+                return
+
+        for board_id in boards_to_cleanup:
+            await self._run_terminal_cleanup(board_id, close_reason="scheduler_idle_timeout")
     
+    async def _run_terminal_cleanup(self, board_id: str, close_reason: str):
+        try:
+            from backend.routers.kiosk import run_terminal_session_cleanup
+            await run_terminal_session_cleanup(board_id, should_lock=True, close_reason=close_reason)
+        except Exception as exc:
+            logger.error(f"Scheduler terminal cleanup failed for {board_id}: {exc}", exc_info=True)
+
     async def force_lock_if_expired(self, board_id: str) -> bool:
         """
         Called after a game ends to check if session should be locked.

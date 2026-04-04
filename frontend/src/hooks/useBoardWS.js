@@ -12,7 +12,7 @@ function nextDelay(attempt) {
   return Math.max(1000, base + jitter);
 }
 
-export default function useBoardWS(boardId, onEvent) {
+export function useBoardWS(boardId, onEvent) {
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const staleTimerRef = useRef(null);
@@ -140,3 +140,5 @@ export default function useBoardWS(boardId, onEvent) {
     reconnectAttempt: reconnectAttemptRef.current,
   };
 }
+
+export default useBoardWS;

@@ -85,6 +85,31 @@ Result:
 - focused backend validation passed (37 tests)
 - frontend production build succeeded
 
+## Latest pass: 4.3.1 scheduler terminal cleanup hardening
+
+### What changed in this pass
+- extracted shared `run_terminal_session_cleanup(...)` in kiosk lifecycle code so true terminal session endings now use one aligned cleanup path
+- session-end finalize now delegates observer close + kiosk restore + websocket refresh semantics to that shared cleanup helper instead of partially duplicating the chain
+- scheduler-driven `time_expired` and `idle_timeout` board locks now trigger the same terminal cleanup path after DB commit
+- added focused regression tests that verify:
+  - expired per-time sessions trigger terminal cleanup exactly once
+  - in-game expired sessions still defer cleanup/locking until the game actually ends
+  - idle-timeout session cancellation triggers terminal cleanup exactly once
+  - scheduler → kiosk import bridge forwards the expected cleanup reason and lock intent
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+source .venv/bin/activate
+python -m pytest -q backend/tests/test_v430_scheduler_terminal_cleanup.py
+```
+
+Result:
+- targeted scheduler terminal-cleanup regression suite passed (`4 passed`)
+- confirms scheduler expiry/idle lock flows now align with the shared kiosk terminal cleanup path
+- broader live Windows + Autodarts runtime validation is still required before claiming full field proof
+
 ## Latest pass: 4.3.0 stability wave 1
 
 ### What changed in this pass

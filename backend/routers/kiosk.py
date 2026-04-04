@@ -135,6 +135,37 @@ async def _show_pending_credit_gate(board_id: str):
         logger.warning(f"[KIOSK_UI] show_pending_credit_gate failed: {e}")
 
 
+async def run_terminal_session_cleanup(board_id: str, should_lock: bool = True, close_reason: str = "session_end"):
+    """Shared terminal session cleanup for non-keep-alive endings.
+
+    Used by central finalize and scheduler-driven terminations so observer teardown,
+    kiosk restore, and websocket refresh semantics stay aligned.
+    """
+    logger.info(
+        f"[SESSION] terminal_cleanup start board={board_id} "
+        f"should_lock={should_lock} close_reason={close_reason}"
+    )
+    try:
+        logger.info(f"[AUTODARTS] closing observer board={board_id} ({close_reason})")
+        observer_manager.set_desired_state(board_id, "stopped")
+        await asyncio.wait_for(
+            observer_manager.close(board_id, reason=close_reason),
+            timeout=10.0,
+        )
+        logger.info(f"[AUTODARTS] observer closed OK board={board_id} reason={close_reason}")
+    except asyncio.TimeoutError:
+        logger.error(f"[AUTODARTS] observer close TIMEOUT board={board_id} reason={close_reason}")
+    except Exception as e:
+        logger.error(f"[AUTODARTS] observer close failed board={board_id} reason={close_reason}: {e}")
+    finally:
+        try:
+            logger.info(f"[KIOSK_UI] terminal_cleanup restore start board={board_id} should_lock={should_lock}")
+            await return_to_kiosk_ui(board_id, should_lock)
+            logger.info(f"[KIOSK_UI] terminal_cleanup restore done board={board_id}")
+        except Exception as e:
+            logger.error(f"[KIOSK_UI] terminal_cleanup restore failed board={board_id}: {e}", exc_info=True)
+
+
 async def _resume_autodarts_after_pending_credit_gate(board_id: str):
     """Once credits are sufficient again, hand control back to Autodarts."""
     logger.info(f"[KIOSK_UI] resume_autodarts_after_pending_credit_gate start board={board_id}")
@@ -431,20 +462,7 @@ async def _finalize_match_inner(board_id: str, trigger: str,
                 f"[SESSION] finalize branch board={board_id} "
                 f"should_lock={should_lock} should_teardown=True branch=session_end"
             )
-            try:
-                logger.info(f"[AUTODARTS] closing observer board={board_id} (session_end)")
-                observer_manager.set_desired_state(board_id, "stopped")
-                await asyncio.wait_for(
-                    observer_manager.close(board_id, reason="session_end"),
-                    timeout=10.0,
-                )
-                ms = int((_t.monotonic() - _t0) * 1000)
-                logger.info(f"[AUTODARTS] observer closed OK ms={ms}")
-            except asyncio.TimeoutError:
-                ms = int((_t.monotonic() - _t0) * 1000)
-                logger.error(f"[AUTODARTS] observer close TIMEOUT board={board_id} ms={ms}")
-            except Exception as e:
-                logger.error(f"[AUTODARTS] observer close failed: {e}")
+            await run_terminal_session_cleanup(board_id, should_lock=should_lock, close_reason="session_end")
         else:
             # ═══ KEEP-ALIVE PATH ═══
             logger.info(
@@ -523,15 +541,10 @@ async def _finalize_match_inner(board_id: str, trigger: str,
 
     finally:
         if should_teardown:
-            # ── SESSION-END: Restore kiosk UI (guaranteed) ──
-            try:
-                logger.info(f"[KIOSK_UI] session_end_restore start board={board_id} should_lock={should_lock}")
-                await return_to_kiosk_ui(board_id, should_lock)
-                ms = int((_t.monotonic() - _t0) * 1000)
-                logger.info(f"[KIOSK_UI] session_end_restore done board={board_id}")
-                logger.info(f"[FINALIZE_TIMING] kiosk_restore_done ms={ms} board={board_id}")
-            except Exception as e:
-                logger.error(f"[KIOSK_UI] CRITICAL: return_to_kiosk_ui failed in finally: {e}", exc_info=True)
+            logger.info(
+                f"[KIOSK_UI] session_end_restore already_handled board={board_id} "
+                f"should_lock={should_lock}"
+            )
         else:
             # ── KEEP-ALIVE: Ensure Autodarts stays foreground ──
             obs_ka = observer_manager.get(board_id)
