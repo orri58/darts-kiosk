@@ -1,8 +1,9 @@
+import asyncio
 import gzip
 import logging
 import shutil
 import sqlite3
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -26,10 +27,16 @@ class BackupInfo:
     validated: bool = True
     integrity_check: Optional[str] = None
 
+    @property
+    def size_bytes(self) -> int:
+        return self.size
+
 
 class BackupService:
     def __init__(self):
         BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        self._task: Optional[asyncio.Task] = None
+        self._running = False
 
     def _open_sqlite(self, path: Path) -> sqlite3.Connection:
         conn = sqlite3.connect(str(path))
@@ -165,5 +172,56 @@ class BackupService:
             restore_tmp.unlink(missing_ok=True)
             target_tmp.unlink(missing_ok=True)
 
+    def get_backup_path(self, filename: str) -> Optional[str]:
+        backup_path = BACKUP_DIR / filename
+        if backup_path.exists() and backup_path.is_file():
+            return str(backup_path)
+        return None
+
+    def delete_backup(self, filename: str) -> bool:
+        backup_path = BACKUP_DIR / filename
+        if not backup_path.exists() or not backup_path.is_file():
+            return False
+        backup_path.unlink()
+        logger.info("[Backup] deleted backup=%s", filename)
+        return True
+
+    def get_backup_stats(self) -> dict:
+        backups = self.list_backups()
+        total_size = sum(item.size for item in backups)
+        return {
+            "count": len(backups),
+            "total_size_bytes": total_size,
+            "total_size_mb": round(total_size / (1024 * 1024), 2),
+            "latest_backup": backups[0].created_at if backups else None,
+        }
+
+    async def start(self):
+        if self._running:
+            return
+        self._running = True
+        logger.info("[Backup] backup service started")
+
+    async def stop(self):
+        if not self._running:
+            return
+        self._running = False
+        if self._task:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        logger.info("[Backup] backup service stopped")
+
 
 backup_service = BackupService()
+
+
+async def start_backup_service():
+    await backup_service.start()
+
+
+async def stop_backup_service():
+    await backup_service.stop()

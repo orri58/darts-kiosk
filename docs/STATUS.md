@@ -85,6 +85,30 @@ Result:
 - focused backend validation passed (37 tests)
 - frontend production build succeeded
 
+## Latest pass: 4.4.1 release hotfix — restore backup service startup contract
+
+### What changed in this pass
+- fixed a release-blocking backend startup regression where `backend/server.py` imported `start_backup_service` / `stop_backup_service`, but `backend/services/backup_service.py` no longer exported those functions
+- restored the backup service lifecycle hooks expected by the FastAPI lifespan startup/shutdown path
+- restored router-facing backup service contract helpers (`get_backup_path`, `delete_backup`, `get_backup_stats`) so the backups API matches the concrete service implementation again
+- added a targeted regression test that explicitly verifies the backup service exports required by both the server lifespan and the backups router contract
+
+### Validation for this pass
+Executed successfully:
+
+```bash
+source .venv/bin/activate
+python -m pytest -q \
+  backend/tests/test_v441_backup_service_exports.py \
+  backend/tests/test_v430_scheduler_terminal_cleanup.py \
+  backend/tests/test_v440_session_consistency.py
+```
+
+Result:
+- backup service export regression test passed
+- previous scheduler terminal cleanup + session consistency suites still passed
+- confirmed root cause of the Windows startup failure: missing exported backup service hooks caused immediate backend crash during startup
+
 ## Latest pass: 4.4.0 consistency diagnostics + safe repair
 
 ### What changed in this pass

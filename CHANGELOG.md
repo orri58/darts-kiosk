@@ -4,6 +4,18 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.1] - 2026-04-04
+
+### Fixed
+- Restored missing `start_backup_service` / `stop_backup_service` exports in `backend/services/backup_service.py`, which had caused the backend to crash immediately during Windows startup.
+- Restored backup-service helper methods required by the backups API contract (`get_backup_path`, `delete_backup`, `get_backup_stats`).
+- Added regression coverage so the backup service startup/router contract cannot silently break release builds again.
+
+### Validation
+- Backup service export regression suite passed.
+- Scheduler terminal cleanup regression suite passed.
+- Session consistency detection/repair regression suite passed.
+
 ## [4.4.0] - 2026-04-04
 
 ### Added
