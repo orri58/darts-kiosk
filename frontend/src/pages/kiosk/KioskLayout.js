@@ -35,6 +35,7 @@ export default function KioskLayout() {
   const [session, setSession] = useState(null);
   const [autodartsMode, setAutodartsMode] = useState(null);
   const [observerBrowserOpen, setObserverBrowserOpen] = useState(false);
+  const [observerHeadless, setObserverHeadless] = useState(false);
   const [observerState, setObserverState] = useState('closed');
   const [observerError, setObserverError] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -49,6 +50,7 @@ export default function KioskLayout() {
       setSession(d.session);
       setAutodartsMode(d.autodarts_mode || null);
       setObserverBrowserOpen(d.observer_browser_open || false);
+      setObserverHeadless(d.observer_headless || false);
       setObserverState(d.observer_state || 'closed');
       setObserverError(d.observer_error || null);
 
@@ -220,6 +222,7 @@ export default function KioskLayout() {
           session={session}
           boardId={boardId}
           observerBrowserOpen={observerBrowserOpen}
+          observerHeadless={observerHeadless}
           observerState={observerState}
           observerError={observerError}
           onEndGame={handleEndGame}

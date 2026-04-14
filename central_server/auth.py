@@ -14,11 +14,14 @@ Provides:
 - Role hierarchy checks
 """
 import hashlib
+import hmac
 import logging
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import bcrypt
 import jwt
 from fastapi import HTTPException, Request, Depends
 from sqlalchemy import select
@@ -29,10 +32,35 @@ from central_server.models import CentralUser, CentralLocation
 
 logger = logging.getLogger("central_server")
 
-JWT_SECRET = os.environ.get("CENTRAL_JWT_SECRET", "central-jwt-secret-change-me")
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_production_env() -> bool:
+    env_name = os.environ.get("CENTRAL_ENV", os.environ.get("ENV", "")).strip().lower()
+    return env_name in {"prod", "production"}
+
+
+def _load_jwt_secret() -> str:
+    value = os.environ.get("CENTRAL_JWT_SECRET", "").strip()
+    if value:
+        return value
+    if _is_production_env():
+        raise RuntimeError("CENTRAL_JWT_SECRET is required in production")
+    generated = secrets.token_urlsafe(48)
+    logger.warning("CENTRAL_JWT_SECRET missing; using ephemeral runtime secret. Configure a persistent secret before production use.")
+    return generated
+
+
+JWT_SECRET = _load_jwt_secret()
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 24
-ADMIN_TOKEN = os.environ.get("CENTRAL_ADMIN_TOKEN", "admin-secret-token")
+ADMIN_TOKEN = os.environ.get("CENTRAL_ADMIN_TOKEN", "").strip()
+LEGACY_ADMIN_TOKEN_ENABLED = _env_flag("CENTRAL_ENABLE_LEGACY_ADMIN_TOKEN", False)
 
 # Role hierarchy — higher number = more privileges
 ROLE_HIERARCHY = {
@@ -54,11 +82,26 @@ ROLE_CAN_CREATE = {
 
 
 def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
+
+def _legacy_hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 
+def is_legacy_password_hash(hashed: str) -> bool:
+    return bool(hashed) and not hashed.startswith("$2")
+
+
 def verify_password(password: str, hashed: str) -> bool:
-    return hash_password(password) == hashed
+    if not hashed:
+        return False
+    if hashed.startswith("$2"):
+        try:
+            return bcrypt.checkpw(password.encode(), hashed.encode())
+        except ValueError:
+            return False
+    return hmac.compare_digest(_legacy_hash_password(password), hashed)
 
 
 def create_jwt(user_id: str, username: str, role: str) -> str:
@@ -105,8 +148,8 @@ async def get_current_user(request: Request, db: AsyncSession = Depends(get_db))
     if not token:
         raise HTTPException(401, "Missing authorization")
 
-    # Legacy admin token check — always superadmin
-    if token == ADMIN_TOKEN:
+    # Legacy admin token check — disabled by default; opt-in only.
+    if LEGACY_ADMIN_TOKEN_ENABLED and ADMIN_TOKEN and hmac.compare_digest(token, ADMIN_TOKEN):
         return AuthUser("_legacy_", "superadmin", "superadmin")
 
     # JWT token

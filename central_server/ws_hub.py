@@ -6,7 +6,8 @@ Enables real-time push of events (config_updated, action_created, force_sync)
 to specific devices, eliminating polling latency.
 
 Design:
-- One WS per device, authenticated via X-License-Key query param
+- One WS per device, authenticated via X-License-Key or Authorization header
+- Legacy ?key= query auth remains compatibility-only and can be denied in production
 - Device registry tracks connected/disconnected state
 - Push is fire-and-forget per device (errors logged, never raised)
 - Idempotent: devices react to push by triggering their existing sync mechanisms

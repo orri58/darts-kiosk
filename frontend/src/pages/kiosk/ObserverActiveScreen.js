@@ -5,7 +5,7 @@ import axios from 'axios';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
-export default function ObserverActiveScreen({ observerBrowserOpen, observerState, observerError, boardId, onEndGame, onCallStaff }) {
+export default function ObserverActiveScreen({ observerBrowserOpen, observerHeadless, observerState, observerError, boardId, onEndGame, onCallStaff }) {
   const [retrying, setRetrying] = useState(false);
   const [showConfirmEnd, setShowConfirmEnd] = useState(false);
 
@@ -19,7 +19,7 @@ export default function ObserverActiveScreen({ observerBrowserOpen, observerStat
     setTimeout(() => setRetrying(false), 5000);
   };
 
-  if (observerBrowserOpen) {
+  if (observerBrowserOpen && !observerHeadless) {
     return <div className="h-full w-full bg-black" data-testid="observer-handoff-screen" />;
   }
 
@@ -34,9 +34,11 @@ export default function ObserverActiveScreen({ observerBrowserOpen, observerStat
 
           <h2 className="mt-6 text-3xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)]">Autodarts gerade nicht verfügbar</h2>
           <p className="mt-4 text-base leading-7 text-[var(--color-text-secondary)] lg:text-lg lg:leading-8">
-            {observerState === 'error' || observerState === 'closed'
-              ? 'Der lokale Autodarts-Browser konnte nicht sauber gestartet oder gehalten werden.'
-              : 'Die Verbindung zu Autodarts wird aufgebaut. Wenn das hängen bleibt, kann der Operator lokal neu anstoßen.'}
+            {observerHeadless
+              ? 'Autodarts läuft in dieser Umgebung headless im Hintergrund. Für Browser-Smokes bleibt der Kiosk sichtbar, statt auf einen externen Observer-Bildschirm zu wechseln.'
+              : observerState === 'error' || observerState === 'closed'
+                ? 'Der lokale Autodarts-Browser konnte nicht sauber gestartet oder gehalten werden.'
+                : 'Die Verbindung zu Autodarts wird aufgebaut. Wenn das hängen bleibt, kann der Operator lokal neu anstoßen.'}
           </p>
 
           {observerError && (

@@ -59,6 +59,23 @@ _default_profile = str(Path(os.environ.get('DATA_DIR', './data')) / 'chrome_prof
 CHROME_PROFILE_DIR = os.environ.get('CHROME_PROFILE_DIR', _default_profile)
 
 
+def _find_playwright_chromium_executable() -> Optional[str]:
+    """Best-effort fallback when system Chrome channel is unavailable."""
+    explicit = os.environ.get("PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH") or os.environ.get("CHROMIUM_BIN")
+    if explicit and os.path.isfile(explicit):
+        return explicit
+
+    cache_root = Path.home() / ".cache" / "ms-playwright"
+    if not cache_root.exists():
+        return None
+
+    candidates = sorted(cache_root.glob("chromium-*/chrome-linux64/chrome"), reverse=True)
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return None
+
+
 # ── Console capture script (injected BEFORE page loads) ──
 # add_init_script ensures this runs before any Autodarts JS.
 CONSOLE_CAPTURE_SCRIPT = """
@@ -200,6 +217,7 @@ class ObserverStatus:
     board_id: str
     state: ObserverState = ObserverState.CLOSED
     browser_open: bool = False
+    headless: bool = False
     autodarts_url: str = ""
     games_observed: int = 0
     last_state_change: Optional[str] = None
@@ -212,6 +230,7 @@ class ObserverStatus:
             "board_id": self.board_id,
             "state": self.state.value if isinstance(self.state, ObserverState) else self.state,
             "browser_open": self.browser_open,
+            "headless": self.headless,
             "autodarts_url": self.autodarts_url,
             "games_observed": self.games_observed,
             "last_state_change": self.last_state_change,
@@ -693,6 +712,7 @@ class AutodartsObserver:
 
         url = autodarts_url or AUTODARTS_URL
         self.status.autodarts_url = url
+        self.status.headless = headless
 
         # Persistent Chrome profile per board
         profile_dir = os.path.join(CHROME_PROFILE_DIR, self.board_id)
@@ -757,10 +777,8 @@ class AutodartsObserver:
                 "--disable-component-extensions-with-background-pages",
             ]
 
-            logger.info(f"[Observer:{self.board_id}]   Launching Chrome (persistent context, channel=chrome)...")
-            self._context = await self._playwright.chromium.launch_persistent_context(
+            launch_kwargs = dict(
                 user_data_dir=profile_dir,
-                channel="chrome",
                 headless=headless,
                 ignore_default_args=ignore_args,
                 args=chrome_args,
@@ -769,7 +787,26 @@ class AutodartsObserver:
                 ignore_https_errors=True,
                 accept_downloads=False,
             )
-            logger.info(f"[Observer:{self.board_id}]   Chrome launched OK")
+
+            logger.info(f"[Observer:{self.board_id}]   Launching Chrome (persistent context, channel=chrome)...")
+            try:
+                self._context = await self._playwright.chromium.launch_persistent_context(
+                    channel="chrome",
+                    **launch_kwargs,
+                )
+                logger.info(f"[Observer:{self.board_id}]   Chrome launched OK")
+            except Exception as chrome_error:
+                fallback_executable = _find_playwright_chromium_executable()
+                if not fallback_executable:
+                    raise
+                logger.warning(
+                    f"[Observer:{self.board_id}]   Chrome channel unavailable; falling back to Playwright Chromium: {fallback_executable} | error={chrome_error}"
+                )
+                self._context = await self._playwright.chromium.launch_persistent_context(
+                    executable_path=fallback_executable,
+                    **launch_kwargs,
+                )
+                logger.info(f"[Observer:{self.board_id}]   Playwright Chromium fallback launched OK")
 
             # ── Log ALL existing pages (restored tabs, extensions, about:blank) ──
             existing_pages = list(self._context.pages)

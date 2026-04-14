@@ -14,6 +14,7 @@ import bcrypt
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from backend.database import get_db, DATA_DIR
 from backend.models import User, Session, Settings, AuditLog, UserRole, SessionStatus
@@ -111,11 +112,21 @@ async def log_audit(db: AsyncSession, user: Optional[User], action: str,
 async def get_or_create_setting(db: AsyncSession, key: str, default_value: dict) -> dict:
     result = await db.execute(select(Settings).where(Settings.key == key))
     setting = result.scalar_one_or_none()
-    if not setting:
-        setting = Settings(key=key, value=default_value)
-        db.add(setting)
-        await db.flush()
-    return setting.value
+    if setting:
+        return setting.value
+
+    try:
+        async with db.begin_nested():
+            setting = Settings(key=key, value=default_value)
+            db.add(setting)
+            await db.flush()
+        return setting.value
+    except IntegrityError:
+        result = await db.execute(select(Settings).where(Settings.key == key))
+        setting = result.scalar_one_or_none()
+        if setting is None:
+            raise
+        return setting.value
 
 
 async def get_active_session_for_board(db: AsyncSession, board_db_id: str) -> Optional[Session]:

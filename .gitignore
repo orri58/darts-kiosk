@@ -39,8 +39,10 @@ coverage/
 .pytest_cache/
 test_reports/
 test_result.md
+test-results/
 memory/
 .emergent/
+.tmp_wave*/
 
 # Update/runtime staging
 /data/downloads/

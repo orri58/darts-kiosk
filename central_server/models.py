@@ -40,6 +40,40 @@ class DeviceStatus(str, enum.Enum):
     BLOCKED = "blocked"
 
 
+class DeviceTrustStatus(str, enum.Enum):
+    """Non-enforcing trust states for the Central Rebuild groundwork.
+
+    These values are additive only for now. Current local runtime continues
+    to authenticate with install_id + api_key until certificate/lease flows
+    are explicitly enabled behind dedicated flags.
+    """
+    LEGACY_UNBOUND = "legacy_unbound"
+    LEGACY_BOUND = "legacy_bound"
+    PENDING_ENROLLMENT = "pending_enrollment"
+    TRUSTED = "trusted"
+    DEGRADED = "degraded"
+    REVOKED = "revoked"
+    REPLACED = "replaced"
+
+
+class DeviceLeaseStatus(str, enum.Enum):
+    NONE = "none"
+    PENDING = "pending"
+    ACTIVE = "active"
+    GRACE = "grace"
+    EXPIRED = "expired"
+    REVOKED = "revoked"
+
+
+class DeviceCredentialStatus(str, enum.Enum):
+    NONE = "none"
+    PENDING = "pending"
+    ACTIVE = "active"
+    ROTATING = "rotating"
+    REVOKED = "revoked"
+    EXPIRED = "expired"
+
+
 class CentralCustomer(Base):
     __tablename__ = "customers"
 
@@ -71,7 +105,13 @@ class CentralLocation(Base):
 
 
 class CentralDevice(Base):
-    """Registered kiosk device. Linked to a location and bound by install_id."""
+    """Registered kiosk device.
+
+    Current production binding remains install_id/api_key based.
+    The trust/credential/lease fields below are Central Rebuild scaffolding so
+    central can start tracking stronger device identity without changing the
+    local runtime's authoritative execution path yet.
+    """
     __tablename__ = "devices"
 
     id = Column(String(36), primary_key=True, default=_uuid)
@@ -81,6 +121,20 @@ class CentralDevice(Base):
     device_name = Column(String(100), nullable=True)
     status = Column(String(20), default=DeviceStatus.ACTIVE.value)
     binding_status = Column(String(20), default="unbound")
+    trust_status = Column(String(32), default=DeviceTrustStatus.LEGACY_UNBOUND.value, index=True)
+    trust_reason = Column(Text, nullable=True)
+    trust_last_changed_at = Column(DateTime, nullable=True)
+    replacement_of_device_id = Column(String(36), nullable=True, index=True)
+    credential_status = Column(String(32), default=DeviceCredentialStatus.NONE.value)
+    credential_fingerprint = Column(String(128), nullable=True, index=True)
+    credential_issued_at = Column(DateTime, nullable=True)
+    credential_expires_at = Column(DateTime, nullable=True)
+    lease_status = Column(String(32), default=DeviceLeaseStatus.NONE.value, index=True)
+    lease_id = Column(String(64), nullable=True, index=True)
+    lease_issued_at = Column(DateTime, nullable=True)
+    lease_expires_at = Column(DateTime, nullable=True)
+    lease_grace_until = Column(DateTime, nullable=True)
+    lease_metadata = Column(JSON, nullable=True)
     last_sync_at = Column(DateTime, nullable=True)
     last_sync_ip = Column(String(50), nullable=True)
     sync_count = Column(Integer, default=0)
@@ -98,6 +152,56 @@ class CentralDevice(Base):
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     location = relationship("CentralLocation", back_populates="devices")
+    credentials = relationship("DeviceCredential", back_populates="device", cascade="all, delete-orphan")
+    leases = relationship("DeviceLease", back_populates="device", cascade="all, delete-orphan")
+
+
+class DeviceCredential(Base):
+    """Central placeholder for issued device credentials/certificates.
+
+    V1 scaffolding only: stores metadata and audit-friendly references, not a
+    full certificate authority workflow yet.
+    """
+    __tablename__ = "device_credentials"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    device_id = Column(String(36), ForeignKey("devices.id"), nullable=False, index=True)
+    status = Column(String(32), default=DeviceCredentialStatus.PENDING.value, index=True)
+    credential_kind = Column(String(32), default="placeholder")
+    fingerprint = Column(String(128), nullable=True, index=True)
+    public_key_pem = Column(Text, nullable=True)
+    certificate_pem = Column(Text, nullable=True)
+    csr_pem = Column(Text, nullable=True)
+    issued_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    replacement_for_credential_id = Column(String(36), nullable=True, index=True)
+    details_json = Column("metadata", JSON, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    device = relationship("CentralDevice", back_populates="credentials")
+
+
+class DeviceLease(Base):
+    """Central placeholder for short-lived commercial operating leases."""
+    __tablename__ = "device_leases"
+
+    id = Column(String(36), primary_key=True, default=_uuid)
+    device_id = Column(String(36), ForeignKey("devices.id"), nullable=False, index=True)
+    central_license_id = Column(String(36), ForeignKey("licenses.id"), nullable=True, index=True)
+    lease_id = Column(String(64), unique=True, nullable=False, index=True, default=_uuid)
+    status = Column(String(32), default=DeviceLeaseStatus.PENDING.value, index=True)
+    issued_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    grace_until = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    signature = Column(Text, nullable=True)
+    details_json = Column("metadata", JSON, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    device = relationship("CentralDevice", back_populates="leases")
 
 
 class CentralLicense(Base):

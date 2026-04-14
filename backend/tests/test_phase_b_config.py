@@ -26,19 +26,11 @@ class TestCentralConfigAPI:
         assert response.status_code == 200, f"Login failed: {response.text}"
         return response.json()["access_token"]
     
-    def test_get_config_effective_unauthenticated(self):
-        """GET /api/config/effective should work without auth (for devices)"""
+    def test_get_config_effective_requires_auth(self):
+        """GET /api/config/effective must reject unauthenticated access"""
         response = requests.get(f"{CENTRAL_URL}/api/config/effective")
-        assert response.status_code == 200
-        
-        data = response.json()
-        assert "config" in data
-        assert "version" in data
-        assert "layers_applied" in data
-        assert isinstance(data["config"], dict)
-        assert isinstance(data["version"], int)
-        assert "global" in data["layers_applied"]
-        print(f"✓ Effective config returned with version {data['version']}")
+        assert response.status_code == 401
+        print("✓ Effective config now requires device or user authentication")
     
     def test_get_config_profiles_requires_auth(self, superadmin_token):
         """GET /api/config/profiles requires auth"""
@@ -67,7 +59,10 @@ class TestCentralConfigAPI:
         headers = {"Authorization": f"Bearer {superadmin_token}"}
         
         # Get current config
-        response = requests.get(f"{CENTRAL_URL}/api/config/effective")
+        response = requests.get(
+            f"{CENTRAL_URL}/api/config/effective",
+            headers=headers,
+        )
         current_version = response.json()["version"]
         current_config = response.json()["config"]
         
@@ -89,12 +84,18 @@ class TestCentralConfigAPI:
         print(f"✓ Config version incremented: {current_version} -> {new_version}")
         
         # Verify effective config shows new version
-        response = requests.get(f"{CENTRAL_URL}/api/config/effective")
+        response = requests.get(
+            f"{CENTRAL_URL}/api/config/effective",
+            headers=headers,
+        )
         assert response.json()["version"] == new_version
     
     def test_config_hierarchy_layers(self, superadmin_token):
         """Test that effective config includes proper layers"""
-        response = requests.get(f"{CENTRAL_URL}/api/config/effective")
+        response = requests.get(
+            f"{CENTRAL_URL}/api/config/effective",
+            headers={"Authorization": f"Bearer {superadmin_token}"},
+        )
         data = response.json()
         
         # Should have global layer at minimum

@@ -15,6 +15,7 @@ Central finalization via finalize_match(board_id, trigger):
 import asyncio
 import os
 import secrets
+import sys
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -770,7 +771,9 @@ async def start_observer_for_board(board_id: str, autodarts_url: str):
 
     _finalized.pop(board_id, None)
 
-    headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
+    env_headless = os.environ.get('AUTODARTS_HEADLESS', 'false').lower() == 'true'
+    display_missing = sys.platform.startswith('linux') and not os.environ.get('DISPLAY')
+    headless = env_headless or display_missing
     trigger_policy = await _load_autodarts_trigger_policy()
     logger.info(
         f"[Kiosk] === Observer Start === board={board_id} url={autodarts_url} headless={headless} "

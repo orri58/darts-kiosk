@@ -455,6 +455,7 @@ async def get_board_session(board_id: str, db: AsyncSession = Depends(get_db)):
         "board_status": board.status,
         "autodarts_mode": AUTODARTS_MODE,
         "observer_browser_open": obs_status.get("browser_open", False),
+        "observer_headless": obs_status.get("headless", False),
         "observer_state": obs_status.get("state", "closed"),
         "observer_error": obs_status.get("last_error"),
         "session": SessionResponse(
