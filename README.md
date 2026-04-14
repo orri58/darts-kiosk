@@ -4,6 +4,15 @@ Local-first darts board control and kiosk software for venue operation.
 
 Current product release line: **v4.3.0**
 
+## Start here if you are new
+
+If you are an external developer or are joining the project cold, read these first:
+- `docs/EXTERNAL_DEVELOPER_HANDOFF.md`
+- `docs/TEST_READINESS.md`
+- `EXECUTION_BOARD.md`
+- `docs/CENTRAL_REBUILD_MASTERPLAN.md`
+- `docs/DEVICE_TRUST_MODEL.md`
+
 The current repo state is centered on a **protected local core**:
 - local auth, boards, sessions, settings, admin UI
 - observer-first Autodarts integration via Playwright/Chrome
@@ -29,6 +38,8 @@ What is in good shape now:
 - local revenue summary from recorded session sale totals
 - Windows setup/start/stop/smoke helper scripts
 - focused in-process backend validation for the local core
+- a green focused central/trust contract slice (`backend/tests/test_central_security_hardening.py` + `tests/test_device_trust.py`)
+- significantly stronger runtime packaging / handoff / drill documentation and tooling
 
 What is **not** fully proven here:
 - a real Windows board PC end-to-end run
@@ -38,17 +49,23 @@ What is **not** fully proven here:
 
 Short version: the repo is now understandable, testable, and honest about its boundaries, but it still needs **real-machine validation** before anyone calls it done.
 
+If you want the most current plain-English status/plan instead of archaeology through wave notes, use:
+- `docs/EXTERNAL_DEVELOPER_HANDOFF.md`
+- `docs/TEST_READINESS.md`
+
 ## Architecture in one paragraph
 
 A staff/admin user unlocks a board by adding credits, which creates a local `Session` row and moves the board to `unlocked`. In observer mode, the backend launches a persistent Chrome/Playwright observer against the configured Autodarts URL. Authoritative WebSocket signals drive `_on_game_started()` and `finalize_match()`, which update board/session state, deduct the correct credit amount from the real match/player situation, decide whether the session stays alive or locks, and coordinate kiosk/observer UI behavior. Settings, reporting, and revenue all read from the local database; central outages are supposed to stay non-fatal to local play.
 
 More detail:
+- `docs/EXTERNAL_DEVELOPER_HANDOFF.md`
 - `docs/ARCHITECTURE.md`
 - `docs/ANALYSIS.md`
 - `docs/CREDITS_PRICING.md`
 - `docs/RUNBOOK.md`
 - `docs/TESTING.md`
 - `docs/STATUS.md`
+- `docs/TEST_READINESS.md`
 
 ## Repository layout
 
@@ -159,6 +176,7 @@ It does **not** replace live Windows / Autodarts verification.
 
 ## Documentation index
 
+- `docs/EXTERNAL_DEVELOPER_HANDOFF.md` — best current external overview: architecture, status, plan, next steps
 - `docs/ARCHITECTURE.md` — current runtime structure and source-of-truth modules
 - `docs/ANALYSIS.md` — synthesis of baseline, local-core, and Autodarts analysis
 - `docs/AUTODARTS_ANALYSIS.md` — detailed observer/trigger evidence

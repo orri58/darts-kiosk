@@ -16,8 +16,8 @@ That means:
 **Mixed readiness.**
 
 Short version:
-- the **full suite is still broadly red / drifted** and should not be described as generally green
-- the **central / trust slice is runnable but not clean**, with failures dominated by compact-contract expectation drift plus at least one likely real serializer/backfill gap
+- the **full suite should still not be described as generally green**
+- the previously red **central / trust slice has now been reconciled and is green in its focused form**
 - the **runtime lane is comparatively healthy** and still the closest thing to a practical field-ready path, but it is **not perfectly green either** in the current repo snapshot
 - the **live kiosk/UI state is materially better than before**: loading state exists, unlock path still exists, and observer behavior is now explicit for real UI handoff vs headless/browser-smoke fallback
 
@@ -35,7 +35,9 @@ Short version:
 - `backend/routers/kiosk.py`
 - `kiosk-check.spec.js`
 
-### Focused pytest reality check run
+### Focused pytest reality check runs
+
+#### Earlier mixed-slice reality check
 Command:
 
 ```bash
@@ -47,11 +49,25 @@ Command:
   --maxfail=20
 ```
 
-Result:
+Historical result from that mixed slice:
 - **111 passed**
 - **11 failed**
 - **2 warnings**
 - runtime: about **64s**
+
+#### Current central / trust focused result
+Command:
+
+```bash
+.venv/bin/python -m pytest -q \
+  backend/tests/test_central_security_hardening.py \
+  tests/test_device_trust.py
+```
+
+Current result:
+- **95 passed**
+- **0 failed**
+- **2 warnings**
 
 ## What is actually healthy vs not
 
@@ -64,23 +80,23 @@ The current repo state still shows broad red/drift outside a narrow “one lane 
 - but the suite is **not** in a presentable all-green state
 
 ### 2) Central / trust lane
-Useful, runnable, but still red.
+Useful, runnable, and the focused reconciliation slice is now **green**.
 
-The focused trust/security cluster still fails on compact summary contract expectations, including:
-- `coverage_state` naming now appearing as `full_set` instead of older `full`
-- additive `verdict` / `verdict_text` fields showing up in provenance rollups
-- more nested `detail_level` stamping in operator-safe/internal summaries
-- one still-plausible serializer compatibility gap around internal `reconciliation_summary.issuer_profiles.support_summary`
+What changed:
+- compact summary / provenance contract drift was reconciled
+- internal vs operator-safe detail shaping was tightened
+- missing internal support-summary shaping was fixed
+- source-contract rollup / name-list expectations were aligned with the intended contracts
 
-Current failing trust/security tests from the sampled run:
-- `tests/test_device_trust.py::test_build_reconciliation_summary_counts_severities_and_sources`
-- `tests/test_device_trust.py::test_reconciliation_summary_carries_issuer_profile_summary_and_support_summary`
-- `tests/test_device_trust.py::test_operator_safe_signing_registry_keeps_compact_rotation_and_terminal_status`
-- `tests/test_device_trust.py::test_finalize_endpoint_summary_stamps_compact_contract_subblocks`
-- `tests/test_device_trust.py::test_compact_reconciliation_summary_stamps_nested_transition_and_lineage_contracts`
-- `tests/test_device_trust.py::test_support_diagnostics_compact_summary_explains_rotation_and_timestamps`
-- `backend/tests/test_central_security_hardening.py::test_installer_device_trust_detail_keeps_internal_fields`
-- `backend/tests/test_central_security_hardening.py::test_support_compact_summary_raw_contract_provenance_state_is_self_contained`
+Current focused result:
+- `backend/tests/test_central_security_hardening.py`
+- `tests/test_device_trust.py`
+- **95 passed / 0 failed**
+
+Important caveat:
+- this means the **focused trust/security slice is healthy now**
+- it does **not** mean the broader repo/full suite is generally green
+- trust still remains an evolving central-side capability, not a finished production PKI/enforcement story
 
 ### 3) Runtime lane
 **Comparatively healthiest lane**, but not clean.
@@ -139,14 +155,14 @@ That is the key “live UI state achieved” point worth preserving in docs:
 ## Practical next steps
 
 ### Do next
-1. **Do not resume wave work.**
-2. Reconcile the currently failing runtime/trust tests against the now-observed compact-contract/output shapes.
-3. For trust specifically, decide case-by-case whether each failure is:
-   - expected additive contract drift → update tests, or
-   - required compatibility surface → add a narrow serializer backfill
-4. Keep the next runtime step practical:
+1. **Do not resume random wave work just because one slice is green.**
+2. Keep the next step practical:
    - validate / finish the board-PC closed-loop drill path
-   - do not start another reviewer-ergonomics wave until the current runtime failures are understood
+   - reconcile remaining runtime-lane failures and real operator flow gaps
+3. Treat the green central/trust slice as a maintained contract:
+   - keep it green while changing adjacent central surfaces
+   - update tests/docs together when contracts intentionally move
+4. Continue broader-suite cleanup by cluster, not by blind all-suite thrashing
 
 ### Suggested immediate commands
 ```bash
@@ -157,8 +173,9 @@ That is the key “live UI state achieved” point worth preserving in docs:
 ## Bottom line
 
 Use this wording in future handoffs unless the repo state changes materially:
-- **Wave mode is frozen.**
-- **Full suite still broadly red.**
+- **Wave mode should remain disciplined, not opportunistic.**
+- **The focused central/trust slice is green.**
+- **The full repo should still not be described as broadly green without qualification.**
 - **Runtime lane is comparatively healthy, but not clean.**
 - **Live kiosk/UI state is materially improved and explicit.**
-- **Next work is reconciliation + practical validation, not more waves.**
+- **Next work is practical validation + broader cluster reconciliation, not decorative progress narration.**
