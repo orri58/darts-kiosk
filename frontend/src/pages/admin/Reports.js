@@ -43,9 +43,25 @@ const STATUS_META = {
 function buildReportParams({ preset, dateFrom, dateTo, filterBoard, filterMode }) {
   const params = new URLSearchParams();
 
+  const toLocalBoundaryIso = (dateValue, endOfDay = false) => {
+    if (!dateValue) return null;
+    const local = new Date(`${dateValue}T00:00:00`);
+    if (Number.isNaN(local.getTime())) return null;
+    if (endOfDay) {
+      local.setHours(23, 59, 59, 999);
+    }
+    return local.toISOString();
+  };
+
   if (preset && !dateFrom && !dateTo) params.append('preset', preset);
-  if (dateFrom) params.append('date_from', `${dateFrom}T00:00:00`);
-  if (dateTo) params.append('date_to', `${dateTo}T23:59:59`);
+  if (dateFrom) {
+    const fromIso = toLocalBoundaryIso(dateFrom, false);
+    if (fromIso) params.append('date_from', fromIso);
+  }
+  if (dateTo) {
+    const toIso = toLocalBoundaryIso(dateTo, true);
+    if (toIso) params.append('date_to', toIso);
+  }
   if (filterBoard) params.append('board_id', filterBoard);
   if (filterMode) params.append('pricing_mode', filterMode);
 
@@ -54,7 +70,8 @@ function buildReportParams({ preset, dateFrom, dateTo, filterBoard, filterMode }
 
 function formatDateTime(value) {
   if (!value) return '–';
-  return new Date(value).toLocaleString('de-DE', {
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(value) ? value : `${value}Z`;
+  return new Date(normalized).toLocaleString('de-DE', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',

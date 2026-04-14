@@ -310,6 +310,21 @@ async def download_log_bundle(admin: User = Depends(require_admin), db: AsyncSes
 # Reports / Accounting Export
 # ===================================================================
 
+def _ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def _parse_report_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
 @router.get("/reports/sessions")
 async def get_sessions_report(
     date_from: Optional[str] = Query(None),
@@ -333,17 +348,13 @@ async def get_sessions_report(
         query = query.where(Session.started_at >= now - timedelta(days=30))
     else:
         if date_from:
-            try:
-                dt = datetime.fromisoformat(date_from).replace(tzinfo=timezone.utc)
+            dt = _parse_report_datetime(date_from)
+            if dt:
                 query = query.where(Session.started_at >= dt)
-            except ValueError:
-                pass
         if date_to:
-            try:
-                dt = datetime.fromisoformat(date_to).replace(tzinfo=timezone.utc)
+            dt = _parse_report_datetime(date_to)
+            if dt:
                 query = query.where(Session.started_at <= dt)
-            except ValueError:
-                pass
 
     if pricing_mode:
         query = query.where(Session.pricing_mode == pricing_mode)
@@ -374,13 +385,14 @@ async def get_sessions_report(
         board_name = board.name if board else "?"
         board_bid = board.board_id if board else "?"
         created_by = users_map.get(s.unlocked_by_user_id, "-")
+        started_at = _ensure_utc(s.started_at)
 
         booked_total = float(charge_totals.get(s.id, s.price_total or 0) or 0)
         revenue_by_board[board_name] = revenue_by_board.get(board_name, 0) + booked_total
         total_revenue += booked_total
 
         rows.append({
-            "date": s.started_at.isoformat() if s.started_at else "",
+            "date": started_at.isoformat() if started_at else "",
             "board": board_name,
             "board_id": board_bid,
             "session_id": s.id,
