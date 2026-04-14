@@ -7,6 +7,7 @@ Current product release line: **v4.3.0**
 ## Start here if you are new
 
 If you are an external developer or are joining the project cold, read these first:
+- `docs/README.md`
 - `docs/EXTERNAL_DEVELOPER_HANDOFF.md`
 - `docs/TEST_READINESS.md`
 - `EXECUTION_BOARD.md`
@@ -176,6 +177,7 @@ It does **not** replace live Windows / Autodarts verification.
 
 ## Documentation index
 
+- `docs/README.md` — docs map: what to read first, what is source-of-truth, what is history
 - `docs/EXTERNAL_DEVELOPER_HANDOFF.md` — best current external overview: architecture, status, plan, next steps
 - `docs/ARCHITECTURE.md` — current runtime structure and source-of-truth modules
 - `docs/ANALYSIS.md` — synthesis of baseline, local-core, and Autodarts analysis

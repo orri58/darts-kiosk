@@ -318,15 +318,16 @@ The next sensible plan is:
 
 If you join this project fresh, the safest order is:
 
-1. read this file
-2. read `README.md`
-3. read `docs/TEST_READINESS.md`
-4. read `EXECUTION_BOARD.md`
-5. read `docs/CENTRAL_REBUILD_MASTERPLAN.md`
-6. read `docs/DEVICE_TRUST_MODEL.md`
-7. inspect the core runtime files
-8. run one focused test slice before changing anything
-9. only then start implementing
+1. read `docs/README.md`
+2. read this file
+3. read `README.md`
+4. read `docs/TEST_READINESS.md`
+5. read `EXECUTION_BOARD.md`
+6. read `docs/CENTRAL_REBUILD_MASTERPLAN.md`
+7. read `docs/DEVICE_TRUST_MODEL.md`
+8. inspect the core runtime files
+9. run one focused test slice before changing anything
+10. only then start implementing
 
 ---
 
