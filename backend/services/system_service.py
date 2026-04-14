@@ -15,17 +15,9 @@ from typing import Dict, Optional
 logger = logging.getLogger(__name__)
 
 from backend.database import DATA_DIR, DATABASE_PATH
+from backend.services.version_service import read_app_version
 LOGS_DIR = DATA_DIR / 'logs'
 
-# Read version from VERSION file (single source of truth)
-_VERSION_FILE = Path(__file__).resolve().parent.parent.parent / 'VERSION'
-def _read_version() -> str:
-    try:
-        return _VERSION_FILE.read_text().strip()
-    except FileNotFoundError:
-        return os.environ.get('APP_VERSION', '0.0.0')
-
-APP_VERSION = _read_version()
 DOCKER_IMAGE = os.environ.get('DOCKER_IMAGE', 'darts-kiosk')
 
 
@@ -50,7 +42,7 @@ class SystemService:
         backup_count = len(list(backup_dir.glob('db_backup_*'))) if backup_dir.exists() else 0
 
         return {
-            "version": APP_VERSION,
+            "version": read_app_version(),
             "image_tag": os.environ.get('IMAGE_TAG', 'latest'),
             "mode": os.environ.get('MODE', 'MASTER'),
             "uptime_seconds": uptime_s,

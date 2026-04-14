@@ -727,7 +727,7 @@ export default function AdminSystem() {
                       <div>
                         <p className="text-xs text-zinc-500 uppercase tracking-wider">Installierte Version</p>
                         <span className="text-2xl font-mono text-white font-bold" data-testid="update-current-version">
-                          v{updates?.current_version || '1.0.0'}
+                          v{updates?.current_version || sysInfo?.version || '–'}
                         </span>
                         <p className="mt-1 text-xs font-mono text-emerald-500/80" data-testid="update-build-tag">
                           Release-Kanal: stable · Update-System aktiv

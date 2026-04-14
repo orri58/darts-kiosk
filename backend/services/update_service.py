@@ -17,16 +17,8 @@ import httpx
 logger = logging.getLogger(__name__)
 
 from backend.database import DATA_DIR
+from backend.services.version_service import read_app_version
 
-# Read version from VERSION file (single source of truth)
-_VERSION_FILE = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'VERSION')))
-def _read_version() -> str:
-    try:
-        return _VERSION_FILE.read_text().strip()
-    except FileNotFoundError:
-        return os.environ.get('APP_VERSION', '0.0.0')
-
-CURRENT_VERSION = _read_version()
 GITHUB_REPO = os.environ.get('GITHUB_REPO', '').strip().strip('/')
 GITHUB_API = "https://api.github.com"
 DOWNLOADS_DIR = DATA_DIR / 'downloads'
@@ -66,7 +58,7 @@ class UpdateService:
         self._notification_cache: Optional[Dict] = None
 
     def get_current_version(self) -> str:
-        return CURRENT_VERSION
+        return read_app_version()
 
     def get_github_repo(self) -> str:
         return GITHUB_REPO
@@ -90,7 +82,7 @@ class UpdateService:
 
     def _is_newer(self, version: str) -> bool:
         try:
-            return self._parse_version(version) > self._parse_version(CURRENT_VERSION)
+            return self._parse_version(version) > self._parse_version(self.get_current_version())
         except Exception:
             return False
 
@@ -103,10 +95,11 @@ class UpdateService:
 
     async def check_for_updates(self) -> Dict:
         """Check GitHub for new releases."""
+        current_version = self.get_current_version()
         if not GITHUB_REPO:
             return {
                 "configured": False,
-                "current_version": CURRENT_VERSION,
+                "current_version": current_version,
                 "message": "Kein GitHub-Repository konfiguriert. Setze GITHUB_REPO in .env (z.B. owner/darts-kiosk).",
                 "releases": [],
                 "last_check": self._last_check,
@@ -129,7 +122,7 @@ class UpdateService:
                 logger.warning(f"[UpdateCheck] 404: {msg}")
                 return {
                     "configured": True,
-                    "current_version": CURRENT_VERSION,
+                    "current_version": current_version,
                     "message": msg,
                     "releases": [],
                     "last_check": datetime.now(timezone.utc).isoformat(),
@@ -139,7 +132,7 @@ class UpdateService:
                 logger.warning("[UpdateCheck] 401: Token ungueltig oder abgelaufen")
                 return {
                     "configured": True,
-                    "current_version": CURRENT_VERSION,
+                    "current_version": current_version,
                     "message": "GitHub-Token ungueltig oder abgelaufen. Bitte GITHUB_TOKEN in .env pruefen.",
                     "releases": [],
                     "last_check": datetime.now(timezone.utc).isoformat(),
@@ -148,7 +141,7 @@ class UpdateService:
             if resp.status_code == 403:
                 return {
                     "configured": True,
-                    "current_version": CURRENT_VERSION,
+                    "current_version": current_version,
                     "message": "GitHub API Rate-Limit erreicht. Versuche es spaeter erneut oder setze GITHUB_TOKEN.",
                     "releases": [],
                     "last_check": datetime.now(timezone.utc).isoformat(),
@@ -183,7 +176,7 @@ class UpdateService:
                     is_prerelease=r.get("prerelease", False),
                     html_url=r.get("html_url", ""),
                     assets=release_assets,
-                    is_current=(version == CURRENT_VERSION or tag == f"v{CURRENT_VERSION}"),
+                    is_current=(version == current_version or tag == f"v{current_version}"),
                     is_newer=self._is_newer(version),
                 )
                 releases.append(rel)
@@ -200,15 +193,15 @@ class UpdateService:
             newest = next((r for r in releases if r.is_newer and not r.is_prerelease), None)
 
             if newest:
-                logger.info(f"[UpdateCheck] Update verfuegbar: v{newest.version} (aktuell: v{CURRENT_VERSION})")
+                logger.info(f"[UpdateCheck] Update verfuegbar: v{newest.version} (aktuell: v{current_version})")
             else:
-                logger.info(f"[UpdateCheck] Kein Update verfuegbar (aktuell: v{CURRENT_VERSION})")
+                logger.info(f"[UpdateCheck] Kein Update verfuegbar (aktuell: v{current_version})")
 
             return {
                 "configured": True,
-                "current_version": CURRENT_VERSION,
+                "current_version": current_version,
                 "update_available": newest is not None,
-                "latest_version": newest.version if newest else CURRENT_VERSION,
+                "latest_version": newest.version if newest else current_version,
                 "latest_name": newest.name if newest else None,
                 "latest_url": newest.html_url if newest else None,
                 "latest_body": newest.body if newest else None,
@@ -235,7 +228,7 @@ class UpdateService:
         except httpx.TimeoutException:
             return {
                 "configured": True,
-                "current_version": CURRENT_VERSION,
+                "current_version": current_version,
                 "message": "GitHub-API Timeout. Pruefe die Internetverbindung.",
                 "releases": [],
                 "last_check": self._last_check,
@@ -244,7 +237,7 @@ class UpdateService:
             logger.error(f"GitHub update check failed: {e}")
             return {
                 "configured": True,
-                "current_version": CURRENT_VERSION,
+                "current_version": current_version,
                 "message": f"Fehler: {str(e)}",
                 "releases": [],
                 "last_check": self._last_check,
@@ -607,11 +600,12 @@ class UpdateService:
         """Perform a single background check and persist the result."""
         try:
             result = await self.check_for_updates()
+            current_version = self.get_current_version()
 
             notification = {
                 "update_available": result.get("update_available", False),
-                "current_version": CURRENT_VERSION,
-                "latest_version": result.get("latest_version", CURRENT_VERSION),
+                "current_version": current_version,
+                "latest_version": result.get("latest_version", current_version),
                 "latest_name": result.get("latest_name"),
                 "latest_body": result.get("latest_body"),
                 "latest_url": result.get("latest_url"),
