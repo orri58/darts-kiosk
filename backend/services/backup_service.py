@@ -22,7 +22,7 @@ class BackupInfo:
     filename: str
     path: str
     size: int
-    created_at: str
+    created_at: datetime
     compressed: bool
     validated: bool = True
     integrity_check: Optional[str] = None
@@ -92,7 +92,7 @@ class BackupService:
                 filename=target.name,
                 path=str(target),
                 size=target.stat().st_size,
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(timezone.utc),
                 compressed=compressed,
                 validated=True,
                 integrity_check=integrity,
@@ -112,7 +112,7 @@ class BackupService:
                     filename=path.name,
                     path=str(path),
                     size=path.stat().st_size,
-                    created_at=datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat(),
+                    created_at=datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc),
                     compressed=path.suffix == ".gz",
                     validated=True,
                     integrity_check=None,
@@ -161,7 +161,7 @@ class BackupService:
                 filename=backup_path.name,
                 path=str(backup_path),
                 size=backup_path.stat().st_size,
-                created_at=datetime.now(timezone.utc).isoformat(),
+                created_at=datetime.now(timezone.utc),
                 compressed=backup_path.suffix == ".gz",
                 validated=True,
                 integrity_check=integrity,
@@ -193,7 +193,7 @@ class BackupService:
             "count": len(backups),
             "total_size_bytes": total_size,
             "total_size_mb": round(total_size / (1024 * 1024), 2),
-            "latest_backup": backups[0].created_at if backups else None,
+            "latest_backup": backups[0].created_at.isoformat() if backups else None,
         }
 
     async def start(self):

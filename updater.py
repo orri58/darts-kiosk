@@ -91,7 +91,14 @@ def stop_services(project_root):
     log("Stopping services...")
     stop_bat = Path(project_root) / 'stop.bat'
     if stop_bat.exists() and sys.platform == 'win32':
-        subprocess.run(['cmd', '/c', str(stop_bat)], cwd=project_root, timeout=30)
+        env = os.environ.copy()
+        env['DARTS_KIOSK_NO_PAUSE'] = '1'
+        try:
+            subprocess.run(['cmd', '/c', str(stop_bat), '--no-pause'], cwd=project_root, timeout=30, env=env)
+        except subprocess.TimeoutExpired:
+            log("stop.bat timed out — falling back to direct taskkill")
+            for title in ('Darts Backend', 'Darts Overlay', 'Darts Agent'):
+                subprocess.run(['taskkill', '/F', '/FI', f'WINDOWTITLE eq {title}'], timeout=10, capture_output=True)
     else:
         # Linux: try systemctl or kill
         subprocess.run(['pkill', '-f', 'uvicorn.*server:app'], timeout=10,
@@ -145,21 +152,41 @@ def health_check(url, retries=10, interval=5):
     return False
 
 
-def version_check(url, expected_version):
-    """Verify the installed version matches the expected version."""
+def read_local_version(project_root):
+    """Read VERSION directly from disk after file replacement."""
     try:
-        req = urllib.request.urlopen(url, timeout=5)
-        data = json.loads(req.read().decode())
-        actual = data.get('installed_version', '')
-        if actual == expected_version:
-            log(f"Version check PASSED: {actual}")
-            return True
-        else:
-            log(f"Version check FAILED: expected={expected_version}, actual={actual}")
-            return False
+        return (Path(project_root) / 'VERSION').read_text(encoding='utf-8').strip()
     except Exception as e:
-        log(f"Version check error: {e}")
-        return False
+        log(f"Local VERSION read error: {e}")
+        return ''
+
+
+def version_check(url, expected_version, project_root, retries=6, interval=3):
+    """Verify installed version from disk first, then from the live API with retries."""
+    local_version = read_local_version(project_root)
+    if local_version != expected_version:
+        log(f"Version file check FAILED: expected={expected_version}, actual={local_version or '?'}")
+        return False, local_version, None
+
+    log(f"Version file check PASSED: {local_version}")
+
+    last_actual = None
+    for attempt in range(1, retries + 1):
+        try:
+            req = urllib.request.urlopen(url, timeout=5)
+            data = json.loads(req.read().decode())
+            actual = data.get('installed_version', '')
+            last_actual = actual
+            if actual == expected_version:
+                log(f"Version API check PASSED: {actual} (attempt {attempt})")
+                return True, local_version, actual
+            log(f"Version API check mismatch (attempt {attempt}/{retries}): expected={expected_version}, actual={actual}")
+        except Exception as e:
+            log(f"Version API check attempt {attempt}/{retries} error: {e}")
+        time.sleep(interval)
+
+    log(f"Version API check FAILED: expected={expected_version}, actual={last_actual or '?'}")
+    return False, local_version, last_actual
 
 
 def replace_files(staging_dir, project_root, protected_paths):
@@ -310,10 +337,13 @@ def do_install(manifest):
             raise Exception("Health check failed after update")
 
         # Step 7: Version check
-        if version_check(version_url, target_version):
+        version_ok, local_version, api_version = version_check(version_url, target_version, project_root)
+        result['version_file'] = local_version
+        result['version_api'] = api_version
+        if version_ok:
             result['version_ok'] = True
         else:
-            log("WARNING: Version mismatch, but health check passed")
+            log("WARNING: Version mismatch detected after update")
             result['version_ok'] = False
 
         result['success'] = True

@@ -84,7 +84,7 @@ class ReadinessService:
         db_size_bytes = DATABASE_PATH.stat().st_size if db_exists else 0
         frontend_build_exists = (_FRONTEND_BUILD_DIR / "index.html").exists()
         version_exists = _VERSION_FILE.exists()
-        logs_dir_exists = LOGS_DIR.exists()
+        logs_dir_exists = any(path.exists() for path in system_service.get_log_directories())
         screenshots_dir_exists = SCREENSHOTS_DIR.exists()
         backup_dir = DATA_DIR / "backups"
         backup_dir_exists = backup_dir.exists()
@@ -411,17 +411,7 @@ class ReadinessService:
         app_backups = updater_service.list_app_backups()
         update_result = updater_service.get_update_result()
         screenshots = health_monitor.get_error_screenshots()
-        log_files = []
-        if LOGS_DIR.exists():
-            for file in sorted(LOGS_DIR.glob("*.log*")):
-                stat = file.stat()
-                log_files.append(
-                    {
-                        "name": file.name,
-                        "size_bytes": stat.st_size,
-                        "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
-                    }
-                )
+        log_files = system_service.list_log_files()
 
         support_bundle_includes = [
             "logs/*.log*",
@@ -459,7 +449,7 @@ class ReadinessService:
                 "loaded_in_env": bool(os.environ.get("JWT_SECRET") and os.environ.get("AGENT_SECRET")),
             },
             "logs": {
-                "dir": str(LOGS_DIR),
+                "dirs": [str(path) for path in system_service.get_log_directories()],
                 "files": log_files,
                 "tail_lines": system_service.tail_logs(120),
             },

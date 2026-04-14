@@ -3,6 +3,10 @@ setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 
+set "NO_PAUSE="
+if /I "%~1"=="--no-pause" set "NO_PAUSE=1"
+if defined DARTS_KIOSK_NO_PAUSE set "NO_PAUSE=1"
+
 set "BOARD_ID=BOARD-1"
 if exist "backend\.env" call :load_env_value BOARD_ID BOARD_ID
 
@@ -30,7 +34,7 @@ echo ================================================================
 echo   Alle Dienste beendet.
 echo ================================================================
 echo.
-pause
+if not defined NO_PAUSE pause
 endlocal
 goto :eof
 

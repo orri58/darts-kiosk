@@ -14,9 +14,11 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-from backend.database import DATA_DIR, DATABASE_PATH
+from backend.database import DATA_DIR, DATABASE_PATH, PROJECT_ROOT
 from backend.services.version_service import read_app_version
+
 LOGS_DIR = DATA_DIR / 'logs'
+ROOT_LOGS_DIR = PROJECT_ROOT / 'logs'
 
 DOCKER_IMAGE = os.environ.get('DOCKER_IMAGE', 'darts-kiosk')
 
@@ -66,13 +68,62 @@ class SystemService:
             "data_dir": str(DATA_DIR),
         }
 
+    def get_log_directories(self) -> list[Path]:
+        dirs: list[Path] = []
+        for candidate in (ROOT_LOGS_DIR, LOGS_DIR):
+            if candidate not in dirs:
+                dirs.append(candidate)
+        return dirs
+
+    def list_log_files(self) -> list[dict]:
+        files: list[dict] = []
+        seen: set[Path] = set()
+        for log_dir in self.get_log_directories():
+            if not log_dir.exists():
+                continue
+            for log_file in sorted(log_dir.glob('*.log*')):
+                resolved = log_file.resolve()
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                stat = log_file.stat()
+                files.append({
+                    'dir': str(log_dir),
+                    'name': log_file.name,
+                    'path': str(log_file),
+                    'size_bytes': stat.st_size,
+                    'modified_at': datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                })
+        files.sort(key=lambda item: item['modified_at'], reverse=True)
+        return files
+
     def tail_logs(self, lines: int = 100) -> list:
-        log_file = LOGS_DIR / 'app.log'
-        if not log_file.exists():
+        candidates: list[Path] = []
+        for log_dir in self.get_log_directories():
+            candidates.extend([
+                log_dir / 'app.log',
+                log_dir / 'backend.log',
+                log_dir / 'updater.log',
+            ])
+            candidates.extend(sorted(log_dir.glob('*.log*')))
+
+        seen: set[Path] = set()
+        existing: list[Path] = []
+        for path in candidates:
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            seen.add(resolved)
+            if path.exists() and path.is_file():
+                existing.append(path)
+
+        if not existing:
             return []
 
+        log_file = max(existing, key=lambda item: item.stat().st_mtime)
+
         try:
-            with open(log_file, 'r') as f:
+            with open(log_file, 'r', encoding='utf-8', errors='replace') as f:
                 all_lines = f.readlines()
             return [line.rstrip('\n') for line in all_lines[-lines:]]
         except Exception as e:
@@ -87,9 +138,10 @@ class SystemService:
         try:
             with tarfile.open(fileobj=buf, mode='w:gz') as tar:
                 # App logs
-                if LOGS_DIR.exists():
-                    for log_file in LOGS_DIR.glob('*.log*'):
-                        tar.add(str(log_file), arcname=f"logs/{log_file.name}")
+                for log_dir in self.get_log_directories():
+                    if log_dir.exists():
+                        for log_file in log_dir.glob('*.log*'):
+                            tar.add(str(log_file), arcname=f"logs/{log_file.name}")
 
                 # Supervisor logs if present
                 sup_dir = Path('/var/log/supervisor')

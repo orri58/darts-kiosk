@@ -135,19 +135,28 @@ export default function AdminSystem() {
 
   const fetchAll = useCallback(async () => {
     try {
-      const [infoRes, backupsRes, updatesRes, supportRes] = await Promise.all([
+      const [infoRes, backupsRes, updatesRes, supportRes] = await Promise.allSettled([
         axios.get(`${API}/system/info`, { headers }),
         axios.get(`${API}/backups`, { headers }),
         axios.get(`${API}/updates/status`, { headers }),
         axios.get(`${API}/system/support-snapshot`, { headers }),
       ]);
-      setSysInfo(infoRes.data);
-      setBackups(backupsRes.data);
-      setUpdates(updatesRes.data);
-      setUpdateHistory(updatesRes.data.update_history || []);
-      setSupportSnapshot(supportRes.data);
-      setLogs(supportRes.data?.logs?.tail_lines || []);
-      setAgentStatus(supportRes.data?.agent_status || null);
+
+      if (infoRes.status === 'fulfilled') {
+        setSysInfo(infoRes.value.data);
+      }
+      if (backupsRes.status === 'fulfilled') {
+        setBackups(backupsRes.value.data);
+      }
+      if (updatesRes.status === 'fulfilled') {
+        setUpdates(updatesRes.value.data);
+        setUpdateHistory(updatesRes.value.data.update_history || []);
+      }
+      if (supportRes.status === 'fulfilled') {
+        setSupportSnapshot(supportRes.value.data);
+        setLogs(supportRes.value.data?.logs?.tail_lines || []);
+        setAgentStatus(supportRes.value.data?.agent_status || null);
+      }
     } catch (err) {
       console.error('System fetch error', err);
     } finally {
