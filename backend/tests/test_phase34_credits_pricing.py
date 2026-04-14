@@ -183,6 +183,58 @@ async def test_authoritative_player_count_shortage_enters_blocked_pending_withou
 
 
 @pytest.mark.asyncio
+async def test_authoritative_shortage_still_blocks_when_board_is_already_in_game(isolated_kiosk_env, monkeypatch):
+    await _create_session(
+        isolated_kiosk_env,
+        PricingMode.PER_PLAYER.value,
+        credits_total=1,
+        credits_remaining=1,
+        players_count=2,
+        players=["Configured A", "Configured B"],
+    )
+    _fake_observer_context(monkeypatch, 2, ["Alice", "Bob"])
+
+    async with isolated_kiosk_env.session_factory() as db:
+        board = (await db.execute(select(Board).where(Board.board_id == isolated_kiosk_env.board.board_id))).scalar_one()
+        board.status = BoardStatus.IN_GAME.value
+        await db.commit()
+
+    await kiosk_router._on_game_started(isolated_kiosk_env.board.board_id, "match_start_state_active")
+
+    board, session = await _load_session(isolated_kiosk_env)
+    assert board.status == BoardStatus.BLOCKED_PENDING.value
+    assert session.players_count == 2
+    assert session.players == ["Alice", "Bob"]
+    assert session.credits_remaining == 1
+
+
+@pytest.mark.asyncio
+async def test_authoritative_start_charges_detected_players_even_when_board_is_already_in_game(isolated_kiosk_env, monkeypatch):
+    await _create_session(
+        isolated_kiosk_env,
+        PricingMode.PER_PLAYER.value,
+        credits_total=2,
+        credits_remaining=2,
+        players_count=2,
+        players=["Configured A", "Configured B"],
+    )
+    _fake_observer_context(monkeypatch, 2, ["Alice", "Bob"])
+
+    async with isolated_kiosk_env.session_factory() as db:
+        board = (await db.execute(select(Board).where(Board.board_id == isolated_kiosk_env.board.board_id))).scalar_one()
+        board.status = BoardStatus.IN_GAME.value
+        await db.commit()
+
+    await kiosk_router._on_game_started(isolated_kiosk_env.board.board_id, "match_start_state_active")
+
+    board, session = await _load_session(isolated_kiosk_env)
+    assert board.status == BoardStatus.IN_GAME.value
+    assert session.players_count == 2
+    assert session.players == ["Alice", "Bob"]
+    assert session.credits_remaining == 0
+
+
+@pytest.mark.asyncio
 async def test_staff_top_up_resolves_blocked_pending_and_consumes_charge_once(isolated_kiosk_env, monkeypatch):
     await _create_session(
         isolated_kiosk_env,

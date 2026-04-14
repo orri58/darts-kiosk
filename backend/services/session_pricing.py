@@ -88,10 +88,23 @@ def apply_authoritative_start_charge(
 
     if getattr(session, "pricing_mode", None) != PricingMode.PER_PLAYER.value:
         return ChargeDecision(True, False, False, 0, 0, credits_before, credits_before, resolved_players, "pricing_mode_not_start_billed")
-    if board_status == BoardStatus.IN_GAME.value:
-        return ChargeDecision(True, False, False, 0, resolved_players, credits_before, credits_before, resolved_players, "board_already_in_game")
 
     billable_players = max(1, int(resolved_players or 1))
+    credits_total = int(getattr(session, "credits_total", credits_before) or 0)
+    consumed_so_far = max(0, credits_total - credits_before)
+
+    if board_status == BoardStatus.IN_GAME.value and consumed_so_far >= billable_players:
+        return ChargeDecision(
+            True,
+            False,
+            False,
+            0,
+            billable_players,
+            credits_before,
+            credits_before,
+            billable_players,
+            "authoritative_start_already_consumed",
+        )
 
     if credits_before < billable_players:
         return ChargeDecision(
