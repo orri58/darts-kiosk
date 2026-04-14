@@ -187,6 +187,44 @@ def _observer_match_context(board_id: str) -> dict:
     return {}
 
 
+def _normalize_game_family(value: Optional[str]) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    compact = raw.lower().replace("-", "").replace("_", "").replace(" ", "")
+    if compact == "x01":
+        return "x01"
+    if compact.isdigit() and compact.endswith("01"):
+        return "x01"
+    if compact == "cricket":
+        return "cricket"
+    if compact == "gotcha":
+        return "gotcha"
+    return compact
+
+
+def _observer_variant_mismatch(board_id: str, session_game_type: Optional[str]) -> tuple[bool, Optional[str], Optional[str]]:
+    observer_context = _observer_match_context(board_id)
+    observed_variant = observer_context.get("variant")
+    expected_family = _normalize_game_family(session_game_type)
+    observed_family = _normalize_game_family(observed_variant)
+    mismatch = bool(expected_family and observed_family and expected_family != observed_family)
+    return mismatch, observed_variant, expected_family
+
+
+def _preliminary_round_skip_result(board_id: str, reason: str, observed_variant: Optional[str]) -> dict:
+    return {
+        "should_lock": False,
+        "should_teardown": False,
+        "credits_remaining": 0,
+        "board_status": "unlocked",
+        "skipped": True,
+        "skip_reason": reason,
+        "observed_variant": observed_variant,
+        "board_id": board_id,
+    }
+
+
 def _session_state_payload(board_id: str, board_status: str, session, charge=None) -> dict:
     payload = {
         "board_id": board_id,
@@ -684,6 +722,15 @@ async def _on_game_started(board_id: str, trigger: str = "observer_start"):
                 if not session:
                     return
 
+                variant_mismatch, observed_variant, expected_family = _observer_variant_mismatch(board_id, session.game_type)
+                if variant_mismatch:
+                    logger.warning(
+                        f"[Observer->Kiosk] start_ignored_preliminary_round board={board_id} "
+                        f"trigger={trigger} session_game_type={session.game_type} "
+                        f"expected_family={expected_family} observed_variant={observed_variant}"
+                    )
+                    return
+
                 charge = apply_authoritative_start_charge(
                     session,
                     board.status,
@@ -719,9 +766,32 @@ async def _on_game_ended(board_id: str, reason: str) -> dict:
     Observer detected match end. Execute finalize DIRECTLY (synchronous).
     Returns finalize result so observer knows whether to exit or continue.
     """
+    observed_variant = None
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(Board).where(Board.board_id == board_id))
+            board = result.scalar_one_or_none()
+            session = await get_active_session_for_board(db, board.id) if board else None
+            if session:
+                variant_mismatch, observed_variant, expected_family = _observer_variant_mismatch(board_id, session.game_type)
+                if variant_mismatch:
+                    logger.warning(
+                        f"[SESSION] finalize skipped board={board_id} trigger={reason} "
+                        f"reason=preliminary_variant_mismatch match_id={_get_observer_match_id(board_id)} "
+                        f"session_game_type={session.game_type} expected_family={expected_family} "
+                        f"observed_variant={observed_variant}"
+                    )
+                    return _preliminary_round_skip_result(
+                        board_id,
+                        reason="preliminary_variant_mismatch",
+                        observed_variant=observed_variant,
+                    )
+    except Exception as exc:
+        logger.warning(f"[SESSION] finalize variant precheck failed board={board_id}: {exc}")
+
     logger.info(
         f"[SESSION] finalize dispatch accepted board={board_id} trigger={reason} "
-        f"match_id={_get_observer_match_id(board_id)}"
+        f"match_id={_get_observer_match_id(board_id)} observed_variant={observed_variant or 'unknown'}"
     )
     try:
         result = await finalize_match(board_id, reason)

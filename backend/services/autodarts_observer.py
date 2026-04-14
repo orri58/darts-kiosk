@@ -189,6 +189,7 @@ class WSEventState:
     last_match_state: Optional[str] = None
     last_game_event: Optional[str] = None
     last_match_id: Optional[str] = None
+    variant: Optional[str] = None
     last_start_trigger: Optional[str] = None
     pending_finish_trigger: Optional[str] = None
     frames_received: int = 0
@@ -205,6 +206,7 @@ class WSEventState:
         self.last_match_state = None
         self.last_game_event = None
         self.last_match_id = None
+        self.variant = None
         self.last_start_trigger = None
         self.pending_finish_trigger = None
         self.finish_trigger = None
@@ -1359,6 +1361,7 @@ class AutodartsObserver:
         ws = self._ws_state
         return {
             'match_id': ws.last_match_id,
+            'variant': ws.variant,
             'players_count': ws.last_players_count,
             'players': list(ws.last_players or []),
         }
@@ -1414,6 +1417,21 @@ class AutodartsObserver:
         if isinstance(match_data, dict) and match_data.get(field_name) is True:
             return True
         return False
+
+    def _is_gotcha(self) -> bool:
+        variant = str(getattr(self._ws_state, 'variant', '') or '').strip().lower()
+        return 'gotcha' in variant
+
+    def _extract_variant(self, payload) -> Optional[str]:
+        """Extract match variant from payload (checks nested levels)."""
+        if not isinstance(payload, dict):
+            return None
+        for container in (payload, payload.get('data'), payload.get('match')):
+            if isinstance(container, dict):
+                variant = container.get('variant')
+                if isinstance(variant, str) and variant.strip():
+                    return variant.strip()
+        return None
 
     def _classify_frame(self, raw: str, channel: str, payload) -> str:
         """
@@ -1527,10 +1545,14 @@ class AutodartsObserver:
         ws = self._ws_state
         decision = self._trigger_policy.classify_ws(interpretation, channel)
 
-        # ── Track match ID from channel ──
+        # ── Track match ID / variant / players from payload ──
         match_id = self._extract_match_id(channel, payload)
         if match_id:
             ws.last_match_id = match_id
+
+        variant = self._extract_variant(payload)
+        if variant:
+            ws.variant = variant
 
         players_count, players = self._payload_player_snapshot(payload)
         if players_count:
