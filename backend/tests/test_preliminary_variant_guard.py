@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.routers import kiosk
+from backend.services.autodarts_observer import AutodartsObserver
 
 
 class _FakeResult:
@@ -142,4 +143,57 @@ def test_normalize_game_family_maps_x01_variants_together():
     assert kiosk._normalize_game_family("301") == "x01"
     assert kiosk._normalize_game_family("X01") == "x01"
     assert kiosk._normalize_game_family("Gotcha") == "gotcha"
+    assert kiosk._normalize_game_family("Bull-off") == "bulloff"
     assert kiosk._normalize_game_family("Cricket") == "cricket"
+
+
+def test_observer_extract_variant_reads_nested_bull_off_payloads():
+    observer = AutodartsObserver("BOARD-1")
+    payload = {
+        "data": {
+            "activity": {
+                "activity": "playing-match",
+                "body": {
+                    "matchID": "abc",
+                    "variant": "Bull-off",
+                },
+            }
+        }
+    }
+
+    assert observer._extract_variant(payload) == "Bull-off"
+
+
+def test_observer_ignores_preliminary_bull_off_start_and_finish():
+    observer = AutodartsObserver("BOARD-1")
+
+    start_payload = {
+        "data": {
+            "body": {
+                "coords": {"x": 0.1, "y": 0.2},
+                "segment": {"name": "S20"},
+            },
+            "event": "throw",
+            "matchId": "match-bulloff-1",
+            "variant": "Bull-off",
+        }
+    }
+    observer._update_ws_state("match_start_throw", "autodarts.matches", start_payload, raw="")
+
+    assert observer._ws_state.variant == "Bull-off"
+    assert observer._ws_state.match_active is False
+    assert observer._ws_state.last_start_trigger is None
+
+    observer._ws_state.match_active = True
+    finish_payload = {
+        "data": {
+            "finished": False,
+            "gameFinished": True,
+            "id": "match-bulloff-1",
+            "variant": "Bull-off",
+        }
+    }
+    observer._update_ws_state("match_end_game_finished", "autodarts.matches", finish_payload, raw="")
+
+    assert observer._ws_state.match_finished is False
+    assert observer._ws_state.finish_trigger is None

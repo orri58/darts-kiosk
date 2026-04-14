@@ -1422,15 +1422,45 @@ class AutodartsObserver:
         variant = str(getattr(self._ws_state, 'variant', '') or '').strip().lower()
         return 'gotcha' in variant
 
+    def _is_preliminary_variant(self, variant: Optional[str] = None) -> bool:
+        value = str(variant if variant is not None else getattr(self._ws_state, 'variant', '') or '').strip().lower()
+        compact = value.replace('-', '').replace('_', '').replace(' ', '')
+        return compact in {'gotcha', 'bulloff'}
+
     def _extract_variant(self, payload) -> Optional[str]:
         """Extract match variant from payload (checks nested levels)."""
         if not isinstance(payload, dict):
             return None
-        for container in (payload, payload.get('data'), payload.get('match')):
-            if isinstance(container, dict):
-                variant = container.get('variant')
+
+        seen: set[int] = set()
+
+        def _walk(node, depth: int = 0):
+            if depth > 6:
+                return None
+            if isinstance(node, dict):
+                node_id = id(node)
+                if node_id in seen:
+                    return None
+                seen.add(node_id)
+
+                variant = node.get('variant')
                 if isinstance(variant, str) and variant.strip():
                     return variant.strip()
+
+                for value in node.values():
+                    found = _walk(value, depth + 1)
+                    if found:
+                        return found
+            elif isinstance(node, list):
+                for value in node:
+                    found = _walk(value, depth + 1)
+                    if found:
+                        return found
+            return None
+
+        found = _walk(payload)
+        if found:
+            return found
         return None
 
     def _classify_frame(self, raw: str, channel: str, payload) -> str:
@@ -1560,6 +1590,12 @@ class AutodartsObserver:
             ws.last_players = players
 
         if decision.action == TriggerAction.START and decision.is_authoritative:
+            if self._is_preliminary_variant(ws.variant):
+                logger.info(
+                    f"[Observer:{self.board_id}] MATCH_START_IGNORED_PRELIMINARY "
+                    f"trigger={interpretation} match_id={ws.last_match_id} variant={ws.variant}"
+                )
+                return
             ws.last_start_trigger = interpretation
             if ws.match_finished or ws.finish_pending:
                 logger.warning(
@@ -1582,6 +1618,12 @@ class AutodartsObserver:
             return
 
         if decision.action == TriggerAction.FINISH:
+            if self._is_preliminary_variant(ws.variant):
+                logger.info(
+                    f"[Observer:{self.board_id}] MATCH_FINISH_IGNORED_PRELIMINARY "
+                    f"trigger={interpretation} match_id={ws.last_match_id} variant={ws.variant}"
+                )
+                return
             current_mid = ws.last_match_id
             if current_mid and current_mid == self._last_finalized_match_id:
                 logger.info(
@@ -1979,21 +2021,27 @@ class AutodartsObserver:
                     or (current_match_id and current_match_id != self._last_started_match_id)
                 )
                 if event_state == ObserverState.IN_GAME and self._start_is_authoritative() and should_emit_start:
-                    self._authoritative_start_emitted = True
-                    self._last_started_match_id = current_match_id
-                    self._credit_consumed = True
-                    self._finalized = False
-                    self._abort_detected = False
-                    self.status.games_observed += 1
-                    logger.info(
-                        f"[Observer:{self.board_id}] AUTHORITATIVE_START_ACCEPTED "
-                        f"trigger={self._ws_state.last_start_trigger} games_observed={self.status.games_observed}"
-                    )
-                    if self._on_game_started:
-                        try:
-                            await self._on_game_started(self.board_id, self._ws_state.last_start_trigger or "observer_start")
-                        except Exception as e:
-                            logger.error(f"[Observer:{self.board_id}] on_game_started ERROR: {e}", exc_info=True)
+                    if self._is_preliminary_variant():
+                        logger.info(
+                            f"[Observer:{self.board_id}] AUTHORITATIVE_START_IGNORED_PRELIMINARY "
+                            f"trigger={self._ws_state.last_start_trigger} variant={self._ws_state.variant}"
+                        )
+                    else:
+                        self._authoritative_start_emitted = True
+                        self._last_started_match_id = current_match_id
+                        self._credit_consumed = True
+                        self._finalized = False
+                        self._abort_detected = False
+                        self.status.games_observed += 1
+                        logger.info(
+                            f"[Observer:{self.board_id}] AUTHORITATIVE_START_ACCEPTED "
+                            f"trigger={self._ws_state.last_start_trigger} games_observed={self.status.games_observed}"
+                        )
+                        if self._on_game_started:
+                            try:
+                                await self._on_game_started(self.board_id, self._ws_state.last_start_trigger or "observer_start")
+                            except Exception as e:
+                                logger.error(f"[Observer:{self.board_id}] on_game_started ERROR: {e}", exc_info=True)
 
                 # ── SECONDARY: Console capture ──
                 console_state = await self._read_console_state()
@@ -2131,15 +2179,22 @@ class AutodartsObserver:
                         self._set_state(ObserverState.IN_GAME)
                         if not self._authoritative_start_emitted and self._on_game_started:
                             try:
-                                logger.info(
-                                    f"[Observer:{self.board_id}] START_FALLBACK_ACCEPTED "
-                                    f"reason=in_game_transition_without_ws_start trigger=observer_in_game_fallback"
-                                )
-                                await self._on_game_started(self.board_id, "observer_in_game_fallback")
-                                self._authoritative_start_emitted = True
-                                self._last_started_match_id = self._ws_state.last_match_id
-                                self._credit_consumed = True
-                                self.status.games_observed += 1
+                                if self._is_preliminary_variant():
+                                    logger.info(
+                                        f"[Observer:{self.board_id}] START_FALLBACK_IGNORED_PRELIMINARY "
+                                        f"reason=in_game_transition_without_ws_start trigger=observer_in_game_fallback "
+                                        f"variant={self._ws_state.variant}"
+                                    )
+                                else:
+                                    logger.info(
+                                        f"[Observer:{self.board_id}] START_FALLBACK_ACCEPTED "
+                                        f"reason=in_game_transition_without_ws_start trigger=observer_in_game_fallback"
+                                    )
+                                    await self._on_game_started(self.board_id, "observer_in_game_fallback")
+                                    self._authoritative_start_emitted = True
+                                    self._last_started_match_id = self._ws_state.last_match_id
+                                    self._credit_consumed = True
+                                    self.status.games_observed += 1
                             except Exception as e:
                                 logger.error(
                                     f"[Observer:{self.board_id}] fallback on_game_started ERROR: {e}",

@@ -200,6 +200,8 @@ def _normalize_game_family(value: Optional[str]) -> Optional[str]:
         return "cricket"
     if compact == "gotcha":
         return "gotcha"
+    if compact == "bulloff":
+        return "bulloff"
     return compact
 
 
@@ -208,7 +210,8 @@ def _observer_variant_mismatch(board_id: str, session_game_type: Optional[str]) 
     observed_variant = observer_context.get("variant")
     expected_family = _normalize_game_family(session_game_type)
     observed_family = _normalize_game_family(observed_variant)
-    mismatch = bool(expected_family and observed_family and expected_family != observed_family)
+    preliminary_variant = observed_family in {"gotcha", "bulloff"}
+    mismatch = bool(preliminary_variant or (expected_family and observed_family and expected_family != observed_family))
     return mismatch, observed_variant, expected_family
 
 
