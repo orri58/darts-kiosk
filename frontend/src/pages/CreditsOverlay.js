@@ -166,7 +166,7 @@ export default function CreditsOverlay() {
               </span>
             </div>
             <div style={{ fontSize: 11, color: theme.text, textAlign: 'center', lineHeight: 1.45 }}>
-              Match braucht {data.required_units ?? 0}, verfügbar {credits}. Es fehlen {data.credits_shortage ?? 0}.
+              Für {data.players_count ?? 0} Spieler fehlen noch {data.credits_shortage ?? 0}. Verfügbar: {credits}.
             </div>
           </div>
         ) : isLastGame ? (

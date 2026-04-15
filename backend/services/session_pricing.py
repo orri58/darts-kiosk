@@ -92,34 +92,35 @@ def apply_authoritative_start_charge(
     billable_players = max(1, int(resolved_players or 1))
     credits_total = int(getattr(session, "credits_total", credits_before) or 0)
     consumed_so_far = max(0, credits_total - credits_before)
+    additional_units_needed = max(0, billable_players - consumed_so_far)
 
-    if board_status == BoardStatus.IN_GAME.value and consumed_so_far >= billable_players:
+    if board_status == BoardStatus.IN_GAME.value and additional_units_needed <= 0:
         return ChargeDecision(
             True,
             False,
             False,
             0,
-            billable_players,
+            0,
             credits_before,
             credits_before,
             billable_players,
             "authoritative_start_already_consumed",
         )
 
-    if credits_before < billable_players:
+    if credits_before < additional_units_needed:
         return ChargeDecision(
             False,
             False,
             True,
             0,
-            billable_players,
+            additional_units_needed,
             credits_before,
             credits_before,
             billable_players,
             "insufficient_credits_for_authoritative_players",
         )
 
-    units = billable_players
+    units = additional_units_needed
     credits_after = max(0, credits_before - units)
     session.credits_remaining = credits_after
     return ChargeDecision(
@@ -127,7 +128,7 @@ def apply_authoritative_start_charge(
         True,
         False,
         units,
-        billable_players,
+        additional_units_needed,
         credits_before,
         credits_after,
         billable_players,

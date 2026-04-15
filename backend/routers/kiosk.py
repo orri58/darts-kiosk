@@ -1047,7 +1047,8 @@ async def get_overlay_data(board_id: str, db: AsyncSession = Depends(get_db)):
     if session.pricing_mode == PricingMode.PER_GAME.value:
         is_last = (session.credits_remaining or 0) <= 0
     pending_credit_gate = board.status == BoardStatus.BLOCKED_PENDING.value and session.pricing_mode == PricingMode.PER_PLAYER.value
-    required_units = int(session.players_count or 0)
+    consumed_so_far = max(0, int(session.credits_total or 0) - int(session.credits_remaining or 0))
+    required_units = max(0, int(session.players_count or 0) - consumed_so_far) if pending_credit_gate else 0
     credits_shortage = max(0, required_units - int(session.credits_remaining or 0)) if pending_credit_gate else 0
     upsell_message = ""
     upsell_pricing = ""

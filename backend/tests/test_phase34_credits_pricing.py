@@ -14,6 +14,7 @@ from backend.routers import boards as boards_router
 from backend.routers import kiosk as kiosk_router
 from backend.schemas import ExtendRequest
 from backend.services import window_manager
+from backend.services.session_pricing import apply_authoritative_start_charge
 
 
 async def _noop_async(*args, **kwargs):
@@ -101,6 +102,53 @@ def _fake_observer_context(monkeypatch, players_count: int, players: list[str]):
         }
     )
     monkeypatch.setattr(kiosk_router.observer_manager, "get", lambda board_id: fake_observer)
+
+
+def test_authoritative_start_partial_reconciliation_only_requires_missing_delta():
+    session = SimpleNamespace(
+        pricing_mode=PricingMode.PER_PLAYER.value,
+        credits_total=1,
+        credits_remaining=0,
+        players_count=1,
+        players=["Solo"],
+    )
+
+    decision = apply_authoritative_start_charge(
+        session,
+        BoardStatus.IN_GAME.value,
+        players_count=2,
+        players=["Solo", "Guest"],
+    )
+
+    assert decision.blocked is True
+    assert decision.required_units == 1
+    assert decision.players_count == 2
+    assert decision.credits_before == 0
+    assert session.credits_remaining == 0
+
+
+def test_authoritative_start_partial_reconciliation_charges_only_missing_delta():
+    session = SimpleNamespace(
+        pricing_mode=PricingMode.PER_PLAYER.value,
+        credits_total=3,
+        credits_remaining=2,
+        players_count=1,
+        players=["Solo"],
+    )
+
+    decision = apply_authoritative_start_charge(
+        session,
+        BoardStatus.IN_GAME.value,
+        players_count=2,
+        players=["Solo", "Guest"],
+    )
+
+    assert decision.accepted is True
+    assert decision.charged is True
+    assert decision.units == 1
+    assert decision.required_units == 1
+    assert decision.players_count == 2
+    assert session.credits_remaining == 1
 
 
 @pytest.mark.asyncio
