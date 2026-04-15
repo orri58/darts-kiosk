@@ -4,6 +4,18 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.10] - 2026-04-15
+
+### Fixed
+- Fixed per-player credit reconciliation when a match first starts through an early single-player fallback and the authoritative player count is corrected later.
+- Late reconciliation now charges or blocks only for the missing delta instead of incorrectly demanding the full player-count total again.
+- Clarified the pending-credit overlay wording so it emphasizes the missing additional credits instead of reading like the full requirement must be paid again.
+
+### Validation
+- Reproduced the issue against a real support bundle from field testing.
+- Focused pricing regression suite passed (`15 passed`).
+- Release artifacts rebuilt for `v4.4.10`.
+
 ## [4.4.3] - 2026-04-04
 
 ### Fixed

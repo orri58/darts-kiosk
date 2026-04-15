@@ -1,27 +1,24 @@
-# Darts Kiosk — Release Notes v4.3.0
+# Darts Kiosk — Release Notes v4.4.10
 
-## Stability wave 1: safer backups and stronger realtime foundations
+## Credit reconciliation fix for late player detection
 
-Darts Kiosk 4.3.0 starts the dedicated stability phase after the 4.2.x product/hardening releases.
-This first wave focuses on two practical areas that matter on real board PCs: safer SQLite backups and more resilient realtime transport behavior.
+Darts Kiosk 4.4.10 fixes a real per-player credit issue that showed up in live board-PC testing.
+The affected case was a two-player match that first started through an early fallback path as if only one player was present and only later got corrected to the real authoritative player count.
 
 ## What changed
 
-### 1. SQLite backups are now snapshot-based and validated
-- backup creation now uses SQLite's native backup mechanism instead of copying the live DB file directly
-- backup snapshots are validated with `PRAGMA integrity_check`
-- restore flow validates backup contents before replacing the live database
-- this improves confidence in recovery, support exports, and pre-update safety
+### 1. Late player reconciliation now uses the missing delta
+- per-player authoritative start billing now calculates how many player credits were already effectively consumed
+- if the player count is corrected later, the system now only charges or blocks for the missing delta
+- this prevents the kiosk from incorrectly demanding the full player-count total again after one credit had already effectively been accounted for
 
-### 2. WebSocket fanout is more robust
-- websocket broadcast fanout now avoids holding the connection lock while awaiting every client send
-- dead/slow sockets are pruned more safely
-- this reduces the chance that one problematic client degrades all other realtime consumers
+### 2. Pending-credit overlay wording is clearer
+- the overlay wording now focuses on the missing additional credits instead of reading like the full total must be paid again
+- this reduces operator and player confusion in blocked-pending cases
 
-### 3. Realtime transport foundation is stronger
-- board websocket hook now uses reconnect backoff and heartbeat behavior
-- server websocket endpoint now understands `ping` / `pong`
-- this gives kiosk/admin realtime transport a more reliable base for the next stability passes
+### 3. Bull-off / non-bull-off behavior is now consistent
+- the bug was easier to see in non-bull-off starts because the fallback start happened earlier there
+- with the reconciliation fix, both paths now align correctly around the same per-player credit logic
 
 ## Validation performed for this release
 
@@ -29,19 +26,11 @@ Executed successfully:
 
 ```bash
 source .venv/bin/activate
-python -m compileall backend
-python -m pytest -q \
-  backend/tests/test_phase56_stability_installation.py \
-  backend/tests/test_phase789_local_core_validation.py
-cd frontend && npm run build
+python -m pytest -q backend/tests/test_phase34_credits_pricing.py
+bash release/build_release.sh
 ```
 
 Observed result:
-- backend compile check passed
-- focused backend validation suite passed
-- frontend production build passed
-
-## Still planned for the next stability pass
-- unified session-end lifecycle between scheduler and kiosk finalize path
-- adaptive kiosk polling / more push-first board state handling
-- stricter support-bundle/runtime diagnostics flow
+- focused pricing regression suite passed (`15 passed`)
+- release artifacts were rebuilt for `v4.4.10`
+- the fix was derived from and checked against a real support bundle from field testing
