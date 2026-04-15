@@ -30,6 +30,7 @@ Manual path if needed:
 - `start.bat` — validates runtime, starts backend + agent, bootstraps Autodarts if configured, then opens the kiosk UI
 - `stop.bat` — stops backend/overlay/agent and kills Chrome instances tied to the kiosk or board profile
 - `smoke_test.bat` — verifies `/api/health`, `/api/system/version`, `/api/boards`, and observer status for the configured board
+- `capture_autodarts.bat` — opens a local Autodarts capture harness and writes JSONL traces to `data\autodarts_capture\...` for debugging lobby / tournament / match lifecycle behavior
 
 ## Important runtime facts
 
@@ -47,3 +48,4 @@ Manual path if needed:
 - `docs/RUNBOOK.md`
 - `docs/STATUS.md`
 - `docs/PHASE5_6_IMPLEMENTATION.md`
+- `docs/AUTODARTS_CAPTURE.md`

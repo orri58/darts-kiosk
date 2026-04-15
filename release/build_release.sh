@@ -132,7 +132,7 @@ log "requirements-core.txt erstellt"
 #===============================================================================
 step "Windows Production Bundle erstellen..."
 WIN_DIR="${BUILD_DIR}/darts-kiosk-v${VERSION}-windows"
-mkdir -p "${WIN_DIR}/backend" "${WIN_DIR}/frontend" \
+mkdir -p "${WIN_DIR}/backend" "${WIN_DIR}/frontend" "${WIN_DIR}/scripts" "${WIN_DIR}/docs" \
          "${WIN_DIR}/data/db" "${WIN_DIR}/data/assets" "${WIN_DIR}/data/backups" \
          "${WIN_DIR}/data/chrome_profile" "${WIN_DIR}/data/kiosk_ui_profile" \
          "${WIN_DIR}/logs"
@@ -151,6 +151,11 @@ rsync -a --exclude='node_modules' --exclude='build' --exclude='.env' \
 
 # Requirements
 cp "${BUILD_DIR}/requirements-core.txt" "${WIN_DIR}/backend/requirements.txt"
+
+# Utility scripts / diagnostics
+rsync -a --exclude='__pycache__' --exclude='*.pyc' \
+    "${APP_DIR}/scripts/" "${WIN_DIR}/scripts/"
+cp "${APP_DIR}/docs/AUTODARTS_CAPTURE.md" "${WIN_DIR}/docs/" 2>/dev/null || true
 
 # Windows scripts (from templates)
 cp "${SCRIPT_DIR}/windows/"*.bat "${WIN_DIR}/"
@@ -251,7 +256,7 @@ log "darts-kiosk-v${VERSION}-windows.zip ($(du -sh "darts-kiosk-v${VERSION}-wind
 #===============================================================================
 step "Linux Production Bundle erstellen..."
 LINUX_DIR="${BUILD_DIR}/darts-kiosk-v${VERSION}-linux"
-mkdir -p "${LINUX_DIR}/backend" "${LINUX_DIR}/frontend/build" "${LINUX_DIR}/nginx"
+mkdir -p "${LINUX_DIR}/backend" "${LINUX_DIR}/frontend/build" "${LINUX_DIR}/nginx" "${LINUX_DIR}/scripts" "${LINUX_DIR}/docs"
 
 rsync -a --exclude='__pycache__' --exclude='*.pyc' --exclude='tests/' --exclude='.env' --exclude='*.sqlite*' \
     "${APP_DIR}/backend/" "${LINUX_DIR}/backend/"
@@ -269,6 +274,9 @@ cp "${APP_DIR}/VERSION" "${LINUX_DIR}/"
 cp "${APP_DIR}/updater.py" "${LINUX_DIR}/"
 cp "${APP_DIR}/docker-compose.yml" "${LINUX_DIR}/" 2>/dev/null || true
 cp "${APP_DIR}/Dockerfile" "${LINUX_DIR}/" 2>/dev/null || true
+rsync -a --exclude='__pycache__' --exclude='*.pyc' \
+    "${APP_DIR}/scripts/" "${LINUX_DIR}/scripts/"
+cp "${APP_DIR}/docs/AUTODARTS_CAPTURE.md" "${LINUX_DIR}/docs/" 2>/dev/null || true
 
 # Agent (Linux)
 mkdir -p "${LINUX_DIR}/agent"
