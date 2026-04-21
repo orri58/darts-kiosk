@@ -28,6 +28,9 @@ import { Label } from '../../components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { Switch } from '../../components/ui/switch';
 import TriggerPolicyPanel from '../../components/admin/TriggerPolicyPanel';
+import BrandingSettingsSection from '../../components/admin/settings/BrandingSettingsSection';
+import CustomizationProfilesSection from '../../components/admin/settings/CustomizationProfilesSection';
+import PricingSettingsSection from '../../components/admin/settings/PricingSettingsSection';
 import { AdminPage, AdminStatsGrid, AdminStatCard } from '../../components/admin/AdminShell';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
@@ -665,405 +668,47 @@ export default function AdminSettings() {
 
         {/* Branding Tab */}
         <TabsContent value="branding" className="space-y-6">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <ImageIcon className="w-5 h-5 text-amber-500" />
-                Logo & Name
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              {/* Logo Upload */}
-              <div className="space-y-3">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">Logo</label>
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                  <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-zinc-700 bg-zinc-800">
-                    {localBranding.logo_url ? (
-                      <img src={localBranding.logo_url} alt="Logo" className="max-w-full max-h-full object-contain" />
-                    ) : (
-                      <ImageIcon className="w-8 h-8 text-zinc-600" />
-                    )}
-                  </div>
-                  <div>
-                    <input
-                      type="file"
-                      accept="image/png,image/svg+xml,image/jpeg,image/webp"
-                      onChange={handleLogoUpload}
-                      className="hidden"
-                      id="logo-upload"
-                    />
-                    <label
-                      htmlFor="logo-upload"
-                      className="inline-flex items-center rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-2 text-zinc-300 cursor-pointer hover:border-amber-500/50 hover:text-amber-500 transition-all"
-                    >
-                      <Upload className="w-4 h-4 mr-2" />
-                      {uploading ? 'Wird hochgeladen...' : 'Logo hochladen'}
-                    </label>
-                    <p className="text-xs text-zinc-600 mt-2">PNG, SVG, JPG, WebP · max. 2MB</p>
-                    {localBranding.logo_url && (
-                      <button
-                        data-testid="remove-logo-btn"
-                        onClick={async () => {
-                          try {
-                            const headers = { Authorization: `Bearer ${token}` };
-                            await axios.delete(`${API}/settings/branding/logo`, { headers });
-                            setLocalBranding({ ...localBranding, logo_url: '' });
-                            toast.success('Logo entfernt');
-                          } catch { toast.error('Fehler beim Entfernen'); }
-                        }}
-                        className="text-xs text-red-400 hover:text-red-300 mt-1 underline"
-                      >
-                        Logo entfernen
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-
-              {/* Cafe Name */}
-              <div className="space-y-2">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">Cafe Name</label>
-                <Input
-                  value={localBranding.cafe_name || ''}
-                  onChange={(e) => setLocalBranding({ ...localBranding, cafe_name: e.target.value })}
-                  placeholder="Dart Zone"
-                  data-testid="cafe-name-input"
-                  className="input-industrial"
-                />
-              </div>
-
-              {/* Subtitle */}
-              <div className="space-y-2">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">Untertitel</label>
-                <Input
-                  value={localBranding.subtitle || ''}
-                  onChange={(e) => setLocalBranding({ ...localBranding, subtitle: e.target.value })}
-                  placeholder="Darts & More"
-                  data-testid="subtitle-input"
-                  className="input-industrial"
-                />
-              </div>
-
-              <div className="grid gap-4 xl:grid-cols-2">
-                <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
-                  <div>
-                    <p className="text-sm font-medium text-white">Kiosk-Thema</p>
-                    <p className="text-xs text-zinc-500">Nur für Kiosk, Overlay und öffentliche Flächen.</p>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs uppercase tracking-wider text-zinc-500">Palette</label>
-                    <select
-                      value={localKioskTheme?.palette_id || 'industrial'}
-                      onChange={(e) => setLocalKioskTheme({ ...localKioskTheme, palette_id: e.target.value })}
-                      className="input-industrial h-11"
-                    >
-                      {palettes.map((palette) => (
-                        <option key={`kiosk-${palette.id}`} value={palette.id}>{palette.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <label className="text-xs uppercase tracking-wider text-zinc-500">Logo-Größe</label>
-                      <select
-                        value={localKioskLayout?.header?.logo_size || 'md'}
-                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, header: { ...(localKioskLayout?.header || {}), logo_size: e.target.value } })}
-                        className="input-industrial h-11"
-                      >
-                        <option value="sm">Klein</option>
-                        <option value="md">Mittel</option>
-                        <option value="lg">Groß</option>
-                        <option value="xl">Sehr groß</option>
-                        <option value="2xl">Maximal</option>
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs uppercase tracking-wider text-zinc-500">Header-Ausrichtung</label>
-                      <select
-                        value={localKioskLayout?.header?.align || 'left'}
-                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, header: { ...(localKioskLayout?.header || {}), align: e.target.value } })}
-                        className="input-industrial h-11"
-                      >
-                        <option value="left">Links</option>
-                        <option value="center">Mitte</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="flex items-center gap-3 rounded-xl border border-zinc-800 px-3 py-3 text-sm text-zinc-300">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(localKioskLayout?.header?.show_logo)}
-                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, header: { ...(localKioskLayout?.header || {}), show_logo: e.target.checked } })}
-                      />
-                      Logo anzeigen
-                    </label>
-                    <label className="flex items-center gap-3 rounded-xl border border-zinc-800 px-3 py-3 text-sm text-zinc-300">
-                      <input
-                        type="checkbox"
-                        checked={Boolean(localKioskLayout?.header?.show_subtitle)}
-                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, header: { ...(localKioskLayout?.header || {}), show_subtitle: e.target.checked } })}
-                      />
-                      Untertitel anzeigen
-                    </label>
-                  </div>
-                </div>
-
-                <div className="space-y-3 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
-                  <div>
-                    <p className="text-sm font-medium text-white">Admin-Thema</p>
-                    <p className="text-xs text-zinc-500">Ruhiger Operator-Look, unabhängig vom Kiosk.</p>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs uppercase tracking-wider text-zinc-500">Palette</label>
-                    <select
-                      value={localAdminTheme?.palette_id || 'slate'}
-                      onChange={(e) => setLocalAdminTheme({ ...localAdminTheme, palette_id: e.target.value })}
-                      className="input-industrial h-11"
-                    >
-                      {palettes.map((palette) => (
-                        <option key={`admin-${palette.id}`} value={palette.id}>{palette.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs uppercase tracking-wider text-zinc-500">Pairing-Code auf Lockscreen</label>
-                    <select
-                      value={localKioskLayout?.locked_screen?.pairing_position || 'bottom'}
-                      onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, locked_screen: { ...(localKioskLayout?.locked_screen || {}), pairing_position: e.target.value } })}
-                      className="input-industrial h-11"
-                    >
-                      <option value="bottom">Unten</option>
-                      <option value="side">Rechte Seite</option>
-                    </select>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <label className="text-xs uppercase tracking-wider text-zinc-500">Lockscreen Inhalt</label>
-                      <select
-                        value={localKioskLayout?.locked_screen?.content_align || 'left'}
-                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, locked_screen: { ...(localKioskLayout?.locked_screen || {}), content_align: e.target.value } })}
-                        className="input-industrial h-11"
-                      >
-                        <option value="left">Links</option>
-                        <option value="center">Mittig</option>
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <label className="text-xs uppercase tracking-wider text-zinc-500">Logo-Position Lockscreen</label>
-                      <select
-                        value={localKioskLayout?.locked_screen?.logo_position || 'header'}
-                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, locked_screen: { ...(localKioskLayout?.locked_screen || {}), logo_position: e.target.value } })}
-                        className="input-industrial h-11"
-                      >
-                        <option value="header">Im Header</option>
-                        <option value="hero">Groß im Hauptbereich</option>
-                      </select>
-                    </div>
-                  </div>
-                  {(localKioskLayout?.locked_screen?.logo_position || 'header') === 'hero' && (
-                    <div className="space-y-2">
-                      <label className="text-xs uppercase tracking-wider text-zinc-500">Lockscreen Logo-Größe</label>
-                      <select
-                        value={localKioskLayout?.locked_screen?.hero_logo_size || 'xl'}
-                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, locked_screen: { ...(localKioskLayout?.locked_screen || {}), hero_logo_size: e.target.value } })}
-                        className="input-industrial h-11"
-                      >
-                        <option value="lg">Groß</option>
-                        <option value="xl">Sehr groß</option>
-                        <option value="2xl">Maximal</option>
-                      </select>
-                    </div>
-                  )}
-                  <label className="flex items-center gap-3 rounded-xl border border-zinc-800 px-3 py-3 text-sm text-zinc-300">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(localKioskLayout?.locked_screen?.show_community_widgets)}
-                      onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, locked_screen: { ...(localKioskLayout?.locked_screen || {}), show_community_widgets: e.target.checked } })}
-                    />
-                    Rankings / Community-Widgets auf dem Lockscreen anzeigen
-                  </label>
-                </div>
-              </div>
-
-              <Button
-                onClick={handleSaveBranding}
-                disabled={saving}
-                data-testid="save-branding-btn"
-                className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading"
-              >
-                <Save className="w-4 h-4 mr-2" />
-                {saving ? 'Speichern...' : 'Speichern'}
-              </Button>
-            </CardContent>
-          </Card>
+          <BrandingSettingsSection
+            localBranding={localBranding}
+            setLocalBranding={setLocalBranding}
+            localKioskTheme={localKioskTheme}
+            setLocalKioskTheme={setLocalKioskTheme}
+            localAdminTheme={localAdminTheme}
+            setLocalAdminTheme={setLocalAdminTheme}
+            localKioskLayout={localKioskLayout}
+            setLocalKioskLayout={setLocalKioskLayout}
+            palettes={palettes}
+            handleLogoUpload={handleLogoUpload}
+            handleSaveBranding={handleSaveBranding}
+            saving={saving}
+            uploading={uploading}
+            token={token}
+            toast={toast}
+          />
         </TabsContent>
 
         <TabsContent value="customization-profile" className="space-y-6">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <ClipboardCopy className="w-5 h-5 text-amber-500" />
-                Customization Profiles
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 text-sm text-zinc-400">
-                Exportiere den aktuellen kiosk/admin Customization-Stand als JSON-Profil, importiere ihn auf anderen Geräten wieder oder setze die komplette Customization sauber auf Standard zurück.
-              </div>
-              <div className="grid gap-4 xl:grid-cols-[0.9fr,1.1fr]">
-                <div className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
-                  <div>
-                    <p className="text-sm font-medium text-white">Export / Reset</p>
-                    <p className="text-xs text-zinc-500 mt-1">Ideal für Backup, Venue-Profile oder schnellen Rollout auf weitere Systeme.</p>
-                  </div>
-                  <div className="flex flex-col gap-3 sm:flex-row">
-                    <Button onClick={handleExportCustomizationProfile} disabled={customizationBusy} className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading">
-                      <Download className="w-4 h-4 mr-2" />
-                      {customizationBusy ? 'Läuft...' : 'Profil exportieren'}
-                    </Button>
-                    <Button onClick={handleResetCustomizationProfile} disabled={customizationBusy} variant="outline" className="border-red-700 text-red-300 hover:bg-red-950/40 uppercase font-heading">
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Auf Standard zurücksetzen
-                    </Button>
-                  </div>
-                  <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-zinc-400">
-                    Reset betrifft Branding, Themes, Layout, Kiosk-Texte, PWA, QR, Overlay, Sprache, Match-Sharing und weitere contract-gemanagte Customization-Felder.
-                  </div>
-                </div>
-                <div className="space-y-4 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-white">Import</p>
-                      <p className="text-xs text-zinc-500 mt-1">JSON-Datei laden oder den Profilinhalt direkt einfügen.</p>
-                    </div>
-                    <label className="inline-flex items-center rounded-2xl border border-zinc-700 bg-zinc-800 px-4 py-2 text-zinc-300 cursor-pointer hover:border-amber-500/50 hover:text-amber-500 transition-all">
-                      <Upload className="w-4 h-4 mr-2" />
-                      Datei laden
-                      <input type="file" accept="application/json,.json" onChange={handleCustomizationImportFile} className="hidden" />
-                    </label>
-                  </div>
-                  <textarea
-                    value={customizationImportJson}
-                    onChange={(e) => setCustomizationImportJson(e.target.value)}
-                    placeholder='{"meta":{"type":"customization-profile","version":1},"bundle":{...}}'
-                    className="min-h-[280px] w-full rounded-2xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-zinc-200 outline-none focus:border-amber-500"
-                    data-testid="customization-profile-json"
-                  />
-                  <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
-                    <Button onClick={() => navigator.clipboard.writeText(customizationImportJson || '').then(() => toast.success('In Zwischenablage kopiert')).catch(() => toast.error('Kopieren fehlgeschlagen'))} disabled={!customizationImportJson || customizationBusy} variant="outline" className="border-zinc-700 text-zinc-300 uppercase font-heading">
-                      <ClipboardCopy className="w-4 h-4 mr-2" />
-                      JSON kopieren
-                    </Button>
-                    <Button onClick={handleImportCustomizationProfile} disabled={!customizationImportJson || customizationBusy} className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading" data-testid="import-customization-profile-btn">
-                      <Upload className="w-4 h-4 mr-2" />
-                      {customizationBusy ? 'Import läuft...' : 'Profil importieren'}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <CustomizationProfilesSection
+            customizationBusy={customizationBusy}
+            customizationImportJson={customizationImportJson}
+            setCustomizationImportJson={setCustomizationImportJson}
+            handleExportCustomizationProfile={handleExportCustomizationProfile}
+            handleResetCustomizationProfile={handleResetCustomizationProfile}
+            handleCustomizationImportFile={handleCustomizationImportFile}
+            handleImportCustomizationProfile={handleImportCustomizationProfile}
+            toast={toast}
+          />
         </TabsContent>
 
         {/* Pricing Tab */}
         <TabsContent value="pricing" className="space-y-6">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <Euro className="w-5 h-5 text-amber-500" />
-                Preisgestaltung
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {/* Default Mode */}
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 text-sm leading-6 text-zinc-400">
-                Aktiv ist nur noch der Credits-Flow: freischalten, spielen, bei echtem Matchstart abbuchen.
-                Legacy-Varianten bleiben intern kompatibel, tauchen hier aber nicht mehr als Hauptprodukt auf.
-              </div>
-
-              {/* Per Game Pricing */}
-              <div className="bg-zinc-800/50 rounded-sm p-4 space-y-4">
-                <h4 className="text-sm text-zinc-400 uppercase tracking-wider">Credits</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <label className="text-xs text-zinc-500">Preis pro Credit (€)</label>
-                    <Input
-                      type="number"
-                      step="0.5"
-                      value={localPricing.per_game?.price_per_credit || 2}
-                      onChange={(e) => setLocalPricing({
-                        ...localPricing,
-                        per_game: { ...localPricing.per_game, price_per_credit: parseFloat(e.target.value) }
-                      })}
-                      data-testid="price-per-game-input"
-                      className="input-industrial h-10"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-xs text-zinc-500">Standard-Freischaltung</label>
-                    <Input
-                      type="number"
-                      value={localPricing.per_game?.default_credits || 3}
-                      onChange={(e) => setLocalPricing({
-                        ...localPricing,
-                        per_game: { ...localPricing.per_game, default_credits: parseInt(e.target.value) }
-                      })}
-                      data-testid="default-credits-input"
-                      className="input-industrial h-10"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Max Players */}
-              <div className="space-y-2">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">Max. Spieler</label>
-                <Input
-                  type="number"
-                  min="1"
-                  max="8"
-                  value={localPricing.max_players || 4}
-                  onChange={(e) => setLocalPricing({ ...localPricing, max_players: parseInt(e.target.value) })}
-                  data-testid="max-players-input"
-                  className="input-industrial max-w-xs"
-                />
-              </div>
-
-              {/* Allowed Game Types */}
-              <div className="space-y-3">
-                <label className="text-sm text-zinc-500 uppercase tracking-wider">Erlaubte Spielarten</label>
-                <div className="flex flex-wrap gap-2">
-                  {['301', '501', 'Cricket', 'Training', 'Around the Clock', 'Shanghai'].map((game) => (
-                    <button
-                      key={game}
-                      onClick={() => toggleGameType(game)}
-                      className={`px-4 py-2 rounded-sm border transition-all ${
-                        (localPricing.allowed_game_types || []).includes(game)
-                          ? 'border-amber-500 bg-amber-500/20 text-amber-500'
-                          : 'border-zinc-700 text-zinc-500 hover:border-zinc-600'
-                      }`}
-                    >
-                      {(localPricing.allowed_game_types || []).includes(game) && (
-                        <Check className="w-4 h-4 inline mr-2" />
-                      )}
-                      {game}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <Button
-                onClick={handleSavePricing}
-                disabled={saving}
-                data-testid="save-pricing-btn"
-                className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading"
-              >
-                <Save className="w-4 h-4 mr-2" />
-                {saving ? 'Speichern...' : 'Speichern'}
-              </Button>
-            </CardContent>
-          </Card>
+          <PricingSettingsSection
+            localPricing={localPricing}
+            setLocalPricing={setLocalPricing}
+            toggleGameType={toggleGameType}
+            handleSavePricing={handleSavePricing}
+            saving={saving}
+          />
         </TabsContent>
 
         {/* Palettes Tab */}
