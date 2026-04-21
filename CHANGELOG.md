@@ -4,6 +4,24 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.12] - 2026-04-21
+
+### Added
+- Added a normalized `customization-bundle` settings read model that returns merged/defaulted kiosk/admin customization data in one consistent payload.
+- Added a dedicated backend settings-contract layer for branding, themes, kiosk layout, kiosk texts, PWA config, lock-screen QR, overlay, post-match delay, language, match sharing, palettes, and pricing.
+
+### Improved
+- Settings reads now return fully normalized objects with nested defaults instead of partial/raw JSON blobs for the contract-managed settings family.
+- Contract-managed writes now sanitize and normalize stored values before persistence, reducing config drift and invalid enum/state combinations.
+- Frontend `SettingsContext` now consumes the normalized bundle and exposes first-class update actions for kiosk texts, PWA config, and lock-screen QR.
+- Config apply now normalizes contract-managed settings before writing them to local storage, improving upgrade/import consistency.
+
+### Validation
+- Added focused regression tests for the settings contract layer (`3 passed`).
+- Backend compile sanity passed.
+- Frontend production build passed.
+- Release artifacts rebuilt for `v4.4.12`.
+
 ## [4.4.11] - 2026-04-21
 
 ### Added
