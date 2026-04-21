@@ -8,12 +8,12 @@ from sqlalchemy import select
 from backend.database import get_db
 from backend.models import User, Settings
 from backend.models import DEFAULT_BRANDING, DEFAULT_PRICING, DEFAULT_PALETTES, DEFAULT_STAMMKUNDE_DISPLAY, DEFAULT_SOUND_CONFIG, DEFAULT_LANGUAGE, DEFAULT_KIOSK_TEXTS, DEFAULT_PWA_CONFIG, DEFAULT_LOCKSCREEN_QR, DEFAULT_OVERLAY_CONFIG, DEFAULT_POST_MATCH_DELAY, DEFAULT_AUTODARTS_TRIGGERS, DEFAULT_AUTODARTS_DESKTOP, DEFAULT_KIOSK_THEME, DEFAULT_ADMIN_THEME, DEFAULT_KIOSK_LAYOUT
-from backend.schemas import SettingsUpdate
+from backend.schemas import SettingsUpdate, CustomizationBundleImportRequest, CustomizationBundleResetRequest
 from backend.dependencies import require_admin, log_audit, get_or_create_setting, ASSETS_DIR
 from backend.runtime_features import sanitize_pricing_settings
 from backend.services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
 from backend.services.autodarts_triggers import sanitize_trigger_policy_config, export_trigger_policy_metadata
-from backend.services.settings_contract import build_customization_bundle, get_setting_value, set_setting_value
+from backend.services.settings_contract import build_customization_bundle, get_setting_value, set_setting_value, apply_customization_bundle, reset_customization_bundle
 
 router = APIRouter()
 
@@ -35,6 +35,56 @@ async def _put_contracted_setting(db: AsyncSession, admin: User, key: str, value
 @router.get("/settings/customization-bundle")
 async def get_customization_bundle(db: AsyncSession = Depends(get_db)):
     return await build_customization_bundle(db)
+
+
+@router.get("/settings/customization-profile/export")
+async def export_customization_profile(admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    bundle = await build_customization_bundle(db)
+    await log_audit(db, admin, "export_customization_profile", "settings", "customization_bundle")
+    return {
+        "meta": {
+            "type": "customization-profile",
+            "version": 1,
+        },
+        "bundle": bundle,
+    }
+
+
+@router.post("/settings/customization-profile/import")
+async def import_customization_profile(
+    data: CustomizationBundleImportRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    bundle = await apply_customization_bundle(db, data.bundle)
+    await log_audit(db, admin, "import_customization_profile", "settings", "customization_bundle")
+    return {
+        "meta": {
+            "type": "customization-profile",
+            "version": 1,
+        },
+        "bundle": bundle,
+    }
+
+
+@router.post("/settings/customization-profile/reset")
+async def reset_customization_profile(
+    data: CustomizationBundleResetRequest,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    if not data.confirm:
+        raise HTTPException(status_code=400, detail="confirm must be true")
+    bundle = await reset_customization_bundle(db)
+    await log_audit(db, admin, "reset_customization_profile", "settings", "customization_bundle")
+    return {
+        "meta": {
+            "type": "customization-profile",
+            "version": 1,
+            "reset": True,
+        },
+        "bundle": bundle,
+    }
 
 
 @router.get("/settings/branding")

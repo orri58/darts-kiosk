@@ -113,6 +113,12 @@ class AgentStatusResponse(BaseModel):
 class SettingsUpdate(BaseModel):
     value: Union[dict, list]  # Allow both dict and list for flexible settings storage
 
+class CustomizationBundleImportRequest(BaseModel):
+    bundle: dict
+
+class CustomizationBundleResetRequest(BaseModel):
+    confirm: bool = False
+
 class AuditLogResponse(BaseModel):
     id: str
     username: Optional[str]

@@ -251,6 +251,22 @@ SETTINGS_CONTRACTS: dict[str, SettingContract] = {
     "match_sharing": SettingContract("match_sharing", DEFAULT_MATCH_SHARING, _sanitize_match_sharing),
 }
 
+CUSTOMIZATION_BUNDLE_FIELD_MAP: dict[str, str] = {
+    "branding": "branding",
+    "pricing": "pricing",
+    "palettes": "palettes",
+    "kioskTheme": "kiosk_theme",
+    "adminTheme": "admin_theme",
+    "kioskLayout": "kiosk_layout",
+    "kioskTexts": "kiosk_texts",
+    "pwaConfig": "pwa_config",
+    "lockscreenQr": "lockscreen_qr",
+    "overlayConfig": "overlay_config",
+    "postMatchDelay": "post_match_delay",
+    "language": "language",
+    "matchSharing": "match_sharing",
+}
+
 
 def has_setting_contract(key: str) -> bool:
     return key in SETTINGS_CONTRACTS
@@ -294,21 +310,27 @@ async def set_setting_value(db: AsyncSession, key: str, value: Any) -> Any:
 
 def build_customization_bundle_from_values(values: Mapping[str, Any] | None = None) -> dict[str, Any]:
     values = values or {}
-    return {
-        "branding": normalize_setting_value("branding", values.get("branding")),
-        "pricing": normalize_setting_value("pricing", values.get("pricing")),
-        "palettes": normalize_setting_value("palettes", values.get("palettes")),
-        "kioskTheme": normalize_setting_value("kiosk_theme", values.get("kiosk_theme")),
-        "adminTheme": normalize_setting_value("admin_theme", values.get("admin_theme")),
-        "kioskLayout": normalize_setting_value("kiosk_layout", values.get("kiosk_layout")),
-        "kioskTexts": normalize_setting_value("kiosk_texts", values.get("kiosk_texts")),
-        "pwaConfig": normalize_setting_value("pwa_config", values.get("pwa_config")),
-        "lockscreenQr": normalize_setting_value("lockscreen_qr", values.get("lockscreen_qr")),
-        "overlayConfig": normalize_setting_value("overlay_config", values.get("overlay_config")),
-        "postMatchDelay": normalize_setting_value("post_match_delay", values.get("post_match_delay")),
-        "language": normalize_setting_value("language", values.get("language")),
-        "matchSharing": normalize_setting_value("match_sharing", values.get("match_sharing")),
-    }
+    bundle: dict[str, Any] = {}
+    for field_name, settings_key in CUSTOMIZATION_BUNDLE_FIELD_MAP.items():
+        bundle[field_name] = normalize_setting_value(settings_key, values.get(settings_key))
+    return bundle
+
+
+def normalize_customization_bundle(bundle: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    bundle = bundle or {}
+    values = {settings_key: bundle.get(field_name) for field_name, settings_key in CUSTOMIZATION_BUNDLE_FIELD_MAP.items()}
+    return build_customization_bundle_from_values(values)
+
+
+async def apply_customization_bundle(db: AsyncSession, bundle: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    normalized_bundle = normalize_customization_bundle(bundle)
+    for field_name, settings_key in CUSTOMIZATION_BUNDLE_FIELD_MAP.items():
+        await set_setting_value(db, settings_key, normalized_bundle[field_name])
+    return normalized_bundle
+
+
+async def reset_customization_bundle(db: AsyncSession) -> dict[str, Any]:
+    return await apply_customization_bundle(db, {})
 
 
 async def build_customization_bundle(db: AsyncSession) -> dict[str, Any]:

@@ -1,5 +1,6 @@
 from backend.services.settings_contract import (
     build_customization_bundle_from_values,
+    normalize_customization_bundle,
     normalize_setting_value,
 )
 
@@ -78,3 +79,30 @@ def test_customization_bundle_builds_full_normalized_contracts_from_partial_valu
     assert bundle["lockscreenQr"]["enabled"] is True
     assert bundle["lockscreenQr"]["path"] == "/public/leaderboard"
     assert bundle["pricing"]["mode"] == "per_player"
+
+
+def test_customization_bundle_import_normalizes_frontend_bundle_shape():
+    normalized = normalize_customization_bundle(
+        {
+            "branding": {"cafe_name": "Venue X"},
+            "kioskLayout": {
+                "header": {"logo_size": "2xl"},
+                "locked_screen": {"logo_position": "hero", "hero_logo_size": "bogus"},
+            },
+            "kioskTexts": {
+                "locked_cards": {
+                    "matchstart": {"enabled": False, "hint": "Custom hint"}
+                }
+            },
+            "lockscreenQr": {"enabled": True, "path": "/public/custom"},
+        }
+    )
+
+    assert normalized["branding"]["cafe_name"] == "Venue X"
+    assert normalized["kioskLayout"]["header"]["logo_size"] == "2xl"
+    assert normalized["kioskLayout"]["locked_screen"]["logo_position"] == "hero"
+    assert normalized["kioskLayout"]["locked_screen"]["hero_logo_size"] == "xl"
+    assert normalized["kioskTexts"]["locked_cards"]["matchstart"]["enabled"] is False
+    assert normalized["kioskTexts"]["locked_cards"]["matchstart"]["hint"] == "Custom hint"
+    assert normalized["lockscreenQr"]["path"] == "/public/custom"
+    assert normalized["adminTheme"]["palette_id"] == "slate"
