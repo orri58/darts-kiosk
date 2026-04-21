@@ -4,6 +4,22 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.13] - 2026-04-21
+
+### Added
+- Added professional customization profile tools in Admin settings for exporting, importing, and resetting the kiosk/admin customization state as a JSON profile.
+- Added backend customization profile endpoints on top of the normalized settings contract for safe profile round-trips.
+
+### Improved
+- Normalized customization bundle import now sanitizes and restores the full contract-managed kiosk/admin settings family in one step.
+- Admin settings now expose a practical operator workflow for backup/rollout/reset without touching raw storage manually.
+
+### Validation
+- Focused settings contract regression suite passed (`4 passed`).
+- Backend compile sanity passed.
+- Frontend production build passed.
+- Release artifacts rebuilt for `v4.4.13`.
+
 ## [4.4.12] - 2026-04-21
 
 ### Added

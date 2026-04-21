@@ -1,53 +1,29 @@
-# Darts Kiosk — Release Notes v4.4.12
+# Darts Kiosk — Release Notes v4.4.13
 
-## Settings system foundation for professional kiosk/admin customization
+## Customization profiles for professional admin workflows
 
-Darts Kiosk 4.4.12 does not just add more knobs — it strengthens the configuration foundation that future kiosk and admin customization will build on.
+Darts Kiosk 4.4.13 builds on the new settings-contract foundation and adds practical admin tooling for moving, backing up, restoring, and resetting kiosk/admin customization safely.
 
 ## What changed
 
-### 1. Normalized customization bundle
-A new backend settings read model now exposes a merged/defaulted customization bundle for the core kiosk/admin settings family.
-This gives the frontend a more consistent payload instead of many partially-shaped JSON blobs.
+### 1. Customization profile export
+Admin settings can now export the current kiosk/admin customization state as a JSON profile.
+This gives operators a clean backup and rollout format for venue-specific styling/content setups.
 
-Covered settings include:
-- branding
-- pricing
-- palettes
-- kiosk theme
-- admin theme
-- kiosk layout
-- kiosk texts
-- PWA config
-- lock-screen QR
-- overlay config
-- post-match delay
-- language
-- match sharing
+### 2. Customization profile import
+The exported JSON profile can now be imported back into the system.
+Imports run through the normalized settings contract, so the incoming bundle is sanitized and restored as a full contract-managed configuration set.
 
-### 2. Settings contract layer
-A dedicated settings-contract service now normalizes and sanitizes contract-managed settings before they are persisted or returned.
-That means:
-- nested defaults are filled reliably
-- invalid enum values fall back safely
-- kiosk/admin settings drift less over time
-- future settings expansion has a cleaner backend foundation
+### 3. Customization reset
+Admin settings now expose a clean reset action for the contract-managed customization family.
+That makes it much easier to return a kiosk/admin setup to a known-good baseline without manually editing lots of separate fields.
 
-### 3. Frontend settings context cleanup
-The frontend settings context now consumes the normalized bundle directly and exposes dedicated update actions for:
-- kiosk texts
-- PWA config
-- lock-screen QR
-
-This reduces ad hoc settings patchwork and moves the project toward a cleaner configuration architecture.
-
-### 4. Better config-apply compatibility
-Contract-managed settings are now normalized when applied from synced/imported config sources, improving consistency across update and config workflows.
-
-## Why this release matters
-
-This is the first real foundation step toward making the kiosk/admin system behave more like a professional configurable product instead of an accumulation of one-off settings.
-It is intentionally a structural release so later work — modular settings UI, better previews, stronger branding/layout composition, and presets — can land on a more stable base.
+### 4. Better admin workflow foundation
+This is a practical professionalization step for operators:
+- backup current look & feel
+- clone venue configuration to another device
+- test bold changes and recover quickly
+- restore baseline customization without database surgery
 
 ## Validation performed for this release
 
@@ -62,7 +38,7 @@ bash release/build_release.sh
 ```
 
 Observed result:
-- focused settings contract regression suite passed (`3 passed`)
+- focused settings contract regression suite passed (`4 passed`)
 - backend compile sanity passed
 - frontend production build passed
-- release artifacts were rebuilt for `v4.4.12`
+- release artifacts were rebuilt for `v4.4.13`
