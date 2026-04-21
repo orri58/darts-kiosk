@@ -5,6 +5,8 @@ const SIZE_MAP = {
   sm: 'h-10 max-w-[96px] lg:h-12 lg:max-w-[120px]',
   md: 'h-14 max-w-[128px] lg:h-16 lg:max-w-[160px]',
   lg: 'h-20 max-w-[168px] lg:h-24 lg:max-w-[220px]',
+  xl: 'h-24 max-w-[220px] lg:h-28 lg:max-w-[280px]',
+  '2xl': 'h-28 max-w-[260px] lg:h-36 lg:max-w-[340px]',
 };
 
 export default function KioskHeader({ branding, eyebrow, title, subtitle, right, compact = false }) {

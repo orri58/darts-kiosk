@@ -698,6 +698,8 @@ export default function AdminSettings() {
                         <option value="sm">Klein</option>
                         <option value="md">Mittel</option>
                         <option value="lg">Groß</option>
+                        <option value="xl">Sehr groß</option>
+                        <option value="2xl">Maximal</option>
                       </select>
                     </div>
                     <div className="space-y-2">
@@ -760,6 +762,44 @@ export default function AdminSettings() {
                       <option value="side">Rechte Seite</option>
                     </select>
                   </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <label className="text-xs uppercase tracking-wider text-zinc-500">Lockscreen Inhalt</label>
+                      <select
+                        value={localKioskLayout?.locked_screen?.content_align || 'left'}
+                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, locked_screen: { ...(localKioskLayout?.locked_screen || {}), content_align: e.target.value } })}
+                        className="input-industrial h-11"
+                      >
+                        <option value="left">Links</option>
+                        <option value="center">Mittig</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-xs uppercase tracking-wider text-zinc-500">Logo-Position Lockscreen</label>
+                      <select
+                        value={localKioskLayout?.locked_screen?.logo_position || 'header'}
+                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, locked_screen: { ...(localKioskLayout?.locked_screen || {}), logo_position: e.target.value } })}
+                        className="input-industrial h-11"
+                      >
+                        <option value="header">Im Header</option>
+                        <option value="hero">Groß im Hauptbereich</option>
+                      </select>
+                    </div>
+                  </div>
+                  {(localKioskLayout?.locked_screen?.logo_position || 'header') === 'hero' && (
+                    <div className="space-y-2">
+                      <label className="text-xs uppercase tracking-wider text-zinc-500">Lockscreen Logo-Größe</label>
+                      <select
+                        value={localKioskLayout?.locked_screen?.hero_logo_size || 'xl'}
+                        onChange={(e) => setLocalKioskLayout({ ...localKioskLayout, locked_screen: { ...(localKioskLayout?.locked_screen || {}), hero_logo_size: e.target.value } })}
+                        className="input-industrial h-11"
+                      >
+                        <option value="lg">Groß</option>
+                        <option value="xl">Sehr groß</option>
+                        <option value="2xl">Maximal</option>
+                      </select>
+                    </div>
+                  )}
                   <label className="flex items-center gap-3 rounded-xl border border-zinc-800 px-3 py-3 text-sm text-zinc-300">
                     <input
                       type="checkbox"
@@ -1522,6 +1562,88 @@ export default function AdminSettings() {
                   <div>
                     <Label className="text-zinc-300">Zeit-Label</Label>
                     <Input data-testid="kiosk-text-time-label" value={localKioskTexts.time_label || ''} onChange={(e) => setLocalKioskTexts(p => ({ ...p, time_label: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Zeit übrig" />
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-zinc-800 pt-4">
+                <h4 className="text-sm font-medium text-zinc-300 mb-3">Lockscreen Info-Karten</h4>
+                <p className="text-xs text-zinc-500 mb-4">Texte für Credits / Matchstart / Freischaltung anpassen oder einzelne Karten komplett ausblenden.</p>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label className="text-zinc-300">Credits-Karte</Label>
+                      <button
+                        type="button"
+                        data-testid="kiosk-card-credits-toggle"
+                        onClick={() => setLocalKioskTexts((p) => ({
+                          ...p,
+                          locked_cards: {
+                            ...(p.locked_cards || {}),
+                            credits: {
+                              ...(p.locked_cards?.credits || {}),
+                              enabled: p.locked_cards?.credits?.enabled === false,
+                            },
+                          },
+                        }))}
+                        className={`w-12 h-6 rounded-full transition-colors relative ${(localKioskTexts.locked_cards?.credits?.enabled ?? true) ? 'bg-amber-500' : 'bg-zinc-700'}`}
+                      >
+                        <div className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${(localKioskTexts.locked_cards?.credits?.enabled ?? true) ? 'left-6' : 'left-0.5'}`} />
+                      </button>
+                    </div>
+                    <Input value={localKioskTexts.locked_cards?.credits?.label ?? ''} onChange={(e) => setLocalKioskTexts((p) => ({ ...p, locked_cards: { ...(p.locked_cards || {}), credits: { ...(p.locked_cards?.credits || {}), label: e.target.value } } }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Credits" />
+                    <Input value={localKioskTexts.locked_cards?.credits?.value ?? ''} onChange={(e) => setLocalKioskTexts((p) => ({ ...p, locked_cards: { ...(p.locked_cards || {}), credits: { ...(p.locked_cards?.credits || {}), value: e.target.value } } }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Leer = automatisch aus Preis" />
+                    <Input value={localKioskTexts.locked_cards?.credits?.hint ?? ''} onChange={(e) => setLocalKioskTexts((p) => ({ ...p, locked_cards: { ...(p.locked_cards || {}), credits: { ...(p.locked_cards?.credits || {}), hint: e.target.value } } }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Preis pro Credit" />
+                  </div>
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label className="text-zinc-300">Matchstart-Karte</Label>
+                      <button
+                        type="button"
+                        data-testid="kiosk-card-matchstart-toggle"
+                        onClick={() => setLocalKioskTexts((p) => ({
+                          ...p,
+                          locked_cards: {
+                            ...(p.locked_cards || {}),
+                            matchstart: {
+                              ...(p.locked_cards?.matchstart || {}),
+                              enabled: p.locked_cards?.matchstart?.enabled === false,
+                            },
+                          },
+                        }))}
+                        className={`w-12 h-6 rounded-full transition-colors relative ${(localKioskTexts.locked_cards?.matchstart?.enabled ?? true) ? 'bg-amber-500' : 'bg-zinc-700'}`}
+                      >
+                        <div className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${(localKioskTexts.locked_cards?.matchstart?.enabled ?? true) ? 'left-6' : 'left-0.5'}`} />
+                      </button>
+                    </div>
+                    <Input value={localKioskTexts.locked_cards?.matchstart?.label ?? ''} onChange={(e) => setLocalKioskTexts((p) => ({ ...p, locked_cards: { ...(p.locked_cards || {}), matchstart: { ...(p.locked_cards?.matchstart || {}), label: e.target.value } } }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Matchstart" />
+                    <Input value={localKioskTexts.locked_cards?.matchstart?.value ?? ''} onChange={(e) => setLocalKioskTexts((p) => ({ ...p, locked_cards: { ...(p.locked_cards || {}), matchstart: { ...(p.locked_cards?.matchstart || {}), value: e.target.value } } }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Leer = automatisch aus Modus" />
+                    <Input value={localKioskTexts.locked_cards?.matchstart?.hint ?? ''} onChange={(e) => setLocalKioskTexts((p) => ({ ...p, locked_cards: { ...(p.locked_cards || {}), matchstart: { ...(p.locked_cards?.matchstart || {}), hint: e.target.value } } }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Abbuchung erst beim echten Match." />
+                  </div>
+                  <div className="rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <Label className="text-zinc-300">Freischaltung-Karte</Label>
+                      <button
+                        type="button"
+                        data-testid="kiosk-card-unlock-toggle"
+                        onClick={() => setLocalKioskTexts((p) => ({
+                          ...p,
+                          locked_cards: {
+                            ...(p.locked_cards || {}),
+                            unlock: {
+                              ...(p.locked_cards?.unlock || {}),
+                              enabled: p.locked_cards?.unlock?.enabled === false,
+                            },
+                          },
+                        }))}
+                        className={`w-12 h-6 rounded-full transition-colors relative ${(localKioskTexts.locked_cards?.unlock?.enabled ?? true) ? 'bg-amber-500' : 'bg-zinc-700'}`}
+                      >
+                        <div className={`w-5 h-5 rounded-full bg-white absolute top-0.5 transition-all ${(localKioskTexts.locked_cards?.unlock?.enabled ?? true) ? 'left-6' : 'left-0.5'}`} />
+                      </button>
+                    </div>
+                    <Input value={localKioskTexts.locked_cards?.unlock?.label ?? ''} onChange={(e) => setLocalKioskTexts((p) => ({ ...p, locked_cards: { ...(p.locked_cards || {}), unlock: { ...(p.locked_cards?.unlock || {}), label: e.target.value } } }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Freischaltung" />
+                    <Input value={localKioskTexts.locked_cards?.unlock?.value ?? ''} onChange={(e) => setLocalKioskTexts((p) => ({ ...p, locked_cards: { ...(p.locked_cards || {}), unlock: { ...(p.locked_cards?.unlock || {}), value: e.target.value } } }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Leer = automatisch aus Startwert" />
+                    <Input value={localKioskTexts.locked_cards?.unlock?.hint ?? ''} onChange={(e) => setLocalKioskTexts((p) => ({ ...p, locked_cards: { ...(p.locked_cards || {}), unlock: { ...(p.locked_cards?.unlock || {}), hint: e.target.value } } }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Typischer Startwert am Tresen." />
                   </div>
                 </div>
               </div>

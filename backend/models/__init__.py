@@ -387,6 +387,9 @@ DEFAULT_KIOSK_LAYOUT = {
         "pairing_position": "bottom",
         "show_community_widgets": False,
         "panel_emphasis": "balanced",
+        "content_align": "left",
+        "logo_position": "header",
+        "hero_logo_size": "xl",
     },
 }
 
@@ -402,6 +405,26 @@ DEFAULT_KIOSK_TEXTS = {
     "staff_hint": "",
     "upsell_message": "Weitere Spiele an der Theke freischalten",
     "upsell_pricing": "",
+    "locked_cards": {
+        "credits": {
+            "enabled": True,
+            "label": "Credits",
+            "value": "",
+            "hint": "Preis pro Credit",
+        },
+        "matchstart": {
+            "enabled": True,
+            "label": "Matchstart",
+            "value": "",
+            "hint": "Abbuchung erst beim echten Match.",
+        },
+        "unlock": {
+            "enabled": True,
+            "label": "Freischaltung",
+            "value": "",
+            "hint": "Typischer Startwert am Tresen.",
+        },
+    },
 }
 
 DEFAULT_PWA_CONFIG = {

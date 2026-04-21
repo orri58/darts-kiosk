@@ -7,6 +7,12 @@ import KioskHeader from '../../components/kiosk/KioskHeader';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
+const HERO_LOGO_SIZE_MAP = {
+  lg: 'h-24 max-w-[220px] lg:h-28 lg:max-w-[280px]',
+  xl: 'h-28 max-w-[280px] lg:h-36 lg:max-w-[360px]',
+  '2xl': 'h-36 max-w-[340px] lg:h-44 lg:max-w-[440px]',
+};
+
 function TopPlayersRotation() {
   const [players, setPlayers] = useState([]);
   const [current, setCurrent] = useState(0);
@@ -249,10 +255,51 @@ export default function LockedScreen({ branding, pricing, boardId }) {
   const { kioskTexts, kioskLayout } = useSettings();
   const [qrConfig, setQrConfig] = useState(null);
   const [baseUrl, setBaseUrl] = useState('');
-  const showCommunityWidgets = Boolean(kioskLayout?.locked_screen?.show_community_widgets);
-  const pairingPosition = kioskLayout?.locked_screen?.pairing_position || 'bottom';
+  const lockedScreen = kioskLayout?.locked_screen || {};
+  const showCommunityWidgets = Boolean(lockedScreen.show_community_widgets);
+  const pairingPosition = lockedScreen.pairing_position || 'bottom';
+  const contentAlign = lockedScreen.content_align === 'center' ? 'center' : 'left';
+  const logoPosition = lockedScreen.logo_position === 'hero' ? 'hero' : 'header';
+  const heroLogoSize = HERO_LOGO_SIZE_MAP[lockedScreen.hero_logo_size] || HERO_LOGO_SIZE_MAP.xl;
+  const cardsConfig = kioskTexts?.locked_cards || {};
 
   const formatPrice = (amount, currency = 'EUR') => `${amount.toFixed(2)} ${currency}`;
+  const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key);
+  const pickText = (obj, key, fallback) => (hasOwn(obj, key) ? obj[key] : fallback);
+
+  const defaultMatchstartValue = pricing?.mode === 'per_game'
+    ? '1 Credit / Match'
+    : pricing?.mode === 'per_time'
+      ? 'Zeitbasiert'
+      : '1 Credit / Spieler';
+  const defaultUnlockValue = `${pricing.per_game?.default_credits || 3} Credits`;
+
+  const infoCards = [
+    {
+      key: 'credits',
+      icon: WalletCards,
+      enabled: cardsConfig?.credits?.enabled !== false,
+      label: pickText(cardsConfig?.credits, 'label', 'Credits'),
+      value: pickText(cardsConfig?.credits, 'value', formatPrice(pricing.per_game?.price_per_credit || 2.0)),
+      hint: pickText(cardsConfig?.credits, 'hint', 'Preis pro Credit'),
+    },
+    {
+      key: 'matchstart',
+      icon: Users,
+      enabled: cardsConfig?.matchstart?.enabled !== false,
+      label: pickText(cardsConfig?.matchstart, 'label', 'Matchstart'),
+      value: pickText(cardsConfig?.matchstart, 'value', defaultMatchstartValue),
+      hint: pickText(cardsConfig?.matchstart, 'hint', 'Abbuchung erst beim echten Match.'),
+    },
+    {
+      key: 'unlock',
+      icon: Target,
+      enabled: cardsConfig?.unlock?.enabled !== false,
+      label: pickText(cardsConfig?.unlock, 'label', 'Freischaltung'),
+      value: pickText(cardsConfig?.unlock, 'value', defaultUnlockValue),
+      hint: pickText(cardsConfig?.unlock, 'hint', 'Typischer Startwert am Tresen.'),
+    },
+  ].filter((card) => card.enabled);
 
   useEffect(() => {
     const fetchQrConfig = async () => {
@@ -273,24 +320,33 @@ export default function LockedScreen({ branding, pricing, boardId }) {
     fetchQrConfig();
   }, []);
 
+  const headerBranding = logoPosition === 'hero' ? { ...branding, logo_url: null } : branding;
+
   return (
     <div className="relative h-full w-full overflow-hidden bg-[var(--color-bg)]" data-testid="locked-screen">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgb(var(--color-primary-rgb)/0.18),transparent_30%),linear-gradient(180deg,rgb(var(--color-bg-rgb)/0.96),var(--color-bg))]" />
       <div className="absolute inset-0 opacity-[0.08] texture-overlay" />
 
       <div className="relative z-10 flex h-full flex-col px-4 py-4 lg:px-8 lg:py-6">
-        <KioskHeader branding={branding} eyebrow={`Board ${boardId}`} compact />
+        <KioskHeader branding={headerBranding} eyebrow={`Board ${boardId}`} compact />
 
         <div className="mx-auto grid w-full max-w-7xl flex-1 gap-5 py-5 lg:grid-cols-[1.25fr,0.75fr] lg:items-center lg:py-7">
-          <div className="space-y-5">
+          <div className={`space-y-5 ${contentAlign === 'center' ? 'flex flex-col items-center text-center' : ''}`}>
+            {logoPosition === 'hero' && branding?.logo_url ? (
+              <img
+                src={branding.logo_url}
+                alt={branding?.cafe_name || 'Venue logo'}
+                className={`w-auto object-contain drop-shadow-[0_16px_48px_rgba(0,0,0,0.28)] ${heroLogoSize}`}
+              />
+            ) : null}
             <div className="inline-flex h-16 w-16 items-center justify-center rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.8)] text-[var(--color-text-secondary)] shadow-[0_16px_48px_rgba(0,0,0,0.28)] lg:h-20 lg:w-20">
               <Lock className="h-10 w-10" strokeWidth={2.2} />
             </div>
-            <div>
+            <div className={contentAlign === 'center' ? 'flex flex-col items-center text-center' : ''}>
               <h2 className="text-3xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] md:text-5xl lg:text-6xl" data-testid="locked-message">
                 {kioskTexts.locked_title || t('locked')}
               </h2>
-              <p className="mt-3 max-w-2xl text-base leading-7 text-[var(--color-text-secondary)] lg:text-lg lg:leading-8">
+              <p className={`mt-3 text-base leading-7 text-[var(--color-text-secondary)] lg:text-lg lg:leading-8 ${contentAlign === 'center' ? 'max-w-3xl' : 'max-w-2xl'}`}>
                 {kioskTexts.locked_subtitle || t('locked_message')}
               </p>
               {kioskTexts.pricing_hint && (
@@ -298,32 +354,27 @@ export default function LockedScreen({ branding, pricing, boardId }) {
               )}
             </div>
 
-            <div className="grid gap-3 md:grid-cols-3" data-testid="pricing-info">
-              <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
-                <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                  <WalletCards className="h-4 w-4 text-[var(--color-primary)]" />
-                  Credits
-                </div>
-                <p className="mt-3 text-2xl font-semibold text-[var(--color-text)] lg:text-3xl">{formatPrice(pricing.per_game?.price_per_credit || 2.0)}</p>
-                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Preis pro Credit</p>
+            {infoCards.length > 0 ? (
+              <div className="grid w-full gap-3 md:grid-cols-3" data-testid="pricing-info">
+                {infoCards.map((card) => {
+                  const Icon = card.icon;
+                  return (
+                    <div key={card.key} className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
+                      <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
+                        <Icon className="h-4 w-4 text-[var(--color-primary)]" />
+                        {card.label}
+                      </div>
+                      {card.value ? (
+                        <p className="mt-3 text-2xl font-semibold text-[var(--color-text)] lg:text-3xl">{card.value}</p>
+                      ) : null}
+                      {card.hint ? (
+                        <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{card.hint}</p>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
-              <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
-                <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                  <Users className="h-4 w-4 text-[var(--color-primary)]" />
-                  Matchstart
-                </div>
-                <p className="mt-3 text-2xl font-semibold text-[var(--color-text)] lg:text-3xl">1 Credit / Spieler</p>
-                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Abbuchung erst beim echten Match.</p>
-              </div>
-              <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
-                <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
-                  <Target className="h-4 w-4 text-[var(--color-primary)]" />
-                  Freischaltung
-                </div>
-                <p className="mt-3 text-2xl font-semibold text-[var(--color-text)] lg:text-3xl">{pricing.per_game?.default_credits || 3} Credits</p>
-                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Typischer Startwert am Tresen.</p>
-              </div>
-            </div>
+            ) : null}
           </div>
 
           <div className="space-y-4">

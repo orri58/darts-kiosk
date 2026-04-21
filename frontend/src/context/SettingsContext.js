@@ -40,7 +40,14 @@ export function SettingsProvider({ children }) {
   const [kioskLayout, setKioskLayout] = useState({
     preset: 'balanced',
     header: { show_logo: true, show_title: true, show_subtitle: true, align: 'left', logo_size: 'md' },
-    locked_screen: { pairing_position: 'bottom', show_community_widgets: false, panel_emphasis: 'balanced' },
+    locked_screen: {
+      pairing_position: 'bottom',
+      show_community_widgets: false,
+      panel_emphasis: 'balanced',
+      content_align: 'left',
+      logo_position: 'header',
+      hero_logo_size: 'xl',
+    },
   });
   const [kioskTexts, setKioskTexts] = useState({
     locked_title: 'GESPERRT',
@@ -53,6 +60,12 @@ export function SettingsProvider({ children }) {
     time_label: 'Zeit übrig',
     staff_hint: '',
     upsell_message: 'Credits an der Theke nachladen',
+    upsell_pricing: '',
+    locked_cards: {
+      credits: { enabled: true, label: 'Credits', value: '', hint: 'Preis pro Credit' },
+      matchstart: { enabled: true, label: 'Matchstart', value: '', hint: 'Abbuchung erst beim echten Match.' },
+      unlock: { enabled: true, label: 'Freischaltung', value: '', hint: 'Typischer Startwert am Tresen.' },
+    },
   });
   const [pwaConfig, setPwaConfig] = useState({
     app_name: 'Darts Kiosk',
