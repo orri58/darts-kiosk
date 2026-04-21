@@ -4,6 +4,21 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.11] - 2026-04-21
+
+### Added
+- Added configurable lock-screen info cards for Credits, Matchstart, and Freischaltung so each card can be renamed, have custom value/hint text, or be disabled entirely from Admin settings.
+- Added more kiosk logo sizing options (`xl`, `2xl`) plus lock-screen layout controls for centered content and a large hero-logo mode in the main screen area.
+
+### Improved
+- Lock-screen rendering now derives default card values from pricing settings but respects explicit custom text overrides, including intentionally blank text when desired.
+- The lock screen can now present the venue logo either in the header or prominently in the main content area for more centered/branded layouts.
+
+### Validation
+- Backend compile sanity passed.
+- Frontend production build passed.
+- Changes pushed to `dev` and release artifacts rebuilt for `v4.4.11`.
+
 ## [4.4.10] - 2026-04-15
 
 ### Fixed

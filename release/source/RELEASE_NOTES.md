@@ -1,24 +1,44 @@
-# Darts Kiosk — Release Notes v4.4.10
+# Darts Kiosk — Release Notes v4.4.11
 
-## Credit reconciliation fix for late player detection
+## More control over lock-screen texts and branding layout
 
-Darts Kiosk 4.4.10 fixes a real per-player credit issue that showed up in live board-PC testing.
-The affected case was a two-player match that first started through an early fallback path as if only one player was present and only later got corrected to the real authoritative player count.
+Darts Kiosk 4.4.11 adds direct control over the lock-screen information cards and gives the kiosk logo more flexible sizing and placement options.
 
 ## What changed
 
-### 1. Late player reconciliation now uses the missing delta
-- per-player authoritative start billing now calculates how many player credits were already effectively consumed
-- if the player count is corrected later, the system now only charges or blocks for the missing delta
-- this prevents the kiosk from incorrectly demanding the full player-count total again after one credit had already effectively been accounted for
+### 1. Lock-screen info cards are now configurable
+The three cards shown on the locked screen can now be customized in Admin settings:
 
-### 2. Pending-credit overlay wording is clearer
-- the overlay wording now focuses on the missing additional credits instead of reading like the full total must be paid again
-- this reduces operator and player confusion in blocked-pending cases
+- Credits
+- Matchstart
+- Freischaltung
 
-### 3. Bull-off / non-bull-off behavior is now consistent
-- the bug was easier to see in non-bull-off starts because the fallback start happened earlier there
-- with the reconciliation fix, both paths now align correctly around the same per-player credit logic
+For each card you can now:
+- change the card title
+- override the large value text
+- override the smaller hint text
+- disable the card entirely
+
+This makes it possible to adapt the wording to the venue, simplify the screen, or hide cards that are not useful in a specific setup.
+
+### 2. Bigger logo options and centered screen layouts
+Kiosk branding controls now include:
+
+- larger logo size options (`xl`, `2xl`)
+- centered lock-screen content
+- a new hero-logo mode that places the venue logo prominently in the main screen area instead of only inside the top header
+- separate hero-logo sizing for the locked screen
+
+This makes it much easier to build layouts where the brand sits visually in the middle of the screen and can be made much larger when needed.
+
+### 3. Defaults still come from pricing — unless you override them
+If you do not enter custom card values, the lock screen still derives sensible defaults from pricing settings.
+Examples:
+- credit price from the configured credit price
+- unlock card value from the default credit bundle
+- matchstart wording from the active billing mode
+
+If you do enter your own text, that custom text is used instead.
 
 ## Validation performed for this release
 
@@ -26,11 +46,12 @@ Executed successfully:
 
 ```bash
 source .venv/bin/activate
-python -m pytest -q backend/tests/test_phase34_credits_pricing.py
+python -m compileall backend agent
+cd frontend && npm run build
 bash release/build_release.sh
 ```
 
 Observed result:
-- focused pricing regression suite passed (`15 passed`)
-- release artifacts were rebuilt for `v4.4.10`
-- the fix was derived from and checked against a real support bundle from field testing
+- backend compile sanity passed
+- frontend production build passed
+- release artifacts were rebuilt for `v4.4.11`
