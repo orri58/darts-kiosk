@@ -71,7 +71,7 @@ const COLOR_FIELDS = [
 const EMPTY_PALETTE = { bg: '#09090b', surface: '#18181b', primary: '#f59e0b', secondary: '#ffffff', accent: '#ef4444', text: '#e4e4e7' };
 
 export default function AdminSettings() {
-  const { branding, pricing, palettes, kioskTheme, adminTheme, kioskLayout, kioskTexts, pwaConfig, lockscreenQr, updateBranding, updatePricing, updatePalettes, updateKioskTheme, updateAdminTheme, updateKioskLayout, refreshSettings } = useSettings();
+  const { branding, pricing, palettes, kioskTheme, adminTheme, kioskLayout, kioskTexts, pwaConfig, lockscreenQr, updateBranding, updatePricing, updatePalettes, updateKioskTheme, updateAdminTheme, updateKioskLayout, updateKioskTexts, updatePwaConfig, updateLockscreenQr, refreshSettings } = useSettings();
   const { token } = useAuth();
   
   const [localBranding, setLocalBranding] = useState(branding);
@@ -342,8 +342,8 @@ export default function AdminSettings() {
     try {
       const headers = { Authorization: `Bearer ${token}` };
       await Promise.all([
-        axios.put(`${API}/settings/kiosk-texts`, { value: localKioskTexts }, { headers }),
-        axios.put(`${API}/settings/lockscreen-qr`, { value: localQr }, { headers }),
+        updateKioskTexts(localKioskTexts),
+        updateLockscreenQr(localQr),
         axios.put(`${API}/settings/overlay`, { value: localOverlay }, { headers }),
       ]);
       refreshSettings();
@@ -355,8 +355,7 @@ export default function AdminSettings() {
   const handleSavePwa = async () => {
     setSaving(true);
     try {
-      const headers = { Authorization: `Bearer ${token}` };
-      await axios.put(`${API}/settings/pwa`, { value: localPwa }, { headers });
+      await updatePwaConfig(localPwa);
       refreshSettings();
       toast.success('PWA-Konfiguration gespeichert');
     } catch { toast.error('Fehler beim Speichern'); }

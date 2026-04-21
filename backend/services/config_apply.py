@@ -18,6 +18,7 @@ from pathlib import Path
 
 from backend.database import AsyncSessionLocal
 from backend.models import Settings
+from backend.services.settings_contract import has_setting_contract, normalize_setting_value
 from sqlalchemy import select
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -86,7 +87,7 @@ CONFIG_TO_SETTINGS_MAP = {
     "language": {
         "settings_key": "language",
         "fields": {
-            "default": "current",
+            "default": "language",
             "allow_switch": "allow_switch",
         }
     },
@@ -222,13 +223,14 @@ async def apply_config(config: dict) -> dict:
                             logger.debug(f"[CONFIG-APPLY] {settings_key}.{local_path}: {existing_val!r} -> {central_val!r}")
 
                 if changed:
+                    normalized_value = normalize_setting_value(settings_key, current_value) if has_setting_contract(settings_key) else current_value
                     if setting:
-                        setting.value = current_value
+                        setting.value = normalized_value
                         flag_modified(setting, "value")
                     else:
-                        setting = Settings(key=settings_key, value=current_value)
+                        setting = Settings(key=settings_key, value=normalized_value)
                         db.add(setting)
-                    changes[settings_key] = current_value
+                    changes[settings_key] = normalized_value
 
             except Exception as e:
                 errors.append(f"{section_key}: {e}")

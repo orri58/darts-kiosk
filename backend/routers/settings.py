@@ -13,6 +13,7 @@ from backend.dependencies import require_admin, log_audit, get_or_create_setting
 from backend.runtime_features import sanitize_pricing_settings
 from backend.services.sound_generator import ensure_sound_pack, list_sound_packs, SOUND_EVENTS
 from backend.services.autodarts_triggers import sanitize_trigger_policy_config, export_trigger_policy_metadata
+from backend.services.settings_contract import build_customization_bundle, get_setting_value, set_setting_value
 
 router = APIRouter()
 
@@ -21,120 +22,79 @@ SOUNDS_DIR = ASSETS_DIR.parent / "sounds"
 SOUNDS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+async def _get_contracted_setting(db: AsyncSession, key: str):
+    return await get_setting_value(db, key)
+
+
+async def _put_contracted_setting(db: AsyncSession, admin: User, key: str, value, audit_action: str):
+    normalized = await set_setting_value(db, key, value)
+    await log_audit(db, admin, audit_action, "settings", key)
+    return normalized
+
+
+@router.get("/settings/customization-bundle")
+async def get_customization_bundle(db: AsyncSession = Depends(get_db)):
+    return await build_customization_bundle(db)
+
+
 @router.get("/settings/branding")
 async def get_branding(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "branding", DEFAULT_BRANDING)
+    return await _get_contracted_setting(db, "branding")
 
 
 @router.put("/settings/branding")
 async def update_branding(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "branding"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="branding", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_branding", "settings", "branding")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "branding", data.value, "update_branding")
 
 
 @router.get("/settings/kiosk-theme")
 async def get_kiosk_theme(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "kiosk_theme", DEFAULT_KIOSK_THEME)
+    return await _get_contracted_setting(db, "kiosk_theme")
 
 
 @router.put("/settings/kiosk-theme")
 async def update_kiosk_theme(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "kiosk_theme"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="kiosk_theme", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_kiosk_theme", "settings", "kiosk_theme")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "kiosk_theme", data.value, "update_kiosk_theme")
 
 
 @router.get("/settings/admin-theme")
 async def get_admin_theme(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "admin_theme", DEFAULT_ADMIN_THEME)
+    return await _get_contracted_setting(db, "admin_theme")
 
 
 @router.put("/settings/admin-theme")
 async def update_admin_theme(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "admin_theme"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="admin_theme", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_admin_theme", "settings", "admin_theme")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "admin_theme", data.value, "update_admin_theme")
 
 
 @router.get("/settings/kiosk-layout")
 async def get_kiosk_layout(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "kiosk_layout", DEFAULT_KIOSK_LAYOUT)
+    return await _get_contracted_setting(db, "kiosk_layout")
 
 
 @router.put("/settings/kiosk-layout")
 async def update_kiosk_layout(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "kiosk_layout"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="kiosk_layout", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_kiosk_layout", "settings", "kiosk_layout")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "kiosk_layout", data.value, "update_kiosk_layout")
 
 
 @router.get("/settings/pricing")
 async def get_pricing(db: AsyncSession = Depends(get_db)):
-    pricing = await get_or_create_setting(db, "pricing", DEFAULT_PRICING)
-    return sanitize_pricing_settings(pricing)
+    return await _get_contracted_setting(db, "pricing")
 
 
 @router.put("/settings/pricing")
 async def update_pricing(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    sanitized_value = sanitize_pricing_settings(data.value)
-    result = await db.execute(select(Settings).where(Settings.key == "pricing"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = sanitized_value
-    else:
-        setting = Settings(key="pricing", value=sanitized_value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_pricing", "settings", "pricing")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "pricing", data.value, "update_pricing")
 
 
 @router.get("/settings/palettes")
 async def get_palettes(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "palettes", DEFAULT_PALETTES)
+    return await _get_contracted_setting(db, "palettes")
 
 
 @router.put("/settings/palettes")
 async def update_palettes(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "palettes"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="palettes", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_palettes", "settings", "palettes")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "palettes", data.value, "update_palettes")
 
 
 @router.get("/settings/stammkunde-display")
@@ -218,21 +178,12 @@ async def get_sound_packs():
 
 @router.get("/settings/language")
 async def get_language(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "language", DEFAULT_LANGUAGE)
+    return await _get_contracted_setting(db, "language")
 
 
 @router.put("/settings/language")
 async def update_language(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "language"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="language", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_language", "settings", "language")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "language", data.value, "update_language")
 
 
 # ===== Match Sharing Settings =====
@@ -241,21 +192,12 @@ DEFAULT_MATCH_SHARING = {"enabled": False, "qr_timeout": 60}
 
 @router.get("/settings/match-sharing")
 async def get_match_sharing(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "match_sharing", DEFAULT_MATCH_SHARING)
+    return await _get_contracted_setting(db, "match_sharing")
 
 
 @router.put("/settings/match-sharing")
 async def update_match_sharing(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "match_sharing"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="match_sharing", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_match_sharing", "settings", "match_sharing")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "match_sharing", data.value, "update_match_sharing")
 
 
 
@@ -286,42 +228,24 @@ async def get_sound_file(pack: str, event: str):
 
 @router.get("/settings/kiosk-texts")
 async def get_kiosk_texts(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "kiosk_texts", DEFAULT_KIOSK_TEXTS)
+    return await _get_contracted_setting(db, "kiosk_texts")
 
 
 @router.put("/settings/kiosk-texts")
 async def update_kiosk_texts(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "kiosk_texts"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="kiosk_texts", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_kiosk_texts", "settings", "kiosk_texts")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "kiosk_texts", data.value, "update_kiosk_texts")
 
 
 # ===== PWA Config =====
 
 @router.get("/settings/pwa")
 async def get_pwa_config(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "pwa_config", DEFAULT_PWA_CONFIG)
+    return await _get_contracted_setting(db, "pwa_config")
 
 
 @router.put("/settings/pwa")
 async def update_pwa_config(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "pwa_config"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="pwa_config", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_pwa_config", "settings", "pwa_config")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "pwa_config", data.value, "update_pwa_config")
 
 
 
@@ -329,21 +253,12 @@ async def update_pwa_config(data: SettingsUpdate, admin: User = Depends(require_
 
 @router.get("/settings/lockscreen-qr")
 async def get_lockscreen_qr(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "lockscreen_qr", DEFAULT_LOCKSCREEN_QR)
+    return await _get_contracted_setting(db, "lockscreen_qr")
 
 
 @router.put("/settings/lockscreen-qr")
 async def update_lockscreen_qr(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "lockscreen_qr"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="lockscreen_qr", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_lockscreen_qr", "settings", "lockscreen_qr")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "lockscreen_qr", data.value, "update_lockscreen_qr")
 
 
 
@@ -351,42 +266,24 @@ async def update_lockscreen_qr(data: SettingsUpdate, admin: User = Depends(requi
 
 @router.get("/settings/overlay")
 async def get_overlay_config(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "overlay_config", DEFAULT_OVERLAY_CONFIG)
+    return await _get_contracted_setting(db, "overlay_config")
 
 
 @router.put("/settings/overlay")
 async def update_overlay_config(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "overlay_config"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="overlay_config", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_overlay_config", "settings", "overlay_config")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "overlay_config", data.value, "update_overlay_config")
 
 
 # ===== Post-Match Delay Settings =====
 
 @router.get("/settings/post-match-delay")
 async def get_post_match_delay(db: AsyncSession = Depends(get_db)):
-    return await get_or_create_setting(db, "post_match_delay", DEFAULT_POST_MATCH_DELAY)
+    return await _get_contracted_setting(db, "post_match_delay")
 
 
 @router.put("/settings/post-match-delay")
 async def update_post_match_delay(data: SettingsUpdate, admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Settings).where(Settings.key == "post_match_delay"))
-    setting = result.scalar_one_or_none()
-    if setting:
-        setting.value = data.value
-    else:
-        setting = Settings(key="post_match_delay", value=data.value)
-        db.add(setting)
-    await db.flush()
-    await log_audit(db, admin, "update_post_match_delay", "settings", "post_match_delay")
-    return setting.value
+    return await _put_contracted_setting(db, admin, "post_match_delay", data.value, "update_post_match_delay")
 
 
 # ===== Autodarts Trigger Policy =====

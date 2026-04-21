@@ -82,42 +82,39 @@ export function SettingsProvider({ children }) {
 
   const fetchSettings = useCallback(async () => {
     try {
-      const [brandingRes, pricingRes, palettesRes, textsRes, pwaRes, qrRes, kioskThemeRes, adminThemeRes, kioskLayoutRes] = await Promise.all([
-        axios.get(`${API}/settings/branding`),
-        axios.get(`${API}/settings/pricing`),
-        axios.get(`${API}/settings/palettes`),
-        axios.get(`${API}/settings/kiosk-texts`).catch(() => ({ data: null })),
-        axios.get(`${API}/settings/pwa`).catch(() => ({ data: null })),
-        axios.get(`${API}/settings/lockscreen-qr`).catch(() => ({ data: null })),
-        axios.get(`${API}/settings/kiosk-theme`).catch(() => ({ data: null })),
-        axios.get(`${API}/settings/admin-theme`).catch(() => ({ data: null })),
-        axios.get(`${API}/settings/kiosk-layout`).catch(() => ({ data: null })),
-      ]);
+      const { data: bundle } = await axios.get(`${API}/settings/customization-bundle`);
 
-      const nextBranding = brandingRes.data || {};
-      const nextPalettes = palettesRes.data || [];
+      const nextBranding = bundle?.branding || {};
+      const nextPricing = bundle?.pricing || {};
+      const nextPalettes = Array.isArray(bundle?.palettes) ? bundle.palettes : [];
+      const nextKioskTheme = bundle?.kioskTheme || {};
+      const nextAdminTheme = bundle?.adminTheme || {};
+      const nextKioskLayout = bundle?.kioskLayout || {};
+      const nextKioskTexts = bundle?.kioskTexts || {};
+      const nextPwaConfig = bundle?.pwaConfig || {};
+      const nextLockscreenQr = bundle?.lockscreenQr || {};
+
       setBranding(nextBranding);
-      setPricing(pricingRes.data);
+      setPricing(nextPricing);
       setPalettes(nextPalettes);
-      if (kioskThemeRes.data) setKioskTheme((prev) => ({ ...prev, ...kioskThemeRes.data }));
-      if (adminThemeRes.data) setAdminTheme((prev) => ({ ...prev, ...adminThemeRes.data }));
-      if (kioskLayoutRes.data) setKioskLayout((prev) => ({ ...prev, ...kioskLayoutRes.data }));
-      if (textsRes.data) setKioskTexts(prev => ({ ...prev, ...textsRes.data }));
-      if (pwaRes.data) setPwaConfig(prev => ({ ...prev, ...pwaRes.data }));
-      if (qrRes.data) setLockscreenQr(prev => ({ ...prev, ...qrRes.data }));
+      setKioskTheme(nextKioskTheme);
+      setAdminTheme(nextAdminTheme);
+      setKioskLayout(nextKioskLayout);
+      setKioskTexts(nextKioskTexts);
+      setPwaConfig(nextPwaConfig);
+      setLockscreenQr(nextLockscreenQr);
 
-      // Set document title from branding (except on /kiosk pages which use fixed title for Win32)
       if (!location.pathname.startsWith('/kiosk')) {
         document.title = nextBranding.cafe_name || 'Darts Kiosk';
       }
 
       const path = location.pathname;
       const themePaletteId = path.startsWith('/admin')
-        ? (adminThemeRes.data?.palette_id || 'slate')
-        : (kioskThemeRes.data?.palette_id || nextBranding.palette_id);
+        ? (nextAdminTheme?.palette_id || 'slate')
+        : (nextKioskTheme?.palette_id || nextBranding.palette_id);
       const activePalette = nextPalettes.find((palette) => palette.id === themePaletteId) || nextPalettes[0];
       if (activePalette) {
-        applyPaletteToDocument(activePalette, { themeColor: pwaRes.data?.theme_color });
+        applyPaletteToDocument(activePalette, { themeColor: nextPwaConfig?.theme_color });
       }
     } catch (error) {
       console.error('Failed to fetch settings:', error);
@@ -208,6 +205,24 @@ export function SettingsProvider({ children }) {
     return response.data;
   };
 
+  const updateKioskTexts = async (newTexts) => {
+    const response = await axios.put(`${API}/settings/kiosk-texts`, { value: newTexts });
+    setKioskTexts(response.data);
+    return response.data;
+  };
+
+  const updatePwaConfig = async (newPwaConfig) => {
+    const response = await axios.put(`${API}/settings/pwa`, { value: newPwaConfig });
+    setPwaConfig(response.data);
+    return response.data;
+  };
+
+  const updateLockscreenQr = async (newLockscreenQr) => {
+    const response = await axios.put(`${API}/settings/lockscreen-qr`, { value: newLockscreenQr });
+    setLockscreenQr(response.data);
+    return response.data;
+  };
+
   const getCurrentPalette = () => {
     return activePalette;
   };
@@ -231,6 +246,9 @@ export function SettingsProvider({ children }) {
       updateKioskTheme,
       updateAdminTheme,
       updateKioskLayout,
+      updateKioskTexts,
+      updatePwaConfig,
+      updateLockscreenQr,
       getCurrentPalette,
       refreshSettings: fetchSettings
     }}>
