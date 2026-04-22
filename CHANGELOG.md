@@ -4,6 +4,17 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.15] - 2026-04-22
+
+### Improved
+- Continued breaking down the oversized Admin settings page by extracting dedicated section components for Language, Match Sharing, PWA/App, and Kiosk Control.
+- Reduced `Settings.js` further so more of the admin surface now follows a reusable section-based structure instead of a single giant render file.
+
+### Validation
+- Focused settings contract regression suite passed (`4 passed`).
+- Frontend production build passed.
+- Release artifacts rebuilt for `v4.4.15`.
+
 ## [4.4.14] - 2026-04-21
 
 ### Improved
