@@ -31,6 +31,10 @@ import TriggerPolicyPanel from '../../components/admin/TriggerPolicyPanel';
 import BrandingSettingsSection from '../../components/admin/settings/BrandingSettingsSection';
 import CustomizationProfilesSection from '../../components/admin/settings/CustomizationProfilesSection';
 import PricingSettingsSection from '../../components/admin/settings/PricingSettingsSection';
+import LanguageSettingsSection from '../../components/admin/settings/LanguageSettingsSection';
+import MatchSharingSettingsSection from '../../components/admin/settings/MatchSharingSettingsSection';
+import PwaSettingsSection from '../../components/admin/settings/PwaSettingsSection';
+import KioskControlSettingsSection from '../../components/admin/settings/KioskControlSettingsSection';
 import { AdminPage, AdminStatsGrid, AdminStatCard } from '../../components/admin/AdminShell';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
@@ -1180,118 +1184,24 @@ export default function AdminSettings() {
         </TabsContent>
         {/* Language Tab */}
         <TabsContent value="language" className="space-y-6">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <Globe className="w-5 h-5 text-amber-500" />
-                Spracheinstellungen
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {langLoading ? (
-                <p className="text-zinc-500">Lade...</p>
-              ) : (
-                <>
-                  <p className="text-zinc-400 text-sm">Standard-Sprache für Kiosk und Admin-Oberfläche</p>
-
-                  <div className="grid grid-cols-2 gap-4 max-w-md">
-                    <button onClick={() => setLanguageSetting('de')} data-testid="lang-de-btn"
-                      className={`flex items-center gap-3 p-4 rounded-sm border-2 transition-all ${
-                        languageSetting === 'de' ? 'border-amber-500 bg-amber-500/20' : 'border-zinc-700 hover:border-zinc-600'
-                      }`}>
-                      <span className="text-2xl">🇩🇪</span>
-                      <div className="text-left">
-                        <p className={`font-heading font-bold ${languageSetting === 'de' ? 'text-amber-500' : 'text-zinc-300'}`}>Deutsch</p>
-                        <p className="text-xs text-zinc-500">Standard</p>
-                      </div>
-                      {languageSetting === 'de' && <Check className="w-5 h-5 text-amber-500 ml-auto" />}
-                    </button>
-
-                    <button onClick={() => setLanguageSetting('en')} data-testid="lang-en-btn"
-                      className={`flex items-center gap-3 p-4 rounded-sm border-2 transition-all ${
-                        languageSetting === 'en' ? 'border-amber-500 bg-amber-500/20' : 'border-zinc-700 hover:border-zinc-600'
-                      }`}>
-                      <span className="text-2xl">🇬🇧</span>
-                      <div className="text-left">
-                        <p className={`font-heading font-bold ${languageSetting === 'en' ? 'text-amber-500' : 'text-zinc-300'}`}>English</p>
-                        <p className="text-xs text-zinc-500">International</p>
-                      </div>
-                      {languageSetting === 'en' && <Check className="w-5 h-5 text-amber-500 ml-auto" />}
-                    </button>
-                  </div>
-
-                  <Button onClick={handleSaveLanguage} disabled={saving}
-                    data-testid="save-language-btn"
-                    className="bg-amber-500 hover:bg-amber-400 text-black uppercase font-heading">
-                    <Save className="w-4 h-4 mr-2" />
-                    {saving ? 'Speichern...' : 'Speichern'}
-                  </Button>
-                </>
-              )}
-            </CardContent>
-          </Card>
+          <LanguageSettingsSection
+            languageSetting={languageSetting}
+            setLanguageSetting={setLanguageSetting}
+            langLoading={langLoading}
+            handleSaveLanguage={handleSaveLanguage}
+            saving={saving}
+          />
         </TabsContent>
 
         {/* Match Sharing Tab */}
         <TabsContent value="match-sharing" className="space-y-6">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-zinc-100 flex items-center gap-2">
-                <QrCode className="w-5 h-5 text-amber-500" />
-                QR Match Sharing
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              {matchSharingLoading ? (
-                <p className="text-zinc-400">Laden...</p>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="text-zinc-200 text-base">QR Match Sharing aktivieren</Label>
-                      <p className="text-zinc-400 text-sm mt-1">
-                        Nach echtem Session-Ende wird ein QR-Code mit Match-Ergebnis angezeigt.
-                        Bei laufender Session mit Restcredits bleibt der Kiosk im lokalen Flow.
-                      </p>
-                    </div>
-                    <Switch
-                      data-testid="match-sharing-toggle"
-                      checked={matchSharing.enabled}
-                      onCheckedChange={(v) => setMatchSharing({ ...matchSharing, enabled: v })}
-                    />
-                  </div>
-
-                  {matchSharing.enabled && (
-                    <div className="space-y-2 pl-4 border-l-2 border-amber-500/30">
-                      <Label className="text-zinc-200">QR Anzeige Dauer (Sekunden)</Label>
-                      <Input
-                        data-testid="qr-timeout-input"
-                        type="number"
-                        min={5}
-                        max={300}
-                        value={matchSharing.qr_timeout}
-                        onChange={(e) => setMatchSharing({ ...matchSharing, qr_timeout: parseInt(e.target.value) || 60 })}
-                        className="bg-zinc-800 border-zinc-700 text-zinc-100 w-32"
-                      />
-                      <p className="text-zinc-500 text-xs">
-                        QR-Screen verschwindet automatisch nach dieser Zeit.
-                      </p>
-                    </div>
-                  )}
-
-                  <Button
-                    data-testid="save-match-sharing-btn"
-                    onClick={handleSaveMatchSharing}
-                    disabled={saving}
-                    className="bg-amber-500 hover:bg-amber-600 text-black"
-                  >
-                    <Save className="w-4 h-4 mr-2" />
-                    {saving ? 'Speichern...' : 'Speichern'}
-                  </Button>
-                </>
-              )}
-            </CardContent>
-          </Card>
+          <MatchSharingSettingsSection
+            matchSharing={matchSharing}
+            setMatchSharing={setMatchSharing}
+            matchSharingLoading={matchSharingLoading}
+            handleSaveMatchSharing={handleSaveMatchSharing}
+            saving={saving}
+          />
         </TabsContent>
 
         {/* Kiosk Texts Tab */}
@@ -1507,60 +1417,12 @@ export default function AdminSettings() {
 
         {/* PWA / App Tab */}
         <TabsContent value="pwa" className="space-y-6">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <Download className="w-5 h-5 text-amber-500" />
-                PWA / Installierbare App
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <p className="text-sm text-zinc-400">
-                Konfiguriere den App-Namen und das Erscheinungsbild, wenn die App auf einem Gerät installiert wird.
-              </p>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label className="text-zinc-300">App-Name (lang)</Label>
-                  <Input data-testid="pwa-app-name" value={localPwa.app_name || ''} onChange={(e) => setLocalPwa(p => ({ ...p, app_name: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Darts Kiosk System" />
-                  <p className="text-xs text-zinc-500 mt-1">Wird im App-Launcher angezeigt</p>
-                </div>
-                <div>
-                  <Label className="text-zinc-300">Kurzname</Label>
-                  <Input data-testid="pwa-short-name" value={localPwa.short_name || ''} onChange={(e) => setLocalPwa(p => ({ ...p, short_name: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white" placeholder="Darts" />
-                  <p className="text-xs text-zinc-500 mt-1">Unter dem App-Icon auf dem Homescreen</p>
-                </div>
-                <div>
-                  <Label className="text-zinc-300">Theme-Farbe</Label>
-                  <div className="flex gap-2">
-                    <Input data-testid="pwa-theme-color" type="color" value={localPwa.theme_color || '#09090b'} onChange={(e) => setLocalPwa(p => ({ ...p, theme_color: e.target.value }))} className="w-12 h-10 p-1 bg-zinc-800 border-zinc-700" />
-                    <Input value={localPwa.theme_color || '#09090b'} onChange={(e) => setLocalPwa(p => ({ ...p, theme_color: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white font-mono" />
-                  </div>
-                </div>
-                <div>
-                  <Label className="text-zinc-300">Hintergrundfarbe</Label>
-                  <div className="flex gap-2">
-                    <Input data-testid="pwa-bg-color" type="color" value={localPwa.background_color || '#09090b'} onChange={(e) => setLocalPwa(p => ({ ...p, background_color: e.target.value }))} className="w-12 h-10 p-1 bg-zinc-800 border-zinc-700" />
-                    <Input value={localPwa.background_color || '#09090b'} onChange={(e) => setLocalPwa(p => ({ ...p, background_color: e.target.value }))} className="bg-zinc-800 border-zinc-700 text-white font-mono" />
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-zinc-800/50 border border-zinc-700 rounded-sm p-4">
-                <h4 className="text-sm font-medium text-zinc-300 mb-2">Installationshinweis</h4>
-                <p className="text-xs text-zinc-400">
-                  Auf <strong>Android</strong>: Chrome &rarr; Menü (&vellip;) &rarr; "Zum Startbildschirm hinzufügen"<br />
-                  Auf <strong>iPhone/iPad</strong>: Safari &rarr; Teilen-Button &rarr; "Zum Home-Bildschirm"<br />
-                  Auf <strong>Desktop</strong>: Chrome/Edge &rarr; Adressleiste &rarr; Install-Icon
-                </p>
-              </div>
-
-              <Button data-testid="save-pwa-btn" onClick={handleSavePwa} disabled={saving} className="bg-amber-500 hover:bg-amber-600 text-black">
-                <Save className="w-4 h-4 mr-2" />
-                {saving ? 'Speichern...' : 'Speichern'}
-              </Button>
-            </CardContent>
-          </Card>
+          <PwaSettingsSection
+            localPwa={localPwa}
+            setLocalPwa={setLocalPwa}
+            handleSavePwa={handleSavePwa}
+            saving={saving}
+          />
         </TabsContent>
 
         <TabsContent value="triggers" className="space-y-6">
@@ -1576,100 +1438,17 @@ export default function AdminSettings() {
 
         {/* Kiosk Control Tab (v3.2.0) */}
         <TabsContent value="kiosk-control" className="space-y-6">
-          {/* Post-Match Delay */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <Timer className="w-5 h-5 text-amber-500" /> {t('post_match_delay')}
-              </CardTitle>
-              <p className="text-sm text-zinc-400">{t('post_match_delay_desc')}</p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label className="text-zinc-300">{t('delay_ms')}</Label>
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min="0"
-                    max="15000"
-                    step="500"
-                    value={postMatchDelay.delay_ms}
-                    onChange={(e) => setPostMatchDelay({ ...postMatchDelay, delay_ms: parseInt(e.target.value) })}
-                    className="flex-1 accent-amber-500"
-                    data-testid="post-match-delay-slider"
-                  />
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      min="0"
-                      max="30000"
-                      value={postMatchDelay.delay_ms}
-                      onChange={(e) => setPostMatchDelay({ ...postMatchDelay, delay_ms: parseInt(e.target.value) || 0 })}
-                      className="w-24 bg-zinc-800 border-zinc-700 text-white text-center"
-                      data-testid="post-match-delay-input"
-                    />
-                    <span className="text-sm text-zinc-400">ms</span>
-                  </div>
-                </div>
-                <p className="text-xs text-zinc-500">{(postMatchDelay.delay_ms / 1000).toFixed(1)}s</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Autodarts Desktop Path */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white flex items-center gap-2">
-                <Eye className="w-5 h-5 text-amber-500" /> {t('autodarts_desktop')}
-              </CardTitle>
-              <p className="text-sm text-zinc-400">{t('autodarts_desktop_desc')}</p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label className="text-zinc-300">{t('autodarts_exe_path')}</Label>
-                <Input
-                  value={autodartsDesktopSettings.exe_path}
-                  onChange={(e) => setAutodartsDesktopSettings({ ...autodartsDesktopSettings, exe_path: e.target.value })}
-                  className="bg-zinc-800 border-zinc-700 text-white font-mono text-sm"
-                  placeholder="C:\Program Files\Autodarts\Autodarts.exe"
-                  data-testid="autodarts-exe-path-input"
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <Switch
-                  checked={autodartsDesktopSettings.auto_start}
-                  onCheckedChange={(v) => setAutodartsDesktopSettings({ ...autodartsDesktopSettings, auto_start: v })}
-                  data-testid="autodarts-auto-start-switch"
-                />
-                <Label className="text-zinc-300">{t('autodarts_auto_start')}</Label>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Save Button */}
-          <Button
-            onClick={async () => {
-              setSavingKiosk(true);
-              try {
-                const headers = { Authorization: `Bearer ${token}` };
-                await Promise.all([
-                  axios.put(`${API}/settings/post-match-delay`, { value: postMatchDelay }, { headers }),
-                  axios.put(`${API}/settings/autodarts-desktop`, { value: autodartsDesktopSettings }, { headers }),
-                ]);
-                toast.success('Gespeichert');
-              } catch (err) {
-                toast.error('Fehler beim Speichern');
-              } finally {
-                setSavingKiosk(false);
-              }
-            }}
-            disabled={savingKiosk}
-            className="bg-amber-500 hover:bg-amber-600 text-black font-medium w-full"
-            data-testid="save-kiosk-control-btn"
-          >
-            <Save className="w-4 h-4 mr-2" />
-            {savingKiosk ? 'Speichern...' : 'Speichern'}
-          </Button>
+          <KioskControlSettingsSection
+            postMatchDelay={postMatchDelay}
+            setPostMatchDelay={setPostMatchDelay}
+            autodartsDesktopSettings={autodartsDesktopSettings}
+            setAutodartsDesktopSettings={setAutodartsDesktopSettings}
+            savingKiosk={savingKiosk}
+            setSavingKiosk={setSavingKiosk}
+            token={token}
+            toast={toast}
+            t={t}
+          />
         </TabsContent>
       </Tabs>
       </div>
