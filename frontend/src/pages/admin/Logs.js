@@ -1,13 +1,55 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
-import { FileText, RefreshCw, Filter, Clock, User, Target } from 'lucide-react';
+import { Activity, Clock, FileText, RefreshCw, ShieldCheck, Target, User } from 'lucide-react';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
+import {
+  AdminEmptyState,
+  AdminPage,
+  AdminSection,
+  AdminStatCard,
+  AdminStatsGrid,
+  AdminStatusPill,
+} from '../../components/admin/AdminShell';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
+
+function formatDate(dateStr) {
+  return new Date(dateStr).toLocaleString('de-DE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function getActionTone(action = '') {
+  if (action.includes('login')) return 'blue';
+  if (action.includes('unlock')) return 'emerald';
+  if (action.includes('lock')) return 'red';
+  if (action.includes('create')) return 'amber';
+  if (action.includes('update')) return 'violet';
+  if (action.includes('delete')) return 'red';
+  return 'neutral';
+}
+
+function getSessionStatusMeta(status) {
+  switch (status) {
+    case 'active':
+      return { tone: 'amber', label: 'Aktiv' };
+    case 'finished':
+      return { tone: 'emerald', label: 'Beendet' };
+    case 'expired':
+      return { tone: 'blue', label: 'Abgelaufen' };
+    case 'cancelled':
+      return { tone: 'red', label: 'Abgebrochen' };
+    default:
+      return { tone: 'neutral', label: status || 'Unbekannt' };
+  }
+}
 
 export default function AdminLogs() {
   const { token } = useAuth();
@@ -21,10 +63,10 @@ export default function AdminLogs() {
     try {
       const [auditRes, sessionRes] = await Promise.all([
         axios.get(`${API}/logs/audit?limit=50`, { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get(`${API}/logs/sessions?limit=50`, { headers: { Authorization: `Bearer ${token}` } })
+        axios.get(`${API}/logs/sessions?limit=50`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
-      setAuditLogs(auditRes.data);
-      setSessionLogs(sessionRes.data);
+      setAuditLogs(auditRes.data || []);
+      setSessionLogs(sessionRes.data || []);
     } catch (error) {
       console.error('Failed to fetch logs:', error);
     } finally {
@@ -36,184 +78,152 @@ export default function AdminLogs() {
     fetchLogs();
   }, [fetchLogs]);
 
-  const formatDate = (dateStr) => {
-    return new Date(dateStr).toLocaleString('de-DE', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const getActionColor = (action) => {
-    if (action.includes('login')) return 'text-blue-400';
-    if (action.includes('unlock')) return 'text-emerald-400';
-    if (action.includes('lock')) return 'text-red-400';
-    if (action.includes('create')) return 'text-amber-400';
-    if (action.includes('update')) return 'text-purple-400';
-    if (action.includes('delete')) return 'text-red-500';
-    return 'text-zinc-400';
-  };
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case 'active': return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
-      case 'finished': return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
-      case 'expired': return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
-      case 'cancelled': return 'bg-red-500/20 text-red-400 border-red-500/30';
-      default: return 'bg-zinc-500/20 text-zinc-400 border-zinc-500/30';
-    }
-  };
+  const stats = useMemo(() => {
+    const uniqueUsers = new Set(auditLogs.map((log) => log.username).filter(Boolean)).size;
+    const activeSessions = sessionLogs.filter((session) => session.status === 'active').length;
+    return {
+      auditCount: auditLogs.length,
+      sessionCount: sessionLogs.length,
+      uniqueUsers,
+      activeSessions,
+    };
+  }, [auditLogs, sessionLogs]);
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="w-8 h-8 text-amber-500 animate-spin" />
+      <div className="flex h-64 items-center justify-center">
+        <RefreshCw className="h-8 w-8 animate-spin text-amber-500" />
       </div>
     );
   }
 
   return (
-    <div data-testid="admin-logs">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-heading uppercase tracking-wider text-white">{t('logs')}</h1>
-          <p className="text-zinc-500">Audit- und Session-Protokolle</p>
-        </div>
-        <Button
-          onClick={fetchLogs}
-          variant="outline"
-          className="border-zinc-700 text-zinc-400 hover:text-white"
-        >
-          <RefreshCw className="w-4 h-4 mr-2" />
-          Aktualisieren
+    <AdminPage
+      eyebrow="Operational history"
+      title={t('logs')}
+      description="Die letzten Audit- und Session-Ereignisse in einer ruhigeren Operator-Ansicht. Gut für Support, Plausibilitätschecks und kurze Rückfragen — nicht als forensisches SIEM verkleidet."
+      actions={
+        <Button onClick={fetchLogs} variant="outline" className="border-zinc-700 text-zinc-300 hover:text-white">
+          <RefreshCw className="mr-2 h-4 w-4" /> Aktualisieren
         </Button>
-      </div>
+      }
+    >
+      <AdminStatsGrid>
+        <AdminStatCard icon={ShieldCheck} label="Audit-Einträge" value={stats.auditCount} hint="letzte 50 System-/Benutzeraktionen" tone="blue" />
+        <AdminStatCard icon={Target} label="Session-Einträge" value={stats.sessionCount} hint="letzte 50 Venue-Sessions" tone="amber" />
+        <AdminStatCard icon={User} label="Benutzer im Audit" value={stats.uniqueUsers} hint="sichtbar im aktuellen Fenster" tone="violet" />
+        <AdminStatCard icon={Activity} label="Aktive Sessions" value={stats.activeSessions} hint="Status in der Session-Historie" tone={stats.activeSessions > 0 ? 'emerald' : 'neutral'} />
+      </AdminStatsGrid>
 
       <Tabs defaultValue="audit" className="space-y-6">
-        <TabsList className="bg-zinc-900 border border-zinc-800 p-1">
-          <TabsTrigger value="audit" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
-            <FileText className="w-4 h-4 mr-2" />
-            Audit Log
+        <TabsList className="sticky top-3 z-20 flex h-auto flex-nowrap gap-1 overflow-x-auto rounded-[1.4rem] border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.82)] p-1.5 shadow-[0_16px_36px_rgba(0,0,0,0.22)] backdrop-blur">
+          <TabsTrigger value="audit" className="rounded-[1rem] px-4 py-2.5 data-[state=active]:bg-amber-500 data-[state=active]:text-black">
+            <FileText className="mr-2 h-4 w-4" /> Audit Log
           </TabsTrigger>
-          <TabsTrigger value="sessions" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
-            <Target className="w-4 h-4 mr-2" />
-            Sessions
+          <TabsTrigger value="sessions" className="rounded-[1rem] px-4 py-2.5 data-[state=active]:bg-amber-500 data-[state=active]:text-black">
+            <Target className="mr-2 h-4 w-4" /> Sessions
           </TabsTrigger>
         </TabsList>
 
-        {/* Audit Logs Tab */}
         <TabsContent value="audit">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white text-lg">Audit-Protokoll</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                {auditLogs.length === 0 ? (
-                  <p className="text-center text-zinc-500 py-8">Keine Einträge vorhanden</p>
-                ) : (
-                  auditLogs.map((log) => (
-                    <div 
-                      key={log.id} 
-                      className="flex items-center gap-4 p-3 bg-zinc-800/50 rounded-sm border border-zinc-800 hover:border-zinc-700 transition-colors"
-                    >
-                      <div className="flex-shrink-0">
-                        <Clock className="w-4 h-4 text-zinc-600" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`font-mono text-sm ${getActionColor(log.action)}`}>
-                            {log.action}
-                          </span>
-                          {log.entity_type && (
-                            <span className="text-xs text-zinc-600 bg-zinc-800 px-2 py-0.5 rounded">
-                              {log.entity_type}
-                            </span>
-                          )}
+          <AdminSection
+            title="Audit-Protokoll"
+            description="Konfigurations- und Zugriffsaktionen in kompakter Chronologie."
+            actions={<AdminStatusPill tone="blue">{auditLogs.length} Einträge</AdminStatusPill>}
+          >
+            {auditLogs.length === 0 ? (
+              <AdminEmptyState
+                icon={ShieldCheck}
+                title="Noch keine Audit-Einträge sichtbar"
+                description="Wenn Admin-Aktionen, Logins oder Konfigurationsänderungen passieren, tauchen sie hier gesammelt auf."
+              />
+            ) : (
+              <div className="space-y-3">
+                {auditLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.78)] bg-[rgb(var(--color-surface-rgb)/0.52)] p-4"
+                  >
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <AdminStatusPill tone={getActionTone(log.action)}>{log.action}</AdminStatusPill>
+                          {log.entity_type ? <AdminStatusPill tone="neutral">{log.entity_type}</AdminStatusPill> : null}
                         </div>
-                        <div className="flex items-center gap-2 mt-1 text-xs text-zinc-500">
-                          <User className="w-3 h-3" />
-                          <span>{log.username || 'system'}</span>
-                          <span>•</span>
-                          <span>{formatDate(log.created_at)}</span>
+                        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-[var(--color-text-secondary)]">
+                          <span className="inline-flex items-center gap-1.5"><User className="h-3.5 w-3.5" />{log.username || 'system'}</span>
+                          <span className="inline-flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />{formatDate(log.created_at)}</span>
                         </div>
-                        {log.details && (
-                          <div className="mt-1 text-xs text-zinc-600 font-mono truncate">
+                        {log.details ? (
+                          <div className="mt-3 rounded-2xl border border-[rgb(var(--color-border-rgb)/0.72)] bg-[rgb(var(--color-bg-rgb)/0.46)] px-3 py-2 font-mono text-xs text-[var(--color-text-secondary)] overflow-x-auto">
                             {JSON.stringify(log.details)}
                           </div>
-                        )}
+                        ) : null}
                       </div>
                     </div>
-                  ))
-                )}
+                  </div>
+                ))}
               </div>
-            </CardContent>
-          </Card>
+            )}
+          </AdminSection>
         </TabsContent>
 
-        {/* Session Logs Tab */}
         <TabsContent value="sessions">
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader>
-              <CardTitle className="text-white text-lg">Session-Verlauf</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-3 max-h-[600px] overflow-y-auto">
-                {sessionLogs.length === 0 ? (
-                  <p className="text-center text-zinc-500 py-8">Keine Sessions vorhanden</p>
-                ) : (
-                  sessionLogs.map((session) => (
-                    <div 
-                      key={session.id} 
-                      className="p-4 bg-zinc-800/50 rounded-sm border border-zinc-800 hover:border-zinc-700 transition-colors"
+          <AdminSection
+            title="Session-Verlauf"
+            description="Die letzten Sessions mit Status, Umfang und monetärem Kontext für schnelle Venue-Rückfragen."
+            actions={<AdminStatusPill tone="amber">{sessionLogs.length} Einträge</AdminStatusPill>}
+          >
+            {sessionLogs.length === 0 ? (
+              <AdminEmptyState
+                icon={Target}
+                title="Noch keine Sessions vorhanden"
+                description="Sobald lokale Sessions angelegt oder beendet werden, erscheint hier der jüngste Verlauf."
+              />
+            ) : (
+              <div className="space-y-4">
+                {sessionLogs.map((session) => {
+                  const status = getSessionStatusMeta(session.status);
+                  return (
+                    <div
+                      key={session.id}
+                      className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.78)] bg-[rgb(var(--color-surface-rgb)/0.52)] p-4"
                     >
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <span className="text-sm font-mono text-zinc-400">{session.id.slice(0, 8)}...</span>
-                          <div className="flex items-center gap-2 mt-1">
-                            <Target className="w-4 h-4 text-amber-500" />
-                            <span className="text-white font-medium">{session.game_type || 'N/A'}</span>
+                      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <AdminStatusPill tone={status.tone}>{status.label}</AdminStatusPill>
+                            <span className="font-mono text-xs text-[var(--color-text-muted)]">{session.id.slice(0, 8)}...</span>
+                          </div>
+                          <div className="mt-3">
+                            <p className="text-base font-semibold text-[var(--color-text)]">{session.game_type || 'N/A'}</p>
+                            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Modus: {session.pricing_mode || '–'} • Spieler: {session.players_count ?? '–'}</p>
                           </div>
                         </div>
-                        <span className={`px-2 py-1 text-xs uppercase rounded-sm border ${getStatusColor(session.status)}`}>
-                          {session.status}
-                        </span>
-                      </div>
-                      
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                        <div>
-                          <p className="text-zinc-600 text-xs uppercase">Modus</p>
-                          <p className="text-zinc-300">{session.pricing_mode}</p>
+
+                        <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:min-w-[360px] xl:grid-cols-2">
+                          <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.7)] bg-[rgb(var(--color-bg-rgb)/0.42)] px-3 py-2">
+                            <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Credits</p>
+                            <p className="mt-1 text-sm text-[var(--color-text)]">{session.credits_remaining} / {session.credits_total}</p>
+                          </div>
+                          <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.7)] bg-[rgb(var(--color-bg-rgb)/0.42)] px-3 py-2">
+                            <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Preis</p>
+                            <p className="mt-1 text-sm font-semibold text-[var(--color-primary)]">{session.price_total?.toFixed(2)} €</p>
+                          </div>
+                          <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.7)] bg-[rgb(var(--color-bg-rgb)/0.42)] px-3 py-2 sm:col-span-2">
+                            <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Zeitfenster</p>
+                            <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Start: {formatDate(session.started_at)}{session.ended_at ? ` • Ende: ${formatDate(session.ended_at)}` : ''}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-zinc-600 text-xs uppercase">Spieler</p>
-                          <p className="text-zinc-300">{session.players_count}</p>
-                        </div>
-                        <div>
-                          <p className="text-zinc-600 text-xs uppercase">Credits</p>
-                          <p className="text-zinc-300">{session.credits_remaining} / {session.credits_total}</p>
-                        </div>
-                        <div>
-                          <p className="text-zinc-600 text-xs uppercase">Preis</p>
-                          <p className="text-amber-500 font-mono">{session.price_total?.toFixed(2)} €</p>
-                        </div>
-                      </div>
-                      
-                      <div className="mt-3 pt-3 border-t border-zinc-800 flex items-center gap-4 text-xs text-zinc-500">
-                        <span>Start: {formatDate(session.started_at)}</span>
-                        {session.ended_at && <span>Ende: {formatDate(session.ended_at)}</span>}
                       </div>
                     </div>
-                  ))
-                )}
+                  );
+                })}
               </div>
-            </CardContent>
-          </Card>
+            )}
+          </AdminSection>
         </TabsContent>
       </Tabs>
-    </div>
+    </AdminPage>
   );
 }

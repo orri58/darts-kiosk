@@ -4,6 +4,19 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.16] - 2026-04-25
+
+### Improved
+- Delivered a broader premium UI polish pass across both kiosk and admin so the product feels more cohesive, modern, and professionally shipped instead of partially refreshed.
+- Upgraded shared frontend design primitives (`index.css`, buttons, inputs, tabs) with stronger dark-surface depth, more consistent radii, improved focus states, better shadows, and more polished control behavior.
+- Refined the admin shell and major admin surfaces so Settings, Users, Licensing, Logs, Leaderboard, and Setup Wizard now share the same page language, spacing rhythm, card hierarchy, status treatment, and calmer operator-facing structure.
+- Upgraded key kiosk surfaces — Locked, Setup, In-Game, Match Result, Credit Blocked, and Error — with clearer hierarchy, stronger hero/status panels, better cards, improved guidance text, and a more premium customer-facing flow.
+- Improved operator clarity in high-friction states such as insufficient credits, match completion, recovery/error handling, role/status visibility, and first-run/security framing.
+
+### Validation
+- Frontend production build passed cleanly.
+- Release artifacts rebuilt for `v4.4.16`.
+
 ## [4.4.15] - 2026-04-22
 
 ### Improved

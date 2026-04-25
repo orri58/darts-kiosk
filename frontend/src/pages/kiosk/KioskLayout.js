@@ -198,9 +198,11 @@ export default function KioskLayout() {
   if (loading || settingsLoading) {
     return (
       <div className="h-screen w-screen flex items-center justify-center bg-[var(--color-bg)]" data-testid="kiosk-loading">
-        <div className="text-center">
+        <div className="premium-panel rounded-[2rem] px-10 py-9 text-center">
           <div className="w-16 h-16 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-zinc-400 font-heading uppercase tracking-wider">Lade...</p>
+          <p className="section-eyebrow">System</p>
+          <p className="mt-2 text-2xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)]">Kiosk wird vorbereitet</p>
+          <p className="mt-2 text-sm text-[var(--color-text-secondary)]">Board-Status, Branding und Sessiondaten werden geladen.</p>
         </div>
       </div>
     );

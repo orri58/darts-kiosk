@@ -339,19 +339,30 @@ export default function LockedScreen({ branding, pricing, boardId }) {
                 className={`w-auto object-contain drop-shadow-[0_16px_48px_rgba(0,0,0,0.28)] ${heroLogoSize}`}
               />
             ) : null}
-            <div className="inline-flex h-16 w-16 items-center justify-center rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.8)] text-[var(--color-text-secondary)] shadow-[0_16px_48px_rgba(0,0,0,0.28)] lg:h-20 lg:w-20">
-              <Lock className="h-10 w-10" strokeWidth={2.2} />
-            </div>
-            <div className={contentAlign === 'center' ? 'flex flex-col items-center text-center' : ''}>
-              <h2 className="text-3xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] md:text-5xl lg:text-6xl" data-testid="locked-message">
-                {kioskTexts.locked_title || t('locked')}
-              </h2>
-              <p className={`mt-3 text-base leading-7 text-[var(--color-text-secondary)] lg:text-lg lg:leading-8 ${contentAlign === 'center' ? 'max-w-3xl' : 'max-w-2xl'}`}>
-                {kioskTexts.locked_subtitle || t('locked_message')}
-              </p>
-              {kioskTexts.pricing_hint && (
-                <p className="mt-3 text-sm uppercase tracking-[0.22em] text-[var(--color-primary)]">{kioskTexts.pricing_hint}</p>
-              )}
+            <div className={`premium-panel rounded-[2rem] p-6 lg:p-8 ${contentAlign === 'center' ? 'flex flex-col items-center text-center' : ''}`}>
+              <div className="inline-flex h-16 w-16 items-center justify-center rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.8)] text-[var(--color-text-secondary)] shadow-[0_16px_48px_rgba(0,0,0,0.28)] lg:h-20 lg:w-20">
+                <Lock className="h-10 w-10" strokeWidth={2.2} />
+              </div>
+              <div className={`mt-5 ${contentAlign === 'center' ? 'flex flex-col items-center text-center' : ''}`}>
+                <p className="section-eyebrow">Board status</p>
+                <h2 className="mt-2 text-3xl font-heading uppercase tracking-[0.08em] text-[var(--color-text)] md:text-5xl lg:text-6xl" data-testid="locked-message">
+                  {kioskTexts.locked_title || t('locked')}
+                </h2>
+                <p className={`mt-3 text-base leading-7 text-[var(--color-text-secondary)] lg:text-lg lg:leading-8 ${contentAlign === 'center' ? 'max-w-3xl' : 'max-w-2xl'}`}>
+                  {kioskTexts.locked_subtitle || t('locked_message')}
+                </p>
+                <div className={`mt-5 flex flex-wrap gap-3 ${contentAlign === 'center' ? 'justify-center' : ''}`}>
+                  <div className="premium-panel-muted rounded-2xl px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Freischaltung</p>
+                    <p className="mt-1 font-medium text-[var(--color-text)]">Bitte an der Theke starten</p>
+                  </div>
+                  {kioskTexts.pricing_hint && (
+                    <div className="rounded-2xl border border-[rgb(var(--color-primary-rgb)/0.26)] bg-[rgb(var(--color-primary-rgb)/0.1)] px-4 py-3 text-sm font-medium text-[var(--color-primary)]">
+                      {kioskTexts.pricing_hint}
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
 
             {infoCards.length > 0 ? (
@@ -359,7 +370,7 @@ export default function LockedScreen({ branding, pricing, boardId }) {
                 {infoCards.map((card) => {
                   const Icon = card.icon;
                   return (
-                    <div key={card.key} className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.2)]">
+                    <div key={card.key} className="premium-panel rounded-3xl p-4 lg:p-5">
                       <div className="flex items-center gap-2 text-sm text-[var(--color-text-secondary)]">
                         <Icon className="h-4 w-4 text-[var(--color-primary)]" />
                         {card.label}
@@ -380,7 +391,7 @@ export default function LockedScreen({ branding, pricing, boardId }) {
           <div className="space-y-4">
             {pairingPosition === 'side' ? <PairingCode /> : null}
             {qrConfig?.enabled && baseUrl ? (
-              <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.58)] p-5 shadow-[0_16px_48px_rgba(0,0,0,0.24)]" data-testid="lockscreen-qr">
+              <div className="premium-panel rounded-3xl p-5" data-testid="lockscreen-qr">
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <p className="text-[11px] uppercase tracking-[0.24em] text-[var(--color-text-muted)]">{qrConfig.label || 'Leaderboard'}</p>

@@ -619,7 +619,7 @@ export default function AdminSettings() {
         </AdminStatsGrid>
 
         <Tabs defaultValue="branding" className="space-y-6">
-        <TabsList className="flex h-auto flex-nowrap gap-1 overflow-x-auto rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.66)] p-1">
+        <TabsList className="sticky top-3 z-20 flex h-auto flex-nowrap gap-1 overflow-x-auto rounded-[1.4rem] border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.82)] p-1.5 shadow-[0_16px_36px_rgba(0,0,0,0.22)] backdrop-blur">
           <TabsTrigger value="branding" className="data-[state=active]:bg-amber-500 data-[state=active]:text-black">
             <Palette className="w-4 h-4 mr-2" />
             {t('branding')}
@@ -717,7 +717,7 @@ export default function AdminSettings() {
 
         {/* Palettes Tab */}
         <TabsContent value="palettes" className="space-y-6">
-          <Card className="bg-zinc-900 border-zinc-800 overflow-hidden">
+          <Card className="overflow-hidden rounded-[1.6rem] border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
                 <Eye className="w-5 h-5 text-amber-500" />
@@ -776,7 +776,7 @@ export default function AdminSettings() {
           </Card>
 
           {/* Palette Selection */}
-          <Card className="bg-zinc-900 border-zinc-800">
+          <Card className="rounded-[1.6rem] border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
             <CardHeader>
               <CardTitle className="text-white flex items-center gap-2">
                 <Palette className="w-5 h-5 text-amber-500" />

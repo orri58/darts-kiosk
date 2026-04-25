@@ -1,29 +1,71 @@
 /**
  * Local Admin — Licensing (Read-Only Status View)
- * v3.6.0: All license management moved to Central Server / Operator Portal.
- * This page only shows device registration status, license state, and sync info.
+ * License management stays in the central portal; this page focuses on local device visibility.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import {
-  KeyRound, Shield, Monitor, RefreshCw, Wifi, WifiOff,
-  CheckCircle, Clock, XCircle, AlertTriangle, Server, ExternalLink
+  KeyRound,
+  Shield,
+  Monitor,
+  RefreshCw,
+  CheckCircle,
+  Clock,
+  XCircle,
+  AlertTriangle,
+  Server,
+  ExternalLink,
+  Link2,
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
-import { Card, CardContent } from '../../components/ui/card';
 import { useI18n } from '../../context/I18nContext';
 import { toast } from 'sonner';
+import {
+  AdminEmptyState,
+  AdminPage,
+  AdminSection,
+  AdminStatCard,
+  AdminStatsGrid,
+  AdminStatusPill,
+} from '../../components/admin/AdminShell';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
 const STATUS_CONFIG = {
-  active:     { icon: CheckCircle, color: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20', label: 'Aktiv' },
-  grace:      { icon: Clock,       color: 'text-amber-400 bg-amber-500/10 border-amber-500/20', label: 'Toleranzzeitraum' },
-  expired:    { icon: XCircle,     color: 'text-red-400 bg-red-500/10 border-red-500/20', label: 'Abgelaufen' },
-  blocked:    { icon: XCircle,     color: 'text-red-400 bg-red-500/10 border-red-500/20', label: 'Gesperrt' },
-  test:       { icon: Shield,      color: 'text-blue-400 bg-blue-500/10 border-blue-500/20', label: 'Test-Lizenz' },
-  no_license: { icon: AlertTriangle, color: 'text-zinc-500 bg-zinc-500/10 border-zinc-500/20', label: 'Keine Lizenz' },
+  active: { icon: CheckCircle, tone: 'emerald', label: 'Aktiv' },
+  grace: { icon: Clock, tone: 'amber', label: 'Toleranzzeitraum' },
+  expired: { icon: XCircle, tone: 'red', label: 'Abgelaufen' },
+  blocked: { icon: XCircle, tone: 'red', label: 'Gesperrt' },
+  test: { icon: Shield, tone: 'blue', label: 'Test-Lizenz' },
+  no_license: { icon: AlertTriangle, tone: 'neutral', label: 'Keine Lizenz' },
 };
+
+function formatDateTime(value) {
+  if (!value) return '–';
+  return new Date(value).toLocaleString('de-DE');
+}
+
+function formatDate(value) {
+  if (!value) return '–';
+  return new Date(value).toLocaleDateString('de-DE');
+}
+
+function InfoGrid({ items }) {
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.78)] bg-[rgb(var(--color-surface-rgb)/0.5)] px-4 py-3"
+        >
+          <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--color-text-muted)]">{item.label}</p>
+          <p className={`mt-2 break-all text-sm text-[var(--color-text)] ${item.mono ? 'font-mono' : ''}`}>{item.value || '–'}</p>
+          {item.hint ? <p className="mt-1 text-xs text-[var(--color-text-secondary)]">{item.hint}</p> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function AdminLicensing() {
   const { t } = useI18n();
@@ -49,7 +91,9 @@ export default function AdminLicensing() {
     }
   }, []);
 
-  useEffect(() => { fetchAll(); }, [fetchAll]);
+  useEffect(() => {
+    fetchAll();
+  }, [fetchAll]);
 
   const handleForceSync = async () => {
     setSyncing(true);
@@ -64,130 +108,138 @@ export default function AdminLicensing() {
     }
   };
 
+  const isRegistered = regStatus?.status === 'registered';
+  const licStat = licStatus?.license_status || 'no_license';
+  const statusConf = STATUS_CONFIG[licStat] || STATUS_CONFIG.no_license;
+
+  const registrationItems = useMemo(
+    () => [
+      { label: 'Install-ID', value: regStatus?.install_id, mono: true },
+      { label: 'Gerätename', value: regStatus?.device_name },
+      { label: 'Customer', value: regStatus?.customer_name },
+      {
+        label: 'API-Key',
+        value: regStatus?.api_key ? `${regStatus.api_key.slice(0, 8)}...` : '–',
+        mono: true,
+        hint: 'Aus Sicherheitsgründen gekürzt',
+      },
+      { label: 'Registriert am', value: formatDateTime(regStatus?.registered_at) },
+    ],
+    [regStatus]
+  );
+
+  const licenseItems = useMemo(
+    () => [
+      { label: 'Plan', value: licStatus?.plan_type || '–' },
+      { label: 'Kunde', value: licStatus?.customer_name || '–' },
+      { label: 'Ablauf', value: licStatus?.expiry ? formatDate(licStatus.expiry) : 'Unbegrenzt' },
+      { label: 'Toleranz bis', value: formatDate(licStatus?.grace_until) },
+      { label: 'Binding-Status', value: licStatus?.binding_status || '–' },
+      { label: 'Max. Geräte', value: licStatus?.max_devices || '–' },
+    ],
+    [licStatus]
+  );
+
+  const syncItems = useMemo(
+    () => [
+      { label: 'Zentraler Server', value: syncConfig?.central_server_url || '–' },
+      { label: 'Letzte erfolgreiche Sichtung', value: formatDateTime(licStatus?.server_timestamp) },
+      { label: 'Sync-Intervall', value: syncConfig?.sync_interval_minutes ? `${syncConfig.sync_interval_minutes} Min.` : '–' },
+    ],
+    [licStatus, syncConfig]
+  );
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-4 border-amber-500 border-t-transparent rounded-full animate-spin" />
+      <div className="flex h-64 items-center justify-center">
+        <RefreshCw className="h-8 w-8 animate-spin text-amber-500" />
       </div>
     );
   }
 
-  const isRegistered = regStatus?.status === 'registered';
-  const licStat = licStatus?.license_status || 'no_license';
-  const statusConf = STATUS_CONFIG[licStat] || STATUS_CONFIG.no_license;
-  const StatusIcon = statusConf.icon;
-
   return (
-    <div className="space-y-6" data-testid="admin-licensing-readonly">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <KeyRound className="w-5 h-5 text-amber-400" /> Lizenz & Registrierung
-          </h1>
-          <p className="text-sm text-zinc-500 mt-0.5">
-            Read-Only — Verwaltung erfolgt im zentralen Portal
-          </p>
-        </div>
+    <AdminPage
+      eyebrow="Central license mirror"
+      title={t('licensing') || 'Lizenz & Registrierung'}
+      description="Bewusst lokal und read-only: Hier sieht man nur, ob dieses Gerät registriert ist, welche Lizenz gespiegelt wurde und wann zuletzt mit dem Zentralserver abgeglichen wurde."
+      actions={
         <Button
           onClick={handleForceSync}
           disabled={syncing || !isRegistered}
-          className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-sm"
+          className="bg-amber-500 text-black hover:bg-amber-400 disabled:bg-zinc-800 disabled:text-zinc-500"
           data-testid="force-sync-btn"
         >
-          <RefreshCw className={`w-4 h-4 mr-1.5 ${syncing ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
           Sync erzwingen
         </Button>
-      </div>
+      }
+    >
+      <AdminStatsGrid>
+        <AdminStatCard icon={Monitor} label="Gerätestatus" value={isRegistered ? 'Registriert' : 'Ausstehend'} hint={regStatus?.device_name || 'Noch keine Registrierung sichtbar'} tone={isRegistered ? 'emerald' : 'amber'} />
+        <AdminStatCard icon={KeyRound} label="Lizenzstatus" value={statusConf.label} hint={licStatus?.plan_type || 'Kein aktiver Plan gespiegelt'} tone={statusConf.tone} />
+        <AdminStatCard icon={Server} label="Sync-Ziel" value={syncConfig?.central_server_url ? 'Verbunden' : 'Unbekannt'} hint={syncConfig?.central_server_url || 'Kein Zentralserver gemeldet'} tone={syncConfig?.central_server_url ? 'blue' : 'neutral'} />
+        <AdminStatCard icon={Link2} label="Portal-Verwaltung" value="/portal" hint="Erstellen, sperren, verlängern und binden passiert zentral" tone="violet" />
+      </AdminStatsGrid>
 
-      {/* Registration Status */}
-      <Card className="bg-zinc-900 border-zinc-800">
-        <CardContent className="p-5">
-          <div className="flex items-center gap-3 mb-4">
-            <Monitor className="w-5 h-5 text-zinc-400" />
-            <h2 className="text-base font-semibold text-white">Geräte-Registrierung</h2>
-            <span className={`ml-auto text-xs px-2.5 py-0.5 rounded-full font-medium ${
-              isRegistered ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'
-            }`} data-testid="reg-status-badge">
-              {isRegistered ? 'Registriert' : 'Nicht registriert'}
-            </span>
-          </div>
+      <div className="grid gap-6 xl:grid-cols-[1.15fr,0.85fr]">
+        <div className="space-y-6">
+          <AdminSection
+            title="Geräte-Registrierung"
+            description="Lokale Sicht auf die zentrale Gerätebindung. Wenn hier noch nichts steht, ist das Gerät aus Venue-Sicht noch nicht sauber angebunden."
+            actions={<AdminStatusPill tone={isRegistered ? 'emerald' : 'amber'}>{isRegistered ? 'registriert' : 'nicht registriert'}</AdminStatusPill>}
+          >
+            {isRegistered ? (
+              <InfoGrid items={registrationItems} />
+            ) : (
+              <AdminEmptyState
+                icon={Monitor}
+                title="Dieses Gerät ist noch nicht registriert"
+                description="Die Registrierung erfolgt über den Kiosk-/Pairing-Fluss. Erst danach tauchen Install-ID, Customer und API-Bindung sauber hier auf."
+              />
+            )}
+          </AdminSection>
 
-          {isRegistered ? (
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <InfoRow label="Install-ID" value={regStatus.install_id} mono />
-              <InfoRow label="Gerätename" value={regStatus.device_name} />
-              <InfoRow label="Customer" value={regStatus.customer_name} />
-              <InfoRow label="API Key" value={regStatus.api_key ? `${regStatus.api_key.slice(0, 8)}...` : '—'} mono />
-              <InfoRow label="Registriert am" value={regStatus.registered_at ? new Date(regStatus.registered_at).toLocaleString('de-DE') : '—'} />
+          <AdminSection
+            title="Lizenzstatus"
+            description="Was zuletzt lokal gespiegelt wurde. Diese Ansicht ersetzt keine zentrale Lizenzverwaltung, sondern zeigt nur den Stand, mit dem das Gerät gerade arbeitet."
+            actions={<AdminStatusPill tone={statusConf.tone}>{statusConf.label}</AdminStatusPill>}
+          >
+            {licStatus ? (
+              <InfoGrid items={licenseItems} />
+            ) : (
+              <AdminEmptyState
+                icon={KeyRound}
+                title="Keine Lizenzinformationen vorhanden"
+                description="Entweder wurde noch nichts gespiegelt oder der Zentralserver hat diesem Gerät aktuell keinen verwertbaren Lizenzstatus geliefert."
+              />
+            )}
+          </AdminSection>
+        </div>
+
+        <div className="space-y-6">
+          <AdminSection title="Synchronisierung" description="Wichtig für Support: wohin dieses Gerät spricht und wann zuletzt ein zentraler Zeitstempel ankam.">
+            <InfoGrid items={syncItems} />
+          </AdminSection>
+
+          <AdminSection title="Bewusste Grenze dieser Seite" description="Warum hier absichtlich keine Verwaltungsknöpfe mehr wohnen.">
+            <div className="rounded-2xl border border-[rgb(var(--color-primary-rgb)/0.18)] bg-[rgb(var(--color-primary-rgb)/0.08)] p-4 text-sm leading-6 text-[var(--color-text-secondary)]">
+              Lizenzobjekte, Laufzeiten, Sperren, Rebinding und Token-Erstellung gehören ins zentrale Portal. Diese lokale Seite ist nur die operative Kontrollanzeige, damit niemand im Venue im falschen Layer herumdoktert.
             </div>
-          ) : (
-            <p className="text-sm text-zinc-400">
-              Dieses Gerät ist noch nicht registriert. Die Registrierung erfolgt automatisch über den Kiosk-Screen.
-            </p>
-          )}
-        </CardContent>
-      </Card>
+          </AdminSection>
 
-      {/* License Status */}
-      <Card className={`border ${statusConf.color.split(' ').pop()}`}>
-        <CardContent className="p-5">
-          <div className="flex items-center gap-3 mb-4">
-            <StatusIcon className={`w-5 h-5 ${statusConf.color.split(' ')[0]}`} />
-            <h2 className="text-base font-semibold text-white">Lizenzstatus</h2>
-            <span className={`ml-auto text-xs px-2.5 py-0.5 rounded-full font-medium ${statusConf.color}`} data-testid="lic-status-badge">
-              {statusConf.label}
-            </span>
-          </div>
-
-          {licStatus ? (
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <InfoRow label="Plan" value={licStatus.plan_type || '—'} />
-              <InfoRow label="Kunde" value={licStatus.customer_name || '—'} />
-              <InfoRow label="Ablauf" value={licStatus.expiry ? new Date(licStatus.expiry).toLocaleDateString('de-DE') : 'Unbegrenzt'} />
-              <InfoRow label="Toleranz bis" value={licStatus.grace_until ? new Date(licStatus.grace_until).toLocaleDateString('de-DE') : '—'} />
-              <InfoRow label="Binding-Status" value={licStatus.binding_status || '—'} />
-              <InfoRow label="Max. Geräte" value={licStatus.max_devices || '—'} />
+          <AdminSection title="Portal-Hinweis" description="Direkter Kontext für Operatoren und Support.">
+            <div className="flex items-start gap-3 rounded-2xl border border-indigo-500/20 bg-indigo-500/8 p-4" data-testid="central-portal-hint">
+              <ExternalLink className="mt-0.5 h-5 w-5 flex-shrink-0 text-indigo-400" />
+              <div>
+                <p className="font-medium text-indigo-200">Lizenzverwaltung läuft zentral</p>
+                <p className="mt-1 text-sm leading-6 text-indigo-200/80">
+                  Lizenzen erstellen, verlängern, sperren oder neue Bindungstoken erzeugen: alles zentral unter <strong>/portal</strong>. Lokal bleibt nur die Sichtprüfung.
+                </p>
+              </div>
             </div>
-          ) : (
-            <p className="text-sm text-zinc-400">Keine Lizenzinformationen verfügbar.</p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Sync Info */}
-      <Card className="bg-zinc-900 border-zinc-800">
-        <CardContent className="p-5">
-          <div className="flex items-center gap-3 mb-4">
-            <Server className="w-5 h-5 text-zinc-400" />
-            <h2 className="text-base font-semibold text-white">Synchronisierung</h2>
-          </div>
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            <InfoRow label="Zentraler Server" value={syncConfig?.central_server_url || '—'} />
-            <InfoRow label="Letzte Sync" value={licStatus?.server_timestamp ? new Date(licStatus.server_timestamp).toLocaleString('de-DE') : '—'} />
-            <InfoRow label="Sync-Intervall" value={syncConfig?.sync_interval_minutes ? `${syncConfig.sync_interval_minutes} Min.` : '—'} />
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Hint: Management in Central Portal */}
-      <div className="rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-4 flex items-start gap-3" data-testid="central-portal-hint">
-        <ExternalLink className="w-5 h-5 text-indigo-400 flex-shrink-0 mt-0.5" />
-        <div>
-          <p className="text-sm font-medium text-indigo-300">Lizenzverwaltung im zentralen Portal</p>
-          <p className="text-xs text-indigo-400/70 mt-1">
-            Lizenzen erstellen, verlaengern, sperren und Token generieren — alles zentral unter <strong>/portal</strong>
-          </p>
+          </AdminSection>
         </div>
       </div>
-    </div>
-  );
-}
-
-function InfoRow({ label, value, mono }) {
-  return (
-    <div>
-      <p className="text-xs text-zinc-500 mb-0.5">{label}</p>
-      <p className={`text-zinc-300 ${mono ? 'font-mono text-xs' : ''}`}>{value}</p>
-    </div>
+    </AdminPage>
   );
 }

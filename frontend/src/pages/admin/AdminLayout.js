@@ -81,7 +81,8 @@ export default function AdminLayout() {
   if (!isAuthenticated) return null;
 
   return (
-    <div className="min-h-screen bg-[var(--color-bg)] text-[var(--color-text)]" data-testid="admin-layout">
+    <div className="relative min-h-screen overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)]" data-testid="admin-layout">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgb(var(--color-primary-rgb)/0.1),transparent_24%),radial-gradient(circle_at_bottom_right,rgb(var(--color-accent-rgb)/0.08),transparent_22%)]" />
       <div
         className="fixed left-0 right-0 top-0 z-50 flex items-center justify-between border-b border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.94)] px-4 backdrop-blur lg:hidden"
         style={{
@@ -106,7 +107,7 @@ export default function AdminLayout() {
 
       <aside
         className={`
-          fixed top-0 left-0 z-40 flex h-full w-64 transform flex-col border-r border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.98)] shadow-[0_24px_80px_rgba(0,0,0,0.45)] transition-transform duration-200
+          fixed top-0 left-0 z-40 flex h-full w-64 transform flex-col border-r border-[rgb(var(--color-border-rgb)/0.82)] bg-[linear-gradient(180deg,rgb(var(--color-bg-rgb)/0.98),rgb(var(--color-surface-rgb)/0.96))] shadow-[0_24px_80px_rgba(0,0,0,0.45)] transition-transform duration-200
           lg:translate-x-0
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
@@ -197,8 +198,8 @@ export default function AdminLayout() {
         <div className="lg:hidden fixed inset-0 bg-black/60 z-30" onClick={() => setSidebarOpen(false)} />
       )}
 
-      <main className="min-h-screen pwa-main-content lg:ml-72">
-        <div className="p-3 md:p-5 lg:p-6">
+      <main className="relative min-h-screen pwa-main-content lg:ml-72">
+        <div className="mx-auto max-w-[1600px] p-3 md:p-5 lg:p-6 xl:px-8">
           <Outlet />
         </div>
       </main>

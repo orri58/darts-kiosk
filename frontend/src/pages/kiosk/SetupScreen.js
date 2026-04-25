@@ -348,8 +348,8 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
       <div className="flex-1 overflow-auto px-4 py-5 lg:px-6 lg:py-6">
         <div className="max-w-6xl mx-auto">
           <div className="mb-6 grid gap-4 lg:grid-cols-[1.15fr,0.85fr]">
-            <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.68)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
-              <p className="mb-3 text-[11px] uppercase tracking-[0.28em] text-[var(--color-text-muted)]">Setup flow</p>
+            <div className="premium-panel rounded-3xl p-4 lg:p-5">
+              <p className="section-eyebrow mb-3">Setup flow</p>
               <div className="grid gap-3 md:grid-cols-2">
                 <div className={`rounded-2xl border px-4 py-3 ${step === 1 ? 'border-[rgb(var(--color-primary-rgb)/0.4)] bg-[rgb(var(--color-primary-rgb)/0.1)]' : 'border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.46)]'}`}>
                   <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Schritt 1</p>
@@ -364,18 +364,18 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
               </div>
             </div>
 
-            <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.68)] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.24)]">
-              <p className="mb-3 text-[11px] uppercase tracking-[0.28em] text-[var(--color-text-muted)]">Session summary</p>
+            <div className="premium-panel rounded-3xl p-4 lg:p-5">
+              <p className="section-eyebrow mb-3">Session summary</p>
               <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-                <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.46)] px-4 py-3">
+                <div className="premium-kpi rounded-2xl px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Modus</p>
                   <p className="mt-1 font-medium text-[var(--color-text)]">{session?.pricing_mode === 'per_time' ? 'Zeitbasiert' : session?.pricing_mode === 'per_player' ? 'Credits / Matchstart' : 'Spielbasiert (Legacy)'}</p>
                 </div>
-                <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.46)] px-4 py-3">
+                <div className="premium-kpi rounded-2xl px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Spiel</p>
                   <p className="mt-1 font-medium text-[var(--color-text)]">{selectedGame || 'Noch nicht gewählt'}</p>
                 </div>
-                <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.46)] px-4 py-3">
+                <div className="premium-kpi rounded-2xl px-4 py-3">
                   <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Spieler</p>
                   <p className="mt-1 font-medium text-[var(--color-text)]">{players.filter(p => p.trim().length > 0).length} / {maxPlayers}</p>
                 </div>
@@ -386,15 +386,23 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
           {/* Step 1: Game Type */}
           {step === 1 && (
             <div className="animate-slide-up" data-testid="step-game-type">
-              <div className="mb-6 flex items-center gap-3">
-                <Target className="w-7 h-7 text-[var(--color-primary)]" />
-                <h2 className="text-2xl font-heading uppercase tracking-wider text-[var(--color-text)] lg:text-3xl">{t('choose_game_type')}</h2>
+              <div className="premium-panel mb-6 rounded-3xl p-5 lg:p-6">
+                <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[rgb(var(--color-primary-rgb)/0.14)] text-[var(--color-primary)]">
+                    <Target className="w-7 h-7" />
+                  </div>
+                  <div>
+                    <p className="section-eyebrow">Step 1</p>
+                    <h2 className="text-2xl font-heading uppercase tracking-wider text-[var(--color-text)] lg:text-3xl">{t('choose_game_type')}</h2>
+                    <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Wähle den Modus für diese Runde. Danach Namen rein und loswerfen.</p>
+                  </div>
+                </div>
               </div>
               <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4 lg:gap-5">
                 {GAME_TYPES.map((game) => (
                   <button key={game.id} onClick={() => setSelectedGame(game.id)} data-testid={`game-type-${game.id.toLowerCase()}`}
-                    className={`btn-kiosk flex min-h-[104px] flex-col items-center justify-center rounded-3xl p-5 ${
-                      selectedGame === game.id ? 'animate-pulse-glow border-[rgb(var(--color-primary-rgb)/0.35)] bg-[var(--color-primary)] text-[hsl(var(--primary-foreground))]' : 'border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.72)] text-[var(--color-text)] hover:border-[rgb(var(--color-primary-rgb)/0.35)]'
+                    className={`btn-kiosk flex min-h-[128px] flex-col items-center justify-center rounded-[1.75rem] p-5 shadow-[0_18px_40px_rgba(0,0,0,0.22)] ${
+                      selectedGame === game.id ? 'animate-pulse-glow border-[rgb(var(--color-primary-rgb)/0.35)] bg-[linear-gradient(180deg,var(--color-primary),rgb(var(--color-primary-rgb)/0.82))] text-[hsl(var(--primary-foreground))]' : 'border-[rgb(var(--color-border-rgb)/0.82)] bg-[linear-gradient(180deg,rgb(var(--color-surface-rgb)/0.82),rgb(var(--color-bg-rgb)/0.72))] text-[var(--color-text)] hover:border-[rgb(var(--color-primary-rgb)/0.35)] hover:-translate-y-1'
                     }`}>
                     <span className="mb-1 text-4xl font-heading font-bold lg:text-5xl">{game.name}</span>
                     <span className={`text-xs uppercase tracking-wider ${selectedGame === game.id ? 'text-black/70' : 'text-[var(--color-text-secondary)]'}`}>{game.description}</span>
@@ -421,20 +429,29 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
                 <span className="uppercase tracking-wider text-sm">{t('back')}</span>
               </button>
 
-              <div className="mb-6 flex flex-wrap items-center gap-3">
-                <Users className="w-7 h-7 text-[var(--color-primary)]" />
-                <h2 className="text-2xl font-heading uppercase tracking-wider text-[var(--color-text)] lg:text-3xl">{t('enter_player_names')}</h2>
-                <span className="ml-auto text-lg text-[var(--color-text-secondary)]">
-                  {t('game_type')}: <span className="font-heading text-[var(--color-primary)]">{selectedGame}</span>
-                </span>
+              <div className="premium-panel mb-6 rounded-3xl p-5 lg:p-6">
+                <div className="flex flex-wrap items-start gap-3 lg:items-center">
+                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[rgb(var(--color-primary-rgb)/0.14)] text-[var(--color-primary)]">
+                    <Users className="w-7 h-7" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="section-eyebrow">Step 2</p>
+                    <h2 className="text-2xl font-heading uppercase tracking-wider text-[var(--color-text)] lg:text-3xl">{t('enter_player_names')}</h2>
+                    <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Tipp: registrierte Stammkunden mit PIN verifizieren oder neue Namen einfach als Gast starten.</p>
+                  </div>
+                  <div className="premium-panel-muted rounded-2xl px-4 py-3">
+                    <p className="text-xs uppercase tracking-[0.22em] text-[var(--color-text-muted)]">{t('game_type')}</p>
+                    <p className="mt-1 text-lg font-heading text-[var(--color-primary)]">{selectedGame}</p>
+                  </div>
+                </div>
               </div>
 
               {/* Player Inputs */}
               <div className="mb-6 grid grid-cols-1 gap-3 md:grid-cols-2">
                 {players.map((player, index) => (
                   <div key={index} onClick={() => focusPlayer(index)}
-                    className={`relative flex cursor-pointer items-center rounded-2xl border-2 bg-[rgb(var(--color-surface-rgb)/0.7)] p-4 transition-all ${
-                      activePlayerIndex === index && showKeyboard ? 'border-[rgb(var(--color-primary-rgb)/0.45)] ring-2 ring-[rgb(var(--color-primary-rgb)/0.24)]' : 'border-[rgb(var(--color-border-rgb)/0.82)] hover:border-[rgb(var(--color-primary-rgb)/0.28)]'
+                    className={`relative flex cursor-pointer items-center rounded-[1.4rem] border-2 bg-[linear-gradient(180deg,rgb(var(--color-surface-rgb)/0.82),rgb(var(--color-bg-rgb)/0.7))] p-4 shadow-[0_14px_34px_rgba(0,0,0,0.2)] transition-all ${
+                      activePlayerIndex === index && showKeyboard ? 'border-[rgb(var(--color-primary-rgb)/0.45)] ring-2 ring-[rgb(var(--color-primary-rgb)/0.24)]' : 'border-[rgb(var(--color-border-rgb)/0.82)] hover:-translate-y-0.5 hover:border-[rgb(var(--color-primary-rgb)/0.28)]'
                     } ${playerAuth[index]?.status === 'verified' ? 'border-emerald-500/50' : ''}`}>
                     <div className={`mr-4 flex h-12 w-12 items-center justify-center rounded-2xl ${
                       playerAuth[index]?.status === 'verified' ? 'bg-emerald-500/20' : 'bg-[rgb(var(--color-bg-rgb)/0.58)]'
@@ -482,16 +499,31 @@ export default function SetupScreen({ branding, pricing, session, onStartGame })
 
                 {players.length < maxPlayers && (
                   <button onClick={addPlayer} data-testid="add-player-btn"
-                    className="flex min-h-[96px] items-center justify-center gap-3 rounded-2xl border-2 border-dashed border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.42)] p-4 text-[var(--color-text-secondary)] transition-all hover:border-[rgb(var(--color-primary-rgb)/0.4)] hover:text-[var(--color-primary)]">
+                    className="flex min-h-[96px] items-center justify-center gap-3 rounded-[1.4rem] border-2 border-dashed border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.42)] p-4 text-[var(--color-text-secondary)] transition-all hover:-translate-y-0.5 hover:border-[rgb(var(--color-primary-rgb)/0.4)] hover:text-[var(--color-primary)]">
                     <Users className="w-6 h-6" />
                     <span className="uppercase tracking-wider">{t('add_player')}</span>
                   </button>
                 )}
               </div>
 
+              {!showKeyboard && (
+                <div className="premium-panel-muted mb-6 rounded-3xl px-5 py-4 text-sm text-[var(--color-text-secondary)]">
+                  Tippe auf einen Spielernamen, um die Bildschirmtastatur zu öffnen. Mit mindestens einem Namen und bestätigten PIN-Pflichten kann das Match sofort starten.
+                </div>
+              )}
+
               {/* Virtual Keyboard */}
               {showKeyboard && (
-                <div className="mb-8" data-testid="virtual-keyboard">
+                <div className="premium-panel mb-8 rounded-3xl p-4 lg:p-5" data-testid="virtual-keyboard">
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="section-eyebrow">Eingabe</p>
+                      <p className="text-sm text-[var(--color-text-secondary)]">Spieler {activePlayerIndex + 1} wird gerade bearbeitet.</p>
+                    </div>
+                    <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.76)] bg-[rgb(var(--color-bg-rgb)/0.46)] px-3 py-2 text-sm font-mono text-[var(--color-text)]">
+                      {players[activePlayerIndex] || '—'}
+                    </div>
+                  </div>
                   <Keyboard
                     keyboardRef={(r) => (keyboardRef.current = r)}
                     onChange={handleKeyboardChange}

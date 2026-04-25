@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Clock, Coins, Phone, StopCircle, Target, Users, Wallet } from 'lucide-react';
+import { Clock, Coins, Phone, Sparkles, StopCircle, Target, Users, Wallet } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { useSettings } from '../../context/SettingsContext';
 import KioskHeader from '../../components/kiosk/KioskHeader';
@@ -42,6 +42,7 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
   const dangerTime = timeLeft?.minutes < 5;
   const isTimeMode = session?.pricing_mode === 'per_time';
   const isCreditsMode = !isTimeMode;
+  const players = session?.players || [];
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-[var(--color-bg)]" data-testid="in-game-screen">
@@ -53,7 +54,7 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
           compact
           right={(
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
-              <div className="h-2.5 w-2.5 rounded-full bg-emerald-400 animate-pulse" />
+              <div className="h-2.5 w-2.5 animate-pulse rounded-full bg-emerald-400" />
               {kioskTexts.game_running || 'SPIEL LÄUFT'}
             </div>
           )}
@@ -72,7 +73,7 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
                 </div>
               </div>
               <p className="mt-3 max-w-2xl text-base leading-7 text-[var(--color-text-secondary)] lg:text-lg lg:leading-8">
-                Session läuft lokal auf diesem Board. Credits oder Zeit gehen erst bei echten Match-Events runter.
+                Session läuft lokal auf diesem Board. Credits oder Zeit gehen erst bei echten Match-Events runter — genau so soll es sein.
               </p>
             </div>
 
@@ -82,9 +83,9 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
                   <Users className="h-4 w-4 text-[var(--color-text-secondary)]" /> Spieler
                 </div>
                 <div className="mt-4 space-y-2">
-                  {session?.players?.map((player, index) => (
+                  {players.length > 0 ? players.map((player, index) => (
                     <p key={index} className="truncate text-lg font-medium text-[var(--color-text)]">{player}</p>
-                  )) || <p className="text-[var(--color-text-muted)]">-</p>}
+                  )) : <p className="text-[var(--color-text-muted)]">-</p>}
                 </div>
               </div>
 
@@ -118,6 +119,13 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
                 <p className="mt-1 text-lg text-[var(--color-text-secondary)]">{session?.price_total?.toFixed(2)} €</p>
               </div>
             </div>
+
+            <div className="rounded-[2rem] border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.42)] px-5 py-4 text-sm leading-7 text-[var(--color-text-secondary)]">
+              <span className="mr-2 inline-flex items-center rounded-full border border-[rgb(var(--color-primary-rgb)/0.2)] bg-[rgb(var(--color-primary-rgb)/0.08)] px-2.5 py-1 text-[11px] uppercase tracking-[0.22em] text-[var(--color-primary)]">
+                <Sparkles className="mr-1 h-3 w-3" /> Fair billing
+              </span>
+              Session endet automatisch bei 0 Zeit oder 0 Credits. Manuelles Beenden bleibt sichtbar, damit Personal und Gäste nie raten müssen.
+            </div>
           </div>
 
           <div className="space-y-4">
@@ -135,7 +143,7 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
                 variant="outline"
                 className="h-20 w-full rounded-3xl border-2 border-[rgb(var(--color-border-rgb)/0.82)] bg-transparent text-lg text-[var(--color-text)] hover:border-[rgb(var(--color-primary-rgb)/0.34)] hover:text-[var(--color-primary)]"
               >
-                <Phone className="w-6 h-6 mr-3" />
+                <Phone className="mr-3 h-6 w-6" />
                 {kioskTexts.call_staff || 'Personal rufen'}
               </Button>
             )}
@@ -146,19 +154,18 @@ export default function InGameScreen({ branding, session, onEndGame, onCallStaff
                 data-testid="end-game-btn"
                 className="h-20 w-full rounded-3xl border-2 border-[rgb(var(--color-accent-rgb)/0.35)] bg-[rgb(var(--color-accent-rgb)/0.12)] text-lg text-[var(--color-accent)] hover:bg-[var(--color-accent)] hover:text-[hsl(var(--destructive-foreground))]"
               >
-                <StopCircle className="w-6 h-6 mr-3" /> Spiel beenden
+                <StopCircle className="mr-3 h-6 w-6" /> Spiel beenden
               </Button>
             ) : (
-              <div className="grid grid-cols-2 gap-3">
-                <Button onClick={() => setShowConfirmEnd(false)} variant="outline" className="h-20 rounded-3xl border-[rgb(var(--color-border-rgb)/0.82)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]">Abbrechen</Button>
-                <Button onClick={onEndGame} data-testid="confirm-end-game-btn" className="h-20 rounded-3xl bg-[var(--color-accent)] text-[hsl(var(--destructive-foreground))] hover:opacity-90">Bestätigen</Button>
+              <div className="rounded-[2rem] border border-[rgb(var(--color-accent-rgb)/0.24)] bg-[rgb(var(--color-accent-rgb)/0.08)] p-4">
+                <p className="text-sm leading-6 text-[var(--color-text-secondary)]">Wirklich jetzt beenden? Das schließt die laufende Session sichtbar und sauber ab.</p>
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <Button onClick={() => setShowConfirmEnd(false)} variant="outline" className="h-16 rounded-3xl border-[rgb(var(--color-border-rgb)/0.82)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]">Abbrechen</Button>
+                  <Button onClick={onEndGame} data-testid="confirm-end-game-btn" className="h-16 rounded-3xl bg-[var(--color-accent)] text-[hsl(var(--destructive-foreground))] hover:opacity-90">Bestätigen</Button>
+                </div>
               </div>
             )}
           </div>
-        </div>
-
-        <div className="mx-auto w-full max-w-7xl rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.56)] px-5 py-3 text-sm text-[var(--color-text-secondary)] backdrop-blur">
-          Session endet automatisch bei 0 Zeit oder 0 Credits. Manuelles Beenden bleibt bewusst sichtbar.
         </div>
       </div>
     </div>
