@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
 import {
   KeyRound, Copy, RefreshCw, ArrowLeft, Monitor, Wifi, WifiOff,
-  Ban, CheckCircle, AlertTriangle, Archive, Unlink, Shield, Clock, Users
+  Ban, CheckCircle, AlertTriangle, Archive, Unlink, Shield, Clock, Users,
+  Sparkles, Gauge, ExternalLink, TriangleAlert
 } from 'lucide-react';
 
 const STATUS_CONF = {
@@ -34,6 +35,73 @@ function InfoRow({ label, value, tid }) {
     <div className="flex justify-between py-2 border-b border-zinc-800/50">
       <span className="text-zinc-500 text-sm">{label}</span>
       <span data-testid={tid} className="text-zinc-200 text-sm font-medium">{value || '—'}</span>
+    </div>
+  );
+}
+
+function bucketLabel(value) {
+  return {
+    healthy: 'Gesund',
+    watch: 'Beobachten',
+    attention: 'Aktion nötig',
+    urgent: 'Dringend',
+  }[value] || value || '—';
+}
+
+function capacityLabel(value) {
+  return {
+    unconfigured: 'Kein Limit',
+    unassigned: 'Noch ungenutzt',
+    available: 'Platz vorhanden',
+    near_capacity: 'Fast voll',
+    full: 'Voll belegt',
+    over_capacity: 'Überbucht',
+  }[value] || value || '—';
+}
+
+function postureLabel(value) {
+  return {
+    ready: 'Ready',
+    degraded: 'Degraded',
+    review_required: 'Review',
+    blocked: 'Blocked',
+  }[value] || value || '—';
+}
+
+function ReadinessBadge({ readiness }) {
+  const tones = {
+    healthy: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300',
+    watch: 'border-sky-500/20 bg-sky-500/10 text-sky-300',
+    attention: 'border-amber-500/20 bg-amber-500/10 text-amber-300',
+    urgent: 'border-red-500/20 bg-red-500/10 text-red-300',
+  };
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${tones[readiness?.action_bucket] || tones.watch}`}>
+      <Sparkles className="w-3 h-3" /> {bucketLabel(readiness?.action_bucket)}
+    </span>
+  );
+}
+
+function ReadinessCard({ icon: Icon, label, value, hint, tone = 'zinc', tid }) {
+  const tones = {
+    emerald: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300',
+    amber: 'border-amber-500/20 bg-amber-500/10 text-amber-300',
+    red: 'border-red-500/20 bg-red-500/10 text-red-300',
+    blue: 'border-sky-500/20 bg-sky-500/10 text-sky-300',
+    zinc: 'border-zinc-800 bg-zinc-900/60 text-zinc-300',
+  };
+  return (
+    <div data-testid={tid} className={`rounded-2xl border p-4 ${tones[tone] || tones.zinc}`}>
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.18em] text-current/70">{label}</p>
+          <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
+          {hint && <p className="mt-1 text-xs text-current/75">{hint}</p>}
+        </div>
+        <div className="rounded-xl bg-black/20 p-2.5">
+          <Icon className="w-5 h-5" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -208,6 +276,7 @@ function DevicesSection({ devices, maxDevices, onUnbind, licenseStatus }) {
 export default function PortalLicenseDetail() {
   const { licenseId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { apiBase, authHeaders, canManage } = useCentralAuth();
   const [lic, setLic] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -331,13 +400,24 @@ export default function PortalLicenseDetail() {
 
   const st = lic.computed_status || lic.status;
   const isOperational = ['active', 'test', 'grace'].includes(st);
+  const readiness = lic.commercial_readiness || {};
+  const isOperatorSurface = location.pathname.startsWith('/operator');
+  const listPath = isOperatorSurface ? '/operator/licenses' : '/portal/licenses';
+  const remoteActionsPath = `/operator/remote-actions?license_id=${encodeURIComponent(licenseId)}`;
+  const pressureTone = readiness.action_bucket === 'urgent'
+    ? 'red'
+    : readiness.action_bucket === 'attention'
+      ? 'amber'
+      : readiness.action_bucket === 'watch'
+        ? 'blue'
+        : 'emerald';
 
   return (
     <div data-testid="license-detail-page" className="max-w-4xl mx-auto p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div className="flex items-center gap-4">
-          <button data-testid="back-btn" onClick={() => navigate('/portal/licenses')} className="text-zinc-500 hover:text-zinc-300">
+          <button data-testid="back-btn" onClick={() => navigate(listPath)} className="text-zinc-500 hover:text-zinc-300">
             <ArrowLeft className="w-5 h-5" />
           </button>
           <div>
@@ -345,8 +425,40 @@ export default function PortalLicenseDetail() {
             <p className="text-zinc-500 text-sm mt-0.5">{lic.id}</p>
           </div>
         </div>
-        <StatusBadge status={st} />
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <ReadinessBadge readiness={readiness} />
+          <StatusBadge status={st} />
+        </div>
       </div>
+
+      <section className="rounded-3xl border border-zinc-800 bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950 p-5" data-testid="license-readiness-hero">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-3 py-1 text-xs text-indigo-300">
+              <Sparkles className="w-3.5 h-3.5" /> Commercial Readiness Drill-in
+            </div>
+            <h2 className="mt-3 text-lg font-semibold text-white">{readiness.primary_message || 'Lizenzlage wird ausgewertet'}</h2>
+            <p className="mt-1 text-sm text-zinc-400 max-w-2xl">{readiness.recommended_action || 'Kein direkter Eingriff nötig.'}</p>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            {isOperatorSurface && (
+              <Button variant="outline" size="sm" onClick={() => navigate(remoteActionsPath)} className="border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/10">
+                Remote Actions <ExternalLink className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={() => navigate(listPath)} className="border-zinc-700 text-zinc-300 hover:bg-zinc-800">
+              Portfolio
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+          <ReadinessCard icon={TriangleAlert} label="Bucket" value={bucketLabel(readiness.action_bucket)} hint={readiness.risk_flags?.join(' · ') || 'Keine Flags'} tone={pressureTone} tid="license-readiness-bucket" />
+          <ReadinessCard icon={Clock} label="Renewal" value={readiness.renewal_days != null ? `${readiness.renewal_days} Tage` : 'Unbegrenzt'} hint={st === 'grace' ? 'Aktuell in Grace' : 'Vertragslaufzeit'} tone={readiness.renewal_days != null && readiness.renewal_days <= 14 ? 'amber' : 'zinc'} tid="license-readiness-renewal" />
+          <ReadinessCard icon={Gauge} label="Kapazität" value={`${lic.device_count ?? 0}/${lic.max_devices ?? '—'}`} hint={capacityLabel(readiness.capacity_state)} tone={['full', 'over_capacity'].includes(readiness.capacity_state) ? 'amber' : readiness.capacity_state === 'near_capacity' ? 'blue' : 'zinc'} tid="license-readiness-capacity" />
+          <ReadinessCard icon={Shield} label="Posture" value={postureLabel(readiness.posture_status)} hint={`${readiness.posture_counts?.blocked || 0} blocked · ${readiness.posture_counts?.review_required || 0} review · ${readiness.posture_counts?.degraded || 0} degraded`} tone={readiness.posture_status === 'blocked' ? 'red' : readiness.posture_status === 'review_required' ? 'amber' : readiness.posture_status === 'degraded' ? 'blue' : 'emerald'} tid="license-readiness-posture" />
+        </div>
+      </section>
 
       {/* Stammdaten */}
       <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5">

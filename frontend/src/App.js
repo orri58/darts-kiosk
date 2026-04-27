@@ -28,6 +28,8 @@ import PortalLogin from "./pages/portal/PortalLogin";
 import PortalLayout from "./pages/portal/PortalLayout";
 import PortalDashboard from "./pages/portal/PortalDashboard";
 import PortalDevices from "./pages/portal/PortalDevices";
+import PortalLicenses from "./pages/portal/PortalLicenses";
+import PortalLicenseDetail from "./pages/portal/PortalLicenseDetail";
 
 // Operator Pages (central operator surface)
 import OperatorLogin from "./pages/operator/OperatorLogin";
@@ -94,6 +96,8 @@ function App() {
                 <Route path="/portal" element={<CentralAuthProvider><PortalLayout /></CentralAuthProvider>}>
                   <Route index element={<PortalDashboard />} />
                   <Route path="devices" element={<PortalDevices />} />
+                  <Route path="licenses" element={<PortalLicenses />} />
+                  <Route path="licenses/:licenseId" element={<PortalLicenseDetail />} />
                 </Route>
 
                 <Route path="/operator/login" element={<CentralAuthProvider><OperatorLogin /></CentralAuthProvider>} />
@@ -103,6 +107,7 @@ function App() {
                   <Route path="locations" element={<OperatorLocations />} />
                   <Route path="devices" element={<OperatorDevices />} />
                   <Route path="licenses" element={<OperatorLicenses />} />
+                  <Route path="licenses/:licenseId" element={<PortalLicenseDetail />} />
                   <Route path="users" element={<OperatorUsers />} />
                   <Route path="remote-actions" element={<OperatorRemoteActions />} />
                   <Route path="audit" element={<OperatorAudit />} />

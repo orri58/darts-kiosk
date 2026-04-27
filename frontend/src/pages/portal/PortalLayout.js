@@ -1,7 +1,7 @@
 import { Outlet, NavLink, Navigate } from "react-router-dom";
 import { useCentralAuth } from "../../context/CentralAuthContext";
 import { Button } from "../../components/ui/button";
-import { Monitor, LogOut, LayoutDashboard } from "lucide-react";
+import { Monitor, LogOut, LayoutDashboard, KeyRound } from "lucide-react";
 
 export default function PortalLayout() {
   const { isAuthenticated, user, logout } = useCentralAuth();
@@ -48,6 +48,20 @@ export default function PortalLayout() {
           >
             <Monitor size={16} />
             Geraete
+          </NavLink>
+          <NavLink
+            to="/portal/licenses"
+            className={({ isActive }) =>
+              `flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors ${
+                isActive
+                  ? "bg-zinc-800 text-zinc-100"
+                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
+              }`
+            }
+            data-testid="portal-nav-licenses"
+          >
+            <KeyRound size={16} />
+            Lizenzen
           </NavLink>
         </nav>
 

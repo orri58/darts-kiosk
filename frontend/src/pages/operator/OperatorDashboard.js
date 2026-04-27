@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import {
   WifiOff, Activity, DollarSign, Zap, AlertTriangle,
-  Monitor, Clock, RefreshCw, Gamepad2, Workflow, ExternalLink, ShieldAlert, Send
+  Monitor, Clock, RefreshCw, Gamepad2, Workflow, ExternalLink, ShieldAlert, Send,
+  KeyRound, Sparkles, TriangleAlert, Gauge, ArrowRight
 } from 'lucide-react';
 
 function formatCurrency(cents) {
@@ -17,6 +18,25 @@ function timeAgo(isoStr) {
   if (diff < 3600) return `vor ${Math.floor(diff / 60)} Min.`;
   if (diff < 86400) return `vor ${Math.floor(diff / 3600)} Std.`;
   return `vor ${Math.floor(diff / 86400)} Tagen`;
+}
+
+function bucketLabel(value) {
+  return {
+    healthy: 'Gesund',
+    watch: 'Beobachten',
+    attention: 'Aktion nötig',
+    urgent: 'Dringend',
+  }[value] || value || '—';
+}
+
+function ReadinessBadge({ bucket }) {
+  const tones = {
+    healthy: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300',
+    watch: 'border-sky-500/20 bg-sky-500/10 text-sky-300',
+    attention: 'border-amber-500/20 bg-amber-500/10 text-amber-300',
+    urgent: 'border-red-500/20 bg-red-500/10 text-red-300',
+  };
+  return <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${tones[bucket] || tones.watch}`}>{bucketLabel(bucket)}</span>;
 }
 
 export default function OperatorDashboard() {
@@ -115,6 +135,9 @@ export default function OperatorDashboard() {
   const queueSummary = remoteActionData?.summary?.counts || {};
   const recentRemoteActions = remoteActionData?.recent_items || [];
   const needsAttention = (queueMetrics.needs_triage || 0) + (data.warnings?.length || 0);
+  const licensePortfolio = data.license_portfolio_summary || null;
+  const licenseCounts = licensePortfolio?.counts || {};
+  const licenseFocus = licensePortfolio?.focus_queues || {};
 
   const openRemoteActions = (filters = {}) => {
     const params = new URLSearchParams();
@@ -123,6 +146,9 @@ export default function OperatorDashboard() {
     });
     navigate(`/operator/remote-actions${params.toString() ? `?${params.toString()}` : ''}`);
   };
+
+  const openLicense = (licenseId) => navigate(`/operator/licenses/${licenseId}`);
+  const openLicenses = () => navigate('/operator/licenses');
 
   return (
     <div className="space-y-5" data-testid="operator-dashboard">
@@ -178,6 +204,56 @@ export default function OperatorDashboard() {
           tid="kpi-games"
         />
       </div>
+
+      {licensePortfolio && (
+        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden" data-testid="dashboard-license-summary">
+          <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/40 flex items-start justify-between gap-3 flex-wrap">
+            <div>
+              <div className="flex items-center gap-2">
+                <KeyRound className="w-4 h-4 text-indigo-400" />
+                <h2 className="text-sm font-semibold text-white">Commercial Readiness</h2>
+                <ReadinessBadge bucket={(licenseCounts.urgent || 0) > 0 ? 'urgent' : (licenseCounts.attention || 0) > 0 ? 'attention' : (licenseCounts.watch || 0) > 0 ? 'watch' : 'healthy'} />
+              </div>
+              <p className="text-xs text-zinc-500 mt-1">Gleiche Lizenzlogik wie im Portfolio — direkt aus dem Dashboard in die Drill-ins springen.</p>
+            </div>
+            <button
+              onClick={openLicenses}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-500/10 px-3 py-1.5 text-sm text-indigo-300 hover:bg-indigo-500/20"
+              data-testid="dashboard-open-licenses"
+            >
+              Lizenzportfolio öffnen <ExternalLink className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="p-4 space-y-4">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+              <QueueMetricCard icon={TriangleAlert} label="Dringend" value={licenseCounts.urgent ?? 0} sub="inaktiv, blockiert oder überzogen" tone={(licenseCounts.urgent ?? 0) > 0 ? 'red' : 'zinc'} onClick={openLicenses} tid="dashboard-license-urgent" />
+              <QueueMetricCard icon={Clock} label="Renewals / Grace" value={(licenseCounts.renewal_due ?? 0) + (licenseCounts.in_grace ?? 0)} sub={`${licenseCounts.renewal_due ?? 0} fällig · ${licenseCounts.in_grace ?? 0} grace`} tone={((licenseCounts.renewal_due ?? 0) + (licenseCounts.in_grace ?? 0)) > 0 ? 'amber' : 'zinc'} onClick={openLicenses} tid="dashboard-license-renewals" />
+              <QueueMetricCard icon={Sparkles} label="Aktivierungslücken" value={licenseCounts.activation_gap ?? 0} sub="verkauft, aber noch nicht live" tone={(licenseCounts.activation_gap ?? 0) > 0 ? 'blue' : 'zinc'} onClick={openLicenses} tid="dashboard-license-gaps" />
+              <QueueMetricCard icon={Gauge} label="Kapazitätsdruck" value={licenseCounts.full_or_over_capacity ?? 0} sub={`${licenseCounts.near_capacity ?? 0} fast/voll`} tone={((licenseCounts.full_or_over_capacity ?? 0) + (licenseCounts.near_capacity ?? 0)) > 0 ? 'amber' : 'zinc'} onClick={openLicenses} tid="dashboard-license-capacity" />
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <LicenseFocusList
+                title="Jetzt eskalieren"
+                hint="Die kritischsten Lizenzen zuerst."
+                items={licenseFocus.urgent || []}
+                empty="Keine akuten Lizenzblocker im Scope."
+                onOpenLicense={openLicense}
+                accent="red"
+              />
+              <LicenseFocusList
+                title="Renewal & Aktivierung"
+                hint="Die naechsten kommerziellen Hebel."
+                items={[...(licenseFocus.renewals || []), ...(licenseFocus.activation_gaps || [])].slice(0, 6)}
+                empty="Kein unmittelbarer Renewal- oder Aktivierungsdruck."
+                onOpenLicense={openLicense}
+                accent="amber"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden" data-testid="dashboard-remote-actions-summary">
         <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/40 flex items-start justify-between gap-3 flex-wrap">
@@ -409,6 +485,40 @@ export default function OperatorDashboard() {
           <p className="text-zinc-600 text-xs mt-1">Wähle einen Kunden / Standort oder registriere neue Geräte</p>
         </div>
       )}
+    </div>
+  );
+}
+
+function LicenseFocusList({ title, hint, items, empty, onOpenLicense, accent = 'zinc' }) {
+  const tones = {
+    red: 'border-red-500/20 bg-red-500/5',
+    amber: 'border-amber-500/20 bg-amber-500/5',
+    zinc: 'border-zinc-800 bg-zinc-950/30',
+  };
+  return (
+    <div className={`rounded-xl border p-4 ${tones[accent] || tones.zinc}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium text-white">{title}</p>
+          <p className="mt-1 text-xs text-zinc-500">{hint}</p>
+        </div>
+        <span className="rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-zinc-400">{items.length}</span>
+      </div>
+      <div className="mt-3 space-y-2">
+        {items.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-zinc-800 px-3 py-4 text-sm text-zinc-500">{empty}</div>
+        ) : items.map((item) => (
+          <button key={item.license_id} onClick={() => onOpenLicense(item.license_id)} className="w-full rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-3 text-left hover:border-zinc-700 transition-colors">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-white">{item.plan_type || 'Lizenz'} <span className="text-zinc-500 font-mono text-xs">{item.license_id.slice(0, 8)}</span></p>
+                <p className="mt-1 text-xs text-zinc-400">{item.primary_message}</p>
+              </div>
+              <ArrowRight className="w-4 h-4 text-zinc-600" />
+            </div>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

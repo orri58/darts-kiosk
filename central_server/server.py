@@ -13,6 +13,7 @@ if _project_root not in sys.path:
 
 import hashlib
 import logging
+import math
 import os
 import secrets
 from collections import defaultdict
@@ -772,6 +773,22 @@ async def dashboard(customer_id: str = None, location_id: str = None, user: Auth
     for f in lic_filter: lic_active_q = lic_active_q.where(f)
     active_lic = (await db.execute(lic_active_q)).scalar() or 0
 
+    license_stmt = select(CentralLicense).order_by(CentralLicense.created_at.desc())
+    for f in lic_filter:
+        license_stmt = license_stmt.where(f)
+    scoped_licenses = (await db.execute(license_stmt)).scalars().all()
+    scoped_license_ids = [lic.id for lic in scoped_licenses]
+    portfolio_posture_summary_by_license = {}
+    if scoped_license_ids:
+        scoped_license_devices = (await db.execute(select(CentralDevice).where(CentralDevice.license_id.in_(scoped_license_ids)))).scalars().all()
+        scoped_device_postures = await _build_device_advisory_posture_map(db, scoped_license_devices)
+        scoped_devices_by_license: dict[str, list[dict]] = defaultdict(list)
+        for device in scoped_license_devices:
+            scoped_devices_by_license[device.license_id].append(scoped_device_postures.get(device.id))
+        for lic_id, postures in scoped_devices_by_license.items():
+            portfolio_posture_summary_by_license[lic_id] = _summarize_posture_collection(postures)
+    license_portfolio_summary = _build_license_portfolio_summary(scoped_licenses, portfolio_posture_summary_by_license, _utcnow())
+
     # Recent devices for health view
     if dev_filter:
         dev_stmt = select(CentralDevice)
@@ -824,6 +841,7 @@ async def dashboard(customer_id: str = None, location_id: str = None, user: Auth
     return {
         "customers": customers, "locations": locations, "devices": devices,
         "licenses_total": total_lic, "licenses_active": active_lic,
+        "license_portfolio_summary": license_portfolio_summary,
         "fleet_advisory_summary": _summarize_posture_collection(list(dashboard_postures.values()) if 'dashboard_postures' in locals() else []),
         "remote_action_queue": remote_action_metrics,
         "recent_devices": recent_devices,
@@ -1172,6 +1190,7 @@ async def update_device(device_id: str, data: dict, user: AuthUser = Depends(get
 
 @app.get("/api/licensing/licenses")
 async def list_licenses(customer_id: str = None, status: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    now = _utcnow()
     stmt = select(CentralLicense).order_by(CentralLicense.created_at.desc())
     if customer_id:
         if not can_access_customer(user, customer_id):
@@ -1207,10 +1226,40 @@ async def list_licenses(customer_id: str = None, status: str = None, user: AuthU
         # Count bound devices
         dc = await db.execute(select(func.count()).where(CentralDevice.license_id == lic.id))
         d["device_count"] = dc.scalar() or 0
-        d["computed_status"] = _compute_status(lic, _utcnow())
+        d["computed_status"] = _compute_status(lic, now)
         d["device_advisory_summary"] = posture_summary_by_license.get(lic.id) or _summarize_posture_collection([])
+        d["commercial_readiness"] = _build_license_commercial_readiness(lic, d["device_advisory_summary"], now)
         items.append(d)
     return items
+
+
+@app.get("/api/licensing/licenses/portfolio-summary")
+async def license_portfolio_summary(customer_id: str = None, status: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    stmt = select(CentralLicense).order_by(CentralLicense.created_at.desc())
+    if customer_id:
+        if not can_access_customer(user, customer_id):
+            raise HTTPException(403, "Access denied")
+        stmt = stmt.where(CentralLicense.customer_id == customer_id)
+    else:
+        stmt = apply_customer_scope(stmt, user, CentralLicense.customer_id)
+    if status:
+        stmt = stmt.where(CentralLicense.status == status)
+
+    result = await db.execute(stmt)
+    lics = result.scalars().all()
+    license_ids = [lic.id for lic in lics]
+    posture_summary_by_license = {}
+    if license_ids:
+        license_devices_result = await db.execute(select(CentralDevice).where(CentralDevice.license_id.in_(license_ids)))
+        license_devices = license_devices_result.scalars().all()
+        device_postures = await _build_device_advisory_posture_map(db, license_devices)
+        devices_by_license: dict[str, list[dict]] = defaultdict(list)
+        for device in license_devices:
+            devices_by_license[device.license_id].append(device_postures.get(device.id))
+        for lic_id, postures in devices_by_license.items():
+            posture_summary_by_license[lic_id] = _summarize_posture_collection(postures)
+
+    return _build_license_portfolio_summary(lics, posture_summary_by_license, _utcnow())
 
 
 @app.post("/api/licensing/licenses")
@@ -1306,6 +1355,10 @@ async def get_license_detail(license_id: str, user: AuthUser = Depends(get_curre
 
     now = _utcnow()
     computed_status = _compute_status(lic, now)
+    advisory_summary = _summarize_posture_collection([
+        d.get("advisory_posture") for d in devices if isinstance(d, dict)
+    ])
+    commercial_readiness = _build_license_commercial_readiness(lic, advisory_summary, now)
 
     detail = _ser_license(lic)
     detail["computed_status"] = computed_status
@@ -1313,6 +1366,8 @@ async def get_license_detail(license_id: str, user: AuthUser = Depends(get_curre
     detail["location_name"] = loc_name
     detail["devices"] = devices
     detail["device_count"] = len(devices)
+    detail["device_advisory_summary"] = advisory_summary
+    detail["commercial_readiness"] = commercial_readiness
     detail["active_token"] = _finalize_reg_token_summary(_ser_reg_token_summary(active_token), user) if active_token else None
     detail["token_history"] = [_finalize_reg_token_summary(_ser_reg_token_summary(t), user) for t in tokens]
     return detail
@@ -1945,6 +2000,187 @@ def _summarize_posture_collection(postures: list[dict] | None, *, detail_level: 
         "counts": counts,
         "top_findings": top_findings,
         "detail_level": detail_level,
+    }
+
+
+def _build_license_commercial_readiness(license_row, posture_summary: dict | None = None, now: datetime | None = None) -> dict:
+    now = now or _utcnow()
+    computed_status = _compute_status(license_row, now)
+    device_count = int(posture_summary.get("device_count") or 0) if posture_summary else 0
+    max_devices = max(int(getattr(license_row, "max_devices", 0) or 0), 0)
+    occupancy_ratio = round((device_count / max_devices), 3) if max_devices > 0 else None
+    posture_state = (posture_summary or {}).get("overall_posture") or "ready"
+    days_to_end = None
+    ends_at = _aware(getattr(license_row, "ends_at", None))
+    if ends_at:
+        days_to_end = math.floor((ends_at - now).total_seconds() / 86400)
+
+    risk_flags: list[str] = []
+    if computed_status in {"expired", "blocked", "deactivated", "archived"}:
+        risk_flags.append("license_inactive")
+    elif computed_status == "grace":
+        risk_flags.append("license_grace")
+    elif days_to_end is not None and days_to_end <= 14:
+        risk_flags.append("renewal_due")
+
+    if max_devices <= 0:
+        capacity_state = "unconfigured"
+        risk_flags.append("capacity_unconfigured")
+    elif device_count == 0:
+        capacity_state = "unassigned"
+        risk_flags.append("activation_gap")
+    elif device_count > max_devices:
+        capacity_state = "over_capacity"
+        risk_flags.append("capacity_over")
+    elif device_count == max_devices:
+        capacity_state = "full"
+        risk_flags.append("capacity_full")
+    elif occupancy_ratio is not None and occupancy_ratio >= 0.8:
+        capacity_state = "near_capacity"
+        risk_flags.append("capacity_near")
+    else:
+        capacity_state = "available"
+
+    posture_counts = (posture_summary or {}).get("counts") or {}
+    if posture_state == "blocked":
+        risk_flags.append("device_blocked")
+    elif posture_state == "review_required":
+        risk_flags.append("device_review")
+    elif posture_state == "degraded":
+        risk_flags.append("device_degraded")
+
+    action_bucket = "healthy"
+    if any(flag in risk_flags for flag in {"license_inactive", "device_blocked", "capacity_over"}):
+        action_bucket = "urgent"
+    elif any(flag in risk_flags for flag in {"license_grace", "renewal_due", "device_review", "activation_gap", "capacity_full"}):
+        action_bucket = "attention"
+    elif any(flag in risk_flags for flag in {"device_degraded", "capacity_near"}):
+        action_bucket = "watch"
+
+    if "license_inactive" in risk_flags:
+        primary_message = f"Lizenzstatus ist {computed_status}"
+        recommended_action = "Status oder Vertragslaufzeit in Central prüfen, bevor weitere Geräteaktionen geplant werden."
+    elif "license_grace" in risk_flags:
+        primary_message = "Lizenz läuft bereits in der Toleranzphase"
+        recommended_action = "Verlängerung oder Vertragsklärung jetzt abschließen, damit der Standort nicht in den Ablauf kippt."
+    elif "renewal_due" in risk_flags:
+        primary_message = f"Verlängerung in {max(days_to_end, 0)} Tag(en) fällig"
+        recommended_action = "Kundenansprache und Renewal-Plan vor Ablauf terminieren."
+    elif "capacity_over" in risk_flags:
+        primary_message = "Mehr Geräte gebunden als lizenzierte Kapazität"
+        recommended_action = "Kapazität erhöhen oder nicht mehr benötigte Geräte entkoppeln."
+    elif "capacity_full" in risk_flags:
+        primary_message = "Kapazität vollständig belegt"
+        recommended_action = "Für weitere Rollouts zuerst Upgrade oder zusätzliche Lizenz vorbereiten."
+    elif "activation_gap" in risk_flags:
+        primary_message = "Lizenz ist aktiv, aber noch keinem Gerät zugeordnet"
+        recommended_action = "Aktivierungstoken erzeugen und Inbetriebnahme aktiv nachverfolgen."
+    elif "device_blocked" in risk_flags:
+        primary_message = "Mindestens ein gebundenes Gerät ist kommerziell oder vertrauensseitig blockiert"
+        recommended_action = "Gebundene Geräte im Advisory-Detail und Audit prüfen, bevor der Standort als marktreif gilt."
+    elif "device_review" in risk_flags:
+        primary_message = "Gebundene Geräte brauchen Operator-Review"
+        recommended_action = "Offene Trust-/Commercial-Hinweise in den gebundenen Geräten durcharbeiten."
+    elif "device_degraded" in risk_flags:
+        primary_message = "Gebundene Geräte zeigen degradierte Advisory-Signale"
+        recommended_action = "Warnungen beobachten und proaktiv vor dem nächsten Einsatz bereinigen."
+    else:
+        primary_message = "Lizenz, Kapazität und Geräteposture wirken betriebsbereit"
+        recommended_action = "Kein direkter Eingriff nötig; normal weiter überwachen."
+
+    return {
+        "computed_status": computed_status,
+        "device_count": device_count,
+        "max_devices": max_devices,
+        "occupancy_ratio": occupancy_ratio,
+        "capacity_state": capacity_state,
+        "renewal_days": days_to_end,
+        "posture_status": posture_state,
+        "posture_counts": posture_counts,
+        "action_bucket": action_bucket,
+        "risk_flags": risk_flags,
+        "primary_message": primary_message,
+        "recommended_action": recommended_action,
+    }
+
+
+def _build_license_portfolio_summary(licenses: list, posture_summary_by_license: dict[str, dict] | None = None, now: datetime | None = None) -> dict:
+    now = now or _utcnow()
+    posture_summary_by_license = posture_summary_by_license or {}
+    counts = {
+        "total": len(licenses),
+        "healthy": 0,
+        "watch": 0,
+        "attention": 0,
+        "urgent": 0,
+        "renewal_due": 0,
+        "in_grace": 0,
+        "activation_gap": 0,
+        "near_capacity": 0,
+        "full_or_over_capacity": 0,
+        "review_required": 0,
+        "blocked_devices": 0,
+    }
+    status_breakdown: dict[str, int] = defaultdict(int)
+    plan_breakdown: dict[str, int] = defaultdict(int)
+    portfolio_items = []
+
+    for lic in licenses:
+        readiness = _build_license_commercial_readiness(lic, posture_summary_by_license.get(lic.id), now)
+        counts[readiness["action_bucket"]] += 1
+        status_breakdown[readiness["computed_status"]] += 1
+        plan_breakdown[str(getattr(lic, "plan_type", None) or "unknown")] += 1
+        if "renewal_due" in readiness["risk_flags"]:
+            counts["renewal_due"] += 1
+        if "license_grace" in readiness["risk_flags"]:
+            counts["in_grace"] += 1
+        if "activation_gap" in readiness["risk_flags"]:
+            counts["activation_gap"] += 1
+        if readiness["capacity_state"] in {"near_capacity", "full", "over_capacity"}:
+            counts["near_capacity"] += 1
+        if readiness["capacity_state"] in {"full", "over_capacity"}:
+            counts["full_or_over_capacity"] += 1
+        if readiness["posture_status"] == "review_required":
+            counts["review_required"] += 1
+        if readiness["posture_status"] == "blocked":
+            counts["blocked_devices"] += 1
+
+        portfolio_items.append({
+            "license_id": lic.id,
+            "plan_type": getattr(lic, "plan_type", None),
+            "customer_id": getattr(lic, "customer_id", None),
+            "location_id": getattr(lic, "location_id", None),
+            "ends_at": lic.ends_at.isoformat() if getattr(lic, "ends_at", None) else None,
+            **readiness,
+        })
+
+    action_order = {"urgent": 0, "attention": 1, "watch": 2, "healthy": 3}
+    portfolio_items.sort(key=lambda item: (
+        action_order.get(item["action_bucket"], 9),
+        item["renewal_days"] if item["renewal_days"] is not None else 10**9,
+        -(item["occupancy_ratio"] or 0),
+        item["license_id"],
+    ))
+
+    return {
+        "counts": counts,
+        "status_breakdown": dict(status_breakdown),
+        "plan_breakdown": dict(plan_breakdown),
+        "focus_queues": {
+            "urgent": portfolio_items[:6],
+            "renewals": [
+                item for item in portfolio_items
+                if ("renewal_due" in item["risk_flags"] or "license_grace" in item["risk_flags"])
+                and "license_inactive" not in item["risk_flags"]
+            ][:6],
+            "activation_gaps": [item for item in portfolio_items if "activation_gap" in item["risk_flags"]][:6],
+            "capacity_pressure": [item for item in portfolio_items if item["capacity_state"] in {"near_capacity", "full", "over_capacity"}][:6],
+            "device_review": [
+                item for item in portfolio_items
+                if item["posture_status"] in {"review_required", "blocked"}
+                and "license_inactive" not in item["risk_flags"]
+            ][:6],
+        },
     }
 
 
@@ -3929,6 +4165,37 @@ def _remote_action_triage_priority(summary: dict) -> tuple:
     )
 
 
+def _remote_action_problem_scope_payload(
+    entries: list[dict],
+    *,
+    limit: int = 8,
+) -> list[dict]:
+    ranked = []
+    for entry in entries or []:
+        summary = entry.get("summary") or {}
+        counts = summary.get("counts") or {}
+        ranked.append({
+            **entry,
+            "problem_counts": {
+                "pending_review": counts.get("pending_approval") or 0,
+                "pending_delivery": counts.get("pending_delivery") or 0,
+                "expired": counts.get("expired") or 0,
+                "refused": counts.get("refused") or 0,
+                "failed": counts.get("finalized_failed") or 0,
+            },
+            "problem_score": (
+                ((counts.get("pending_approval") or 0) * 100)
+                + ((counts.get("pending_delivery") or 0) * 40)
+                + ((counts.get("expired") or 0) * 25)
+                + ((counts.get("refused") or 0) * 15)
+                + ((counts.get("finalized_failed") or 0) * 10)
+                + (counts.get("total") or 0)
+            ),
+        })
+    ranked.sort(key=lambda item: _remote_action_triage_priority(item.get("summary") or {}) + (-int(item.get("problem_score") or 0),))
+    return ranked[: max(1, min(limit, 24))]
+
+
 def _remote_action_queue_metrics(actions: list[RemoteAction]) -> dict:
     summary = _remote_action_summary_payload(actions)
     counts = summary.get("counts") or {}
@@ -4665,7 +4932,10 @@ async def get_remote_action_overview(
             if group_key == "customer" and customer is None:
                 continue
 
-            if group_key == "location":
+            if group_key == "device":
+                gid = device.id
+                name = device.device_name or device.id
+            elif group_key == "location":
                 gid = location.id
                 name = location.name
             elif group_key == "license":
@@ -4736,6 +5006,12 @@ async def get_remote_action_overview(
         "customer_summaries": build_grouped_summary("customer"),
         "location_summaries": build_grouped_summary("location"),
         "license_summaries": build_grouped_summary("license"),
+        "device_summaries": build_grouped_summary("device"),
+        "top_problem_scopes": _remote_action_problem_scope_payload([
+            *build_grouped_summary("location"),
+            *build_grouped_summary("license"),
+            *build_grouped_summary("device"),
+        ]),
         "recent_items": recent_items,
     }
 

@@ -4,6 +4,25 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.18] - 2026-04-27
+
+### Added
+- Added a commercial readiness model for licenses plus a portfolio summary API so operator and portal surfaces can rank renewal pressure, activation gaps, capacity strain, and blocked device posture from one backend read model.
+- Added targeted regression coverage for license portfolio summarization and remote-action problem-scope prioritization.
+
+### Improved
+- Expanded the operator dashboard, operator licenses view, portal dashboard, portal layout, and license detail flows so license readiness and drill-ins are consistent across operator and portal surfaces.
+- Improved operator audit and remote-action triage flows with richer drill-down, scoped filtering, saved views, hotspot/problem-scope surfacing, and clearer escalation ordering.
+- Tightened backend prioritization so remote-action hotspot ranking prefers pending-review pressure ahead of pure delivery volume, matching the intended operator triage model.
+
+### Fixed
+- Fixed an operator licenses runtime coherence bug where the route-surface prefix was read before initialization, which would have broken the page at runtime despite the feature work being present.
+
+### Validation
+- Focused backend regression suite passed (`5 passed`): `tests/test_license_portfolio_summary.py`, `tests/test_remote_action_operator_wave.py`.
+- Python compile sanity passed for `central_server/server.py`.
+- Frontend production build passed (`cd frontend && npm run build`).
+
 ## [4.4.17] - 2026-04-27
 
 ### Added

@@ -19,6 +19,12 @@ import {
   ExternalLink,
   Eye,
   Search,
+  Bookmark,
+  BookmarkPlus,
+  Trash2,
+  Siren,
+  ListFilter,
+  ScrollText,
 } from 'lucide-react';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import {
@@ -68,6 +74,7 @@ const SORT_OPTIONS = [
 ];
 
 const PAGE_SIZE_OPTIONS = [20, 25, 50, 100];
+const SAVED_VIEW_STORAGE_KEY = 'operator_remote_action_saved_views_v1';
 
 function formatDateTime(ts) {
   if (!ts) return '—';
@@ -91,6 +98,24 @@ function timeAgo(ts) {
   if (diff < 3600) return `vor ${Math.floor(diff / 60)} Min.`;
   if (diff < 86400) return `vor ${Math.floor(diff / 3600)} Std.`;
   return `vor ${Math.floor(diff / 86400)} Tagen`;
+}
+
+function formatCountMap(map) {
+  return Object.entries(map || {}).map(([key, value]) => `${key}: ${value}`).join(' · ') || '—';
+}
+
+function getSavedViews() {
+  try {
+    const raw = localStorage.getItem(SAVED_VIEW_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveSavedViews(views) {
+  localStorage.setItem(SAVED_VIEW_STORAGE_KEY, JSON.stringify(views));
 }
 
 function MetricCard({ icon: Icon, label, value, sub, tone = 'zinc' }) {
@@ -159,22 +184,41 @@ function actionPriority(item) {
   return 7;
 }
 
+function actionAgeScore(item) {
+  const ts = item?.issued_at ? new Date(item.issued_at).getTime() : 0;
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+function getActionPriorityBadge(item) {
+  if (!item) return null;
+  if (item.approval_state === 'pending' || item.request_state === 'pending_review') {
+    const ageHours = Math.max(0, Math.round((Date.now() - actionAgeScore(item)) / 3600000));
+    if (ageHours >= 24) return { label: 'kritisch alt', cls: 'bg-red-500/10 text-red-300 border-red-500/20' };
+    if (ageHours >= 4) return { label: 'heute prüfen', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/20' };
+    return { label: 'prio review', cls: 'bg-amber-500/10 text-amber-300 border-amber-500/20' };
+  }
+  if (item.request_state === 'delivered') return { label: 'warte Gerät', cls: 'bg-blue-500/10 text-blue-300 border-blue-500/20' };
+  if (item.outcome_code === 'expired' || item.request_state === 'expired') return { label: 'expired', cls: 'bg-orange-500/10 text-orange-300 border-orange-500/20' };
+  if (item.outcome_code === 'failed' || item.request_state === 'failed') return { label: 'incident', cls: 'bg-red-500/10 text-red-300 border-red-500/20' };
+  return null;
+}
+
 function sortItems(items, sortBy) {
   const list = [...(items || [])];
   list.sort((a, b) => {
-    if (sortBy === 'issued_asc') return new Date(a.issued_at || 0).getTime() - new Date(b.issued_at || 0).getTime();
+    if (sortBy === 'issued_asc') return actionAgeScore(a) - actionAgeScore(b);
     if (sortBy === 'finalized_desc') return new Date(b.finalized_at || b.issued_at || 0).getTime() - new Date(a.finalized_at || a.issued_at || 0).getTime();
     if (sortBy === 'state_priority') {
       const prio = actionPriority(a) - actionPriority(b);
       if (prio !== 0) return prio;
-      return new Date(b.issued_at || 0).getTime() - new Date(a.issued_at || 0).getTime();
+      return actionAgeScore(a) - actionAgeScore(b);
     }
     if (sortBy === 'device_asc') {
       const nameA = String(a.scope?.device_name || a.device_id || '').toLowerCase();
       const nameB = String(b.scope?.device_name || b.device_id || '').toLowerCase();
-      return nameA.localeCompare(nameB) || (new Date(b.issued_at || 0).getTime() - new Date(a.issued_at || 0).getTime());
+      return nameA.localeCompare(nameB) || (actionAgeScore(b) - actionAgeScore(a));
     }
-    return new Date(b.issued_at || 0).getTime() - new Date(a.issued_at || 0).getTime();
+    return actionAgeScore(b) - actionAgeScore(a);
   });
   return list;
 }
@@ -205,9 +249,17 @@ function PageControls({ page, hasMore, returned, pageSize, onPrev, onNext, label
   );
 }
 
+function ScopeActionButton({ onClick, children }) {
+  return (
+    <button onClick={onClick} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-indigo-300 hover:bg-indigo-500/10">
+      {children}
+    </button>
+  );
+}
+
 export default function OperatorRemoteActions() {
   const navigate = useNavigate();
-  const { apiBase, authHeaders, scope, canReviewRemoteActions } = useCentralAuth();
+  const { apiBase, authHeaders, scope, canReviewRemoteActions, user } = useCentralAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [overview, setOverview] = useState(null);
   const [reviewQueue, setReviewQueue] = useState(null);
@@ -217,6 +269,7 @@ export default function OperatorRemoteActions() {
   const [error, setError] = useState(null);
   const [reviewingId, setReviewingId] = useState(null);
   const [selectedAction, setSelectedAction] = useState(null);
+  const [savedViews, setSavedViews] = useState(() => getSavedViews());
 
   const filters = useMemo(() => ({
     request_state: searchParams.get('request_state') || '',
@@ -232,6 +285,37 @@ export default function OperatorRemoteActions() {
     history_page: Math.max(1, Number(searchParams.get('history_page') || '1')),
     page_size: Math.max(1, Number(searchParams.get('page_size') || '20')),
   }), [searchParams]);
+
+  const saveCurrentView = useCallback(() => {
+    const name = window.prompt('Name für diese Ansicht?', 'Offene Reviews');
+    if (!name) return;
+    const nextView = {
+      id: `${Date.now()}`,
+      name: name.trim(),
+      filters,
+      owner: user?.username || 'operator',
+      created_at: new Date().toISOString(),
+    };
+    const next = [nextView, ...savedViews.filter((entry) => entry.name !== nextView.name)].slice(0, 12);
+    setSavedViews(next);
+    saveSavedViews(next);
+    toast.success('Ansicht gespeichert');
+  }, [filters, savedViews, user?.username]);
+
+  const applySavedView = useCallback((view) => {
+    const next = new URLSearchParams();
+    Object.entries(view?.filters || {}).forEach(([key, value]) => {
+      if (value === '' || value === null || value === undefined || value === false) return;
+      next.set(key, String(value));
+    });
+    setSearchParams(next);
+  }, [setSearchParams]);
+
+  const deleteSavedView = useCallback((id) => {
+    const next = savedViews.filter((entry) => entry.id !== id);
+    setSavedViews(next);
+    saveSavedViews(next);
+  }, [savedViews]);
 
   const setParamState = useCallback((updates, options = {}) => {
     const next = new URLSearchParams(searchParams);
@@ -309,7 +393,6 @@ export default function OperatorRemoteActions() {
   }, [apiBase, authHeaders, overviewParams, reviewParams, scope.deviceId, filters.device_id, filters.page_size]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
-
   useEffect(() => {
     const interval = setInterval(() => fetchAll({ silent: true }), 30000);
     return () => clearInterval(interval);
@@ -317,12 +400,8 @@ export default function OperatorRemoteActions() {
 
   const handleReview = async (item, decision) => {
     if (!canReviewRemoteActions) return;
-    const note = window.prompt(
-      decision === 'approve' ? 'Freigabe-Notiz (optional)' : 'Ablehnungsgrund (optional)',
-      ''
-    );
+    const note = window.prompt(decision === 'approve' ? 'Freigabe-Notiz (optional)' : 'Ablehnungsgrund (optional)', '');
     if (note === null) return;
-
     setReviewingId(item.id);
     try {
       await axios.post(
@@ -349,6 +428,17 @@ export default function OperatorRemoteActions() {
     next.set('history_page', '1');
     navigate(`/operator/remote-actions?${next.toString()}`);
   }, [navigate, searchParams]);
+
+  const openAuditDrilldown = useCallback((item) => {
+    const next = new URLSearchParams();
+    next.set('limit', '150');
+    next.set('action_prefix', 'remote_action');
+    if (item?.device_id) next.set('device_id', item.device_id);
+    if (item?.scope?.location_id) next.set('location_id', item.scope.location_id);
+    if (item?.scope?.customer_id) next.set('customer_id', item.scope.customer_id);
+    if (item?.scope?.license_id) next.set('license_id', item.scope.license_id);
+    navigate(`/operator/audit?${next.toString()}`);
+  }, [navigate]);
 
   if (loading) {
     return <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" /></div>;
@@ -383,6 +473,7 @@ export default function OperatorRemoteActions() {
             : scope.customerId
               ? 'Aktueller Kunden-Scope'
               : 'Alle sichtbaren Standorte';
+  const topProblemScopes = overview?.top_problem_scopes || [];
 
   return (
     <>
@@ -392,38 +483,54 @@ export default function OperatorRemoteActions() {
             <h1 className="text-xl font-bold text-white">Remote Actions</h1>
             <p className="text-sm text-zinc-500 mt-0.5">Triage, Review und Verlauf für zentrale Fernaktionen</p>
           </div>
-          <button
-            onClick={() => fetchAll({ silent: true })}
-            disabled={refreshing}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors text-sm"
-            data-testid="remote-actions-refresh-btn"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-            Aktualisieren
-          </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={saveCurrentView} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-300 hover:bg-zinc-700 text-sm">
+              <BookmarkPlus className="w-3.5 h-3.5" /> Ansicht speichern
+            </button>
+            <button
+              onClick={() => fetchAll({ silent: true })}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors text-sm"
+              data-testid="remote-actions-refresh-btn"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+              Aktualisieren
+            </button>
+          </div>
         </div>
 
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <p className="text-xs uppercase tracking-wider text-zinc-500">Aktiver Scope</p>
-            <p className="text-sm text-zinc-200 mt-1">{activeScopeLabel}</p>
+        <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_0.8fr] gap-4">
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-zinc-500">Aktiver Scope</p>
+              <p className="text-sm text-zinc-200 mt-1">{activeScopeLabel}</p>
+            </div>
+            {(filters.customer_id || filters.location_id || filters.device_id || filters.license_id || filters.request_state || filters.approval_state || filters.action_type || !filters.include_expired) && (
+              <button onClick={() => setSearchParams(new URLSearchParams())} className="px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-zinc-800" data-testid="remote-actions-clear-all">
+                Alle Deep-Links & Filter zurücksetzen
+              </button>
+            )}
           </div>
-          {(filters.customer_id || filters.location_id || filters.device_id || filters.license_id || filters.request_state || filters.approval_state || filters.action_type || !filters.include_expired) && (
-            <button
-              onClick={() => setSearchParams(new URLSearchParams())}
-              className="px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-zinc-800"
-              data-testid="remote-actions-clear-all"
-            >
-              Alle Deep-Links & Filter zurücksetzen
-            </button>
-          )}
+
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-zinc-500 mb-2"><Bookmark className="w-3.5 h-3.5" /> Gespeicherte Ansichten</div>
+            <div className="flex items-center gap-2 flex-wrap">
+              {savedViews.length === 0 && <span className="text-xs text-zinc-600">Noch keine Presets gespeichert.</span>}
+              {savedViews.map((view) => (
+                <div key={view.id} className="inline-flex items-center gap-1 rounded-lg border border-zinc-800 bg-zinc-950/50 pl-2.5 pr-1 py-1">
+                  <button onClick={() => applySavedView(view)} className="text-xs text-zinc-300 hover:text-white">{view.name}</button>
+                  <button onClick={() => deleteSavedView(view.id)} className="rounded p-1 text-zinc-500 hover:text-red-300 hover:bg-red-500/10"><Trash2 className="w-3 h-3" /></button>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <MetricCard icon={Clock3} label="Pending Review" value={summaryCounts.pending_approval ?? 0} sub="manuelle Entscheidungen" tone={(summaryCounts.pending_approval ?? 0) > 0 ? 'amber' : 'zinc'} />
           <MetricCard icon={Send} label="Pending Delivery" value={summaryCounts.pending_delivery ?? 0} sub="freigegeben, wartet auf Gerät" tone={(summaryCounts.pending_delivery ?? 0) > 0 ? 'blue' : 'zinc'} />
-          <MetricCard icon={CheckCircle2} label="Erfolgreich" value={summaryCounts.succeeded ?? 0} sub={`${summaryCounts.completed ?? 0} completed`} tone="emerald" />
-          <MetricCard icon={XCircle} label="Blockiert / Refused" value={(summaryCounts.refused ?? 0) + (summaryCounts.failed ?? 0) + (summaryCounts.expired ?? 0)} sub={`${summaryCounts.expired ?? 0} expired`} tone={(summaryCounts.refused ?? 0) + (summaryCounts.failed ?? 0) + (summaryCounts.expired ?? 0) > 0 ? 'red' : 'zinc'} />
+          <MetricCard icon={CheckCircle2} label="Erfolgreich" value={summaryCounts.finalized_success ?? 0} sub={`${summaryCounts.approved ?? 0} approved`} tone="emerald" />
+          <MetricCard icon={XCircle} label="Störungen" value={(summaryCounts.refused ?? 0) + (summaryCounts.finalized_failed ?? 0) + (summaryCounts.expired ?? 0)} sub={`${summaryCounts.expired ?? 0} expired`} tone={(summaryCounts.refused ?? 0) + (summaryCounts.finalized_failed ?? 0) + (summaryCounts.expired ?? 0) > 0 ? 'red' : 'zinc'} />
         </div>
 
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-3" data-testid="remote-actions-filters">
@@ -432,68 +539,33 @@ export default function OperatorRemoteActions() {
             <div className="flex items-center gap-2 flex-wrap">
               <div className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-500">
                 <ArrowUpDown className="w-3.5 h-3.5" />
-                <select
-                  value={filters.sort}
-                  onChange={(e) => setParamState({ sort: e.target.value })}
-                  className="bg-transparent text-zinc-300 outline-none"
-                  data-testid="remote-actions-sort"
-                >
+                <select value={filters.sort} onChange={(e) => setParamState({ sort: e.target.value })} className="bg-transparent text-zinc-300 outline-none" data-testid="remote-actions-sort">
                   {SORT_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                 </select>
               </div>
               <div className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 px-2.5 py-1.5 text-xs text-zinc-500">
-                <select
-                  value={filters.page_size}
-                  onChange={(e) => setParamState({ page_size: e.target.value })}
-                  className="bg-transparent text-zinc-300 outline-none"
-                  data-testid="remote-actions-page-size"
-                >
+                <select value={filters.page_size} onChange={(e) => setParamState({ page_size: e.target.value })} className="bg-transparent text-zinc-300 outline-none" data-testid="remote-actions-page-size">
                   {PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} / Seite</option>)}
                 </select>
               </div>
             </div>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={filters.request_state}
-              onChange={(e) => setParamState({ request_state: e.target.value })}
-              className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-300"
-              data-testid="remote-actions-filter-state"
-            >
+            <select value={filters.request_state} onChange={(e) => setParamState({ request_state: e.target.value })} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-300" data-testid="remote-actions-filter-state">
               {REQUEST_STATE_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
-            <select
-              value={filters.approval_state}
-              onChange={(e) => setParamState({ approval_state: e.target.value })}
-              className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-300"
-              data-testid="remote-actions-filter-approval"
-            >
+            <select value={filters.approval_state} onChange={(e) => setParamState({ approval_state: e.target.value })} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-300" data-testid="remote-actions-filter-approval">
               {APPROVAL_STATE_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
-            <select
-              value={filters.action_type}
-              onChange={(e) => setParamState({ action_type: e.target.value })}
-              className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-300"
-              data-testid="remote-actions-filter-type"
-            >
+            <select value={filters.action_type} onChange={(e) => setParamState({ action_type: e.target.value })} className="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-sm text-zinc-300" data-testid="remote-actions-filter-type">
               {ACTION_TYPE_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
             </select>
             <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-800 text-sm text-zinc-300">
-              <input
-                type="checkbox"
-                checked={filters.include_expired}
-                onChange={(e) => setParamState({ include_expired: e.target.checked ? 'true' : false })}
-                className="rounded border-zinc-700 bg-zinc-900"
-                data-testid="remote-actions-filter-include-expired"
-              />
+              <input type="checkbox" checked={filters.include_expired} onChange={(e) => setParamState({ include_expired: e.target.checked ? 'true' : false })} className="rounded border-zinc-700 bg-zinc-900" data-testid="remote-actions-filter-include-expired" />
               Expired einbeziehen
             </label>
             {(filters.request_state || filters.approval_state || filters.action_type || !filters.include_expired) && (
-              <button
-                onClick={() => setParamState({ request_state: '', approval_state: '', action_type: '', include_expired: 'true' })}
-                className="px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-zinc-800"
-                data-testid="remote-actions-clear-filters"
-              >
+              <button onClick={() => setParamState({ request_state: '', approval_state: '', action_type: '', include_expired: 'true' })} className="px-3 py-1.5 rounded-lg text-sm text-zinc-400 hover:text-white hover:bg-zinc-800" data-testid="remote-actions-clear-filters">
                 Zurücksetzen
               </button>
             )}
@@ -509,6 +581,45 @@ export default function OperatorRemoteActions() {
           )}
         </div>
 
+        {topProblemScopes.length > 0 && !(scope.deviceId || filters.device_id) && (
+          <section className="rounded-xl border border-zinc-800 overflow-hidden" data-testid="remote-actions-top-problem-scopes">
+            <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-900/60 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-white flex items-center gap-2"><Siren className="w-4 h-4 text-red-300" />Top Problem Scopes</h2>
+                <p className="text-xs text-zinc-500 mt-0.5">Priorisierte Problemräume über Standort, Lizenz und Gerät</p>
+              </div>
+              <span className="text-xs text-zinc-500">{topProblemScopes.length} priorisiert</span>
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3">
+              {topProblemScopes.slice(0, 6).map((scopeRow) => (
+                <div key={`${scopeRow.group_type}-${scopeRow.group_id}`} className="rounded-xl border border-zinc-800 bg-zinc-950/30 p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-zinc-500">{scopeRow.group_type}</p>
+                      <p className="text-sm font-medium text-white mt-1">{scopeRow.group_name}</p>
+                    </div>
+                    <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-xs text-red-300">Score {scopeRow.problem_score}</span>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 flex-wrap text-xs">
+                    <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-0.5 text-amber-300">Review {scopeRow.problem_counts?.pending_review ?? 0}</span>
+                    <span className="rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-blue-300">Delivery {scopeRow.problem_counts?.pending_delivery ?? 0}</span>
+                    <span className="rounded-full border border-orange-500/20 bg-orange-500/10 px-2 py-0.5 text-orange-300">Expired {scopeRow.problem_counts?.expired ?? 0}</span>
+                    <span className="rounded-full border border-red-500/20 bg-red-500/10 px-2 py-0.5 text-red-300">Refused/Failed {(scopeRow.problem_counts?.refused ?? 0) + (scopeRow.problem_counts?.failed ?? 0)}</span>
+                  </div>
+                  <div className="mt-3 flex items-center gap-2 flex-wrap">
+                    <ScopeActionButton onClick={() => openFilteredRemoteActions({ [`${scopeRow.group_type}_id`]: scopeRow.group_id, device_id: scopeRow.group_type === 'device' ? scopeRow.group_id : '', location_id: scopeRow.group_type === 'location' ? scopeRow.group_id : '', license_id: scopeRow.group_type === 'license' ? scopeRow.group_id : '', customer_id: scopeRow.group_type === 'customer' ? scopeRow.group_id : '' })}>
+                      Öffnen <ExternalLink className="w-3.5 h-3.5" />
+                    </ScopeActionButton>
+                    <ScopeActionButton onClick={() => navigate(`/operator/audit?action_prefix=remote_action&${scopeRow.group_type}_id=${scopeRow.group_id}`)}>
+                      Audit <ScrollText className="w-3.5 h-3.5" />
+                    </ScopeActionButton>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-5">
           <section className="rounded-xl border border-zinc-800 overflow-hidden" data-testid="remote-actions-review-queue">
             <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-900/60 flex items-center justify-between">
@@ -519,66 +630,46 @@ export default function OperatorRemoteActions() {
               <span className="text-xs text-zinc-500">{reviewWindow.returned || pendingItems.length} Einträge</span>
             </div>
             <div className="divide-y divide-zinc-800/60">
-              {pendingItems.length === 0 && (
-                <div className="p-6 text-center text-zinc-500 text-sm">Keine offenen Reviews im aktuellen Scope.</div>
-              )}
-              {pendingItems.map((item) => (
-                <div key={item.id} className="p-4 bg-zinc-950/30">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-medium text-white">{item.scope?.device_name || item.device_id?.slice(0, 8) || 'Gerät'}</p>
-                        <StatePill state={item.request_state} approvalState={item.approval_state} outcomeCode={item.outcome_code} />
+              {pendingItems.length === 0 && <div className="p-6 text-center text-zinc-500 text-sm">Keine offenen Reviews im aktuellen Scope.</div>}
+              {pendingItems.map((item) => {
+                const badge = getActionPriorityBadge(item);
+                return (
+                  <div key={item.id} className="p-4 bg-zinc-950/30">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium text-white">{item.scope?.device_name || item.device_id?.slice(0, 8) || 'Gerät'}</p>
+                          <StatePill state={item.request_state} approvalState={item.approval_state} outcomeCode={item.outcome_code} />
+                          {badge && <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${badge.cls}`}>{badge.label}</span>}
+                        </div>
+                        <p className="text-xs text-zinc-500 mt-1">{item.action_type} · von {item.issued_by || '—'} · {formatDateTime(item.issued_at)}</p>
+                        {item.scope?.location_name && <p className="text-xs text-zinc-600 mt-1">{item.scope.location_name}{item.scope?.customer_name ? ` · ${item.scope.customer_name}` : ''}</p>}
+                        {(item.result_message || item.outcome_detail || item.review_note) && <p className="text-xs text-zinc-400 mt-2 break-words">{item.review_note || item.result_message || item.outcome_detail}</p>}
                       </div>
-                      <p className="text-xs text-zinc-500 mt-1">{item.action_type} · von {item.issued_by || '—'} · {formatDateTime(item.issued_at)}</p>
-                      {item.scope?.location_name && <p className="text-xs text-zinc-600 mt-1">{item.scope.location_name}{item.scope?.customer_name ? ` · ${item.scope.customer_name}` : ''}</p>}
-                      {(item.result_message || item.outcome_detail || item.review_note) && (
-                        <p className="text-xs text-zinc-400 mt-2 break-words">{item.review_note || item.result_message || item.outcome_detail}</p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <button
-                        onClick={() => setSelectedAction(item)}
-                        className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
-                        data-testid={`inspect-remote-action-${item.id}`}
-                      >
-                        <Eye className="w-3.5 h-3.5" /> Details
-                      </button>
-                      {canReviewRemoteActions && (
-                        <>
-                          <button
-                            onClick={() => handleReview(item, 'approve')}
-                            disabled={reviewingId === item.id}
-                            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-60"
-                            data-testid={`approve-remote-action-${item.id}`}
-                          >
-                            <ShieldCheck className="w-3.5 h-3.5" /> Freigeben
-                          </button>
-                          <button
-                            onClick={() => handleReview(item, 'refuse')}
-                            disabled={reviewingId === item.id}
-                            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-60"
-                            data-testid={`refuse-remote-action-${item.id}`}
-                          >
-                            <ShieldX className="w-3.5 h-3.5" /> Ablehnen
-                          </button>
-                        </>
-                      )}
+                      <div className="flex items-center gap-2 flex-shrink-0 flex-wrap justify-end">
+                        <button onClick={() => setSelectedAction(item)} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700" data-testid={`inspect-remote-action-${item.id}`}>
+                          <Eye className="w-3.5 h-3.5" /> Details
+                        </button>
+                        <button onClick={() => openAuditDrilldown(item)} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700">
+                          <ScrollText className="w-3.5 h-3.5" /> Audit
+                        </button>
+                        {canReviewRemoteActions && (
+                          <>
+                            <button onClick={() => handleReview(item, 'approve')} disabled={reviewingId === item.id} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 disabled:opacity-60" data-testid={`approve-remote-action-${item.id}`}>
+                              <ShieldCheck className="w-3.5 h-3.5" /> Freigeben
+                            </button>
+                            <button onClick={() => handleReview(item, 'refuse')} disabled={reviewingId === item.id} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-60" data-testid={`refuse-remote-action-${item.id}`}>
+                              <ShieldX className="w-3.5 h-3.5" /> Ablehnen
+                            </button>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
-            <PageControls
-              page={filters.review_page}
-              hasMore={Boolean(reviewWindow.has_more)}
-              returned={reviewWindow.returned || pendingItems.length}
-              pageSize={filters.page_size}
-              onPrev={() => setParamState({ review_page: Math.max(1, filters.review_page - 1), history_page: filters.history_page }, { replace: true })}
-              onNext={() => setParamState({ review_page: filters.review_page + 1, history_page: filters.history_page }, { replace: true })}
-              label="Review Queue"
-              tidPrefix="remote-actions-review-page"
-            />
+            <PageControls page={filters.review_page} hasMore={Boolean(reviewWindow.has_more)} returned={reviewWindow.returned || pendingItems.length} pageSize={filters.page_size} onPrev={() => setParamState({ review_page: Math.max(1, filters.review_page - 1), history_page: filters.history_page }, { replace: true })} onNext={() => setParamState({ review_page: filters.review_page + 1, history_page: filters.history_page }, { replace: true })} label="Review Queue" tidPrefix="remote-actions-review-page" />
           </section>
 
           <section className="rounded-xl border border-zinc-800 overflow-hidden" data-testid="remote-actions-history">
@@ -590,60 +681,48 @@ export default function OperatorRemoteActions() {
               <span className="text-xs text-zinc-500">{historyWindow.returned || recentItems.length} sichtbar</span>
             </div>
             <div className="divide-y divide-zinc-800/60">
-              {recentItems.length === 0 && (
-                <div className="p-6 text-center text-zinc-500 text-sm">Noch keine Remote Actions im aktuellen Scope.</div>
-              )}
-              {recentItems.map((item) => (
-                <div key={item.id} className="p-4 bg-zinc-950/20">
-                  <div className="flex items-center justify-between gap-3 flex-wrap">
-                    <div>
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <p className="text-sm font-medium text-white">{item.action_type}</p>
-                        <StatePill state={item.request_state} approvalState={item.approval_state} outcomeCode={item.outcome_code} />
+              {recentItems.length === 0 && <div className="p-6 text-center text-zinc-500 text-sm">Noch keine Remote Actions im aktuellen Scope.</div>}
+              {recentItems.map((item) => {
+                const badge = getActionPriorityBadge(item);
+                return (
+                  <div key={item.id} className="p-4 bg-zinc-950/20">
+                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                      <div>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="text-sm font-medium text-white">{item.action_type}</p>
+                          <StatePill state={item.request_state} approvalState={item.approval_state} outcomeCode={item.outcome_code} />
+                          {badge && <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs ${badge.cls}`}>{badge.label}</span>}
+                        </div>
+                        <p className="text-xs text-zinc-400 mt-1">{item.scope?.device_name || item.device_id?.slice(0, 8) || 'Gerät'} · {item.scope?.location_name || 'ohne Standort'}</p>
+                        <p className="text-xs text-zinc-600 mt-1">Issued {timeAgo(item.issued_at)} · {item.issued_by || '—'}{item.reviewed_by ? ` · reviewed by ${item.reviewed_by}` : ''}</p>
+                        {(item.result_message || item.outcome_detail) && <p className="text-xs text-zinc-500 mt-2 break-words">{item.result_message || item.outcome_detail}</p>}
                       </div>
-                      <p className="text-xs text-zinc-400 mt-1">{item.scope?.device_name || item.device_id?.slice(0, 8) || 'Gerät'} · {item.scope?.location_name || 'ohne Standort'} </p>
-                      <p className="text-xs text-zinc-600 mt-1">Issued {timeAgo(item.issued_at)} · {item.issued_by || '—'}{item.reviewed_by ? ` · reviewed by ${item.reviewed_by}` : ''}</p>
-                      {(item.result_message || item.outcome_detail) && (
-                        <p className="text-xs text-zinc-500 mt-2 break-words">{item.result_message || item.outcome_detail}</p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="text-right text-xs text-zinc-600 min-w-[120px]">
-                        <div>{formatDateTime(item.issued_at)}</div>
-                        {item.finalized_at && <div className="mt-1">Finalisiert: {formatDateTime(item.finalized_at)}</div>}
+                      <div className="flex items-center gap-3">
+                        <div className="text-right text-xs text-zinc-600 min-w-[120px]">
+                          <div>{formatDateTime(item.issued_at)}</div>
+                          {item.finalized_at && <div className="mt-1">Finalisiert: {formatDateTime(item.finalized_at)}</div>}
+                        </div>
+                        <button onClick={() => setSelectedAction(item)} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700" data-testid={`history-remote-action-${item.id}`}>
+                          <Eye className="w-3.5 h-3.5" /> Details
+                        </button>
                       </div>
-                      <button
-                        onClick={() => setSelectedAction(item)}
-                        className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
-                        data-testid={`history-remote-action-${item.id}`}
-                      >
-                        <Eye className="w-3.5 h-3.5" /> Details
-                      </button>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
-            {!(scope.deviceId || filters.device_id) && (
-              <PageControls
-                page={filters.history_page}
-                hasMore={Boolean(historyWindow.has_more)}
-                returned={historyWindow.returned || recentItems.length}
-                pageSize={filters.page_size}
-                onPrev={() => setParamState({ history_page: Math.max(1, filters.history_page - 1), review_page: filters.review_page }, { replace: true })}
-                onNext={() => setParamState({ history_page: filters.history_page + 1, review_page: filters.review_page }, { replace: true })}
-                label="History"
-                tidPrefix="remote-actions-history-page"
-              />
-            )}
+            {!(scope.deviceId || filters.device_id) && <PageControls page={filters.history_page} hasMore={Boolean(historyWindow.has_more)} returned={historyWindow.returned || recentItems.length} pageSize={filters.page_size} onPrev={() => setParamState({ history_page: Math.max(1, filters.history_page - 1), review_page: filters.review_page }, { replace: true })} onNext={() => setParamState({ history_page: filters.history_page + 1, review_page: filters.review_page }, { replace: true })} label="History" tidPrefix="remote-actions-history-page" />}
           </section>
         </div>
 
         {overview?.location_summaries?.length > 0 && !(scope.deviceId || filters.device_id) && (
           <section className="rounded-xl border border-zinc-800 overflow-hidden" data-testid="remote-actions-location-summary">
-            <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-900/60">
-              <h2 className="text-sm font-semibold text-white">Triage nach Standort</h2>
-              <p className="text-xs text-zinc-500 mt-0.5">Wo gerade Approval- oder Delivery-Druck entsteht</p>
+            <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-900/60 flex items-center justify-between">
+              <div>
+                <h2 className="text-sm font-semibold text-white">Triage nach Standort</h2>
+                <p className="text-xs text-zinc-500 mt-0.5">Wo gerade Approval- oder Delivery-Druck entsteht</p>
+              </div>
+              <ListFilter className="w-4 h-4 text-zinc-500" />
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -666,10 +745,7 @@ export default function OperatorRemoteActions() {
                       <td className="px-4 py-2.5">{row.summary?.counts?.expired ?? 0}</td>
                       <td className="px-4 py-2.5">{row.summary?.counts?.refused ?? 0}</td>
                       <td className="px-4 py-2.5 text-right">
-                        <button
-                          onClick={() => openFilteredRemoteActions({ location_id: row.group_id, device_id: '', license_id: '' })}
-                          className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-indigo-300 hover:bg-indigo-500/10"
-                        >
+                        <button onClick={() => openFilteredRemoteActions({ location_id: row.group_id, device_id: '', license_id: '' })} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-indigo-300 hover:bg-indigo-500/10">
                           Öffnen <ExternalLink className="w-3.5 h-3.5" />
                         </button>
                       </td>
@@ -689,9 +765,7 @@ export default function OperatorRemoteActions() {
               {selectedAction?.action_type || 'Remote Action'}
               <StatePill state={selectedAction?.request_state} approvalState={selectedAction?.approval_state} outcomeCode={selectedAction?.outcome_code} />
             </DialogTitle>
-            <DialogDescription className="text-zinc-500">
-              Scope, Lifecycle und Audit-Metadaten für diese Aktion.
-            </DialogDescription>
+            <DialogDescription className="text-zinc-500">Scope, Lifecycle und Audit-Metadaten für diese Aktion.</DialogDescription>
           </DialogHeader>
           {selectedAction && (
             <div className="space-y-4">
@@ -710,7 +784,17 @@ export default function OperatorRemoteActions() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
                 <DetailField label="Approval State" value={selectedAction.approval_state || '—'} />
                 <DetailField label="Outcome Code" value={selectedAction.outcome_code || '—'} />
-                <DetailField label="Risk" value={selectedAction.risk_level || selectedAction.detail_level || '—'} />
+                <DetailField label="Request States" value={formatCountMap({ request_state: selectedAction.request_state || '—' })} />
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button onClick={() => openAuditDrilldown(selectedAction)} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700">
+                  <ScrollText className="w-3.5 h-3.5" /> Audit-Drilldown öffnen
+                </button>
+                {selectedAction.scope?.device_id && (
+                  <button onClick={() => openFilteredRemoteActions({ device_id: selectedAction.scope.device_id, location_id: '', customer_id: '', license_id: selectedAction.scope?.license_id || '' })} className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700">
+                    <ExternalLink className="w-3.5 h-3.5" /> Gerät fokussieren
+                  </button>
+                )}
               </div>
               {(selectedAction.request_note || selectedAction.review_note || selectedAction.result_message || selectedAction.outcome_detail) && (
                 <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 space-y-3 text-sm">

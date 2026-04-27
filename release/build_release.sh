@@ -305,7 +305,9 @@ rsync -a \
     --exclude='.env' --exclude='*.sqlite*' --exclude='build' \
     --exclude='data/' --exclude='logs/' --exclude='.git' \
     --exclude='.emergent' --exclude='release/build' \
-    --exclude='test_reports/' --exclude='test_result.md' \
+    --exclude='.venv' --exclude='.pytest_cache' \
+    --exclude='test_reports/' --exclude='test_result.md' --exclude='test-results/' \
+    --exclude='.tmp_wave11_validation_manual' --exclude='.tmp_wave12_validation' \
     --exclude='memory/' \
     "${APP_DIR}/" "${SRC_DIR}/"
 

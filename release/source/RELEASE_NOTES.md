@@ -1,75 +1,68 @@
-# Darts Kiosk — Release Notes v4.4.17
+# Darts Kiosk — Release Notes v4.4.18
 
-## Central / Operator hardening and release-grade workflow maturity
+## Commercial/operator coherence wave after 4.4.17
 
-Darts Kiosk 4.4.17 is a central/operator release.
-This wave tightens what central is actually willing to do remotely, makes approval and audit handling much more explicit, and gives operators a clearer surface for seeing trust/commercial posture without pretending those advisory signals are local enforcement.
+Darts Kiosk 4.4.18 is the cleanup-and-ship pass for the commercial/operator work that landed after 4.4.17.
 
-In short: less ambiguity, better reviewability, and fewer ways for the operator UI to drift away from the real central policy.
+This release is not about another feature detour.
+It is about turning several related central/operator improvements into one coherent release candidate that operators can actually trust in the field.
 
 ## What changed
 
-### 1. Remote actions are now governed by an explicit central policy
-The release introduces a dedicated remote-action policy layer for central.
-That policy now defines:
-- the action catalog that is actually shippable
-- which actions require approval
-- which legacy/high-risk actions are intentionally blocked
-- expiry behavior and delivery guards
+### 1. License readiness is now a first-class operator signal
+Central now builds a commercial-readiness model per license and a portfolio summary across the scoped license set.
+That model combines:
+- computed license status
+- renewal timing / grace pressure
+- activation gaps
+- capacity usage
+- bound-device advisory posture
 
-This matters because remote execution should be boringly predictable.
-If the UI offers actions central no longer accepts, that is not flexibility — that is a support bug waiting to happen.
+The result is a practical operator view of which licenses are healthy, which need watching, and which need action now.
 
-### 2. Approval, review, and audit flow grew up
-Remote actions now carry richer lifecycle state instead of only a thin pending/acked model.
-The central side now tracks request, approval, delivery, finalization, reviewer metadata, and outcome signals more explicitly.
+### 2. Dashboard, portfolio, and detail views now tell the same story
+The operator dashboard, operator licenses page, portal dashboard, portal layout, and license detail flows were aligned so they all point at the same backend read model.
 
-That gives operators and reviewers a much clearer answer to questions like:
-- what is waiting for approval
-- what was refused
-- what was delivered
-- what expired
-- who reviewed it and why
+That matters because commercial workflows get messy fast when summary cards, list views, and drill-ins each invent their own logic.
+This release removes that drift.
 
-### 3. Advisory trust/commercial posture is visible where operators actually work
-This version adds a central advisory posture rollup that combines:
-- trust status
-- credential state
-- lease state
-- license state
-- replacement/lifecycle findings
+### 3. Remote-action triage is more honest about urgency
+Operator remote-action triage now exposes stronger hotspot/problem-scope summaries, better audit drill-down, and prioritization that favors pending-review pressure before pure delivery backlog.
 
-Those signals are then surfaced into operator-facing views so staff can spot degraded or blocked posture faster.
-Important nuance: this is intentionally advisory/read-only central posture, not a surprise local enforcement switch.
+That is the correct tradeoff.
+A queue waiting on human approval is usually the real operator bottleneck; raw volume alone should not outrank it.
 
-### 4. The operator surface is more coherent
-The operator app now has stronger auth/session handling and a dedicated Remote Actions page.
-Dashboard/layout/device/license surfaces were aligned so the operator experience reflects the tightened central policy rather than stale assumptions.
-
-That includes making blocked board/session actions visible for history/audit context without falsely suggesting they remain executable.
+### 4. One runtime bug was caught before it escaped
+During release stabilization, the operator licenses surface was found reading its route prefix before initialization.
+That would have been an annoying “looks finished, breaks on load” bug.
+It is fixed in this release candidate.
 
 ## Why this matters
 
-This release is mostly about operational trust.
-When a system can issue remote actions, show posture, and mediate approvals, the worst possible state is half-consistent behavior where backend policy, audit trail, and UI vocabulary disagree.
+4.4.18 is the version where the post-4.4.17 commercial/operator work stops feeling like a stack of related changes and starts behaving like a release.
 
-Version 4.4.17 narrows that gap substantially.
-It is a safer and more honest release: central does what it says, operators see what is really true, and the release artifacts match that behavior.
+The backend summaries, operator dashboards, portal views, audit drill-ins, and triage ordering now line up.
+That does not make the product magically finished forever, but it does make this wave coherent enough to ship without squinting.
 
 ## Validation performed for this release
 
 Executed successfully:
 
 ```bash
-./.venv/bin/python -m pytest backend/tests/test_central_security_hardening.py -q
-./.venv/bin/python -m compileall central_server backend
+./.venv/bin/pytest tests/test_license_portfolio_summary.py tests/test_remote_action_operator_wave.py
+python3 -m py_compile central_server/server.py
 cd frontend && npm run build
-cd .. && bash release/build_release.sh
 ```
 
 Observed result:
-- focused backend central/operator regression suite passed (`82 passed`)
-- Python compile sanity passed for `central_server` and `backend`
+- focused backend regressions passed (`5 passed`)
+- Python compile sanity passed for `central_server/server.py`
 - frontend production build passed cleanly
-- release artifacts were rebuilt for `v4.4.17`
-- release packages are ready for Windows, Linux, and Source distribution
+
+## Release readiness
+
+Recommendation: release candidate is ready for the post-4.4.17 commercial/operator wave.
+
+Known boundary:
+- this stabilization pass did not rebuild packaged release artifacts or intentionally touch `data/db.sqlite`
+- broader end-to-end/operator acceptance would still be useful if a staging environment is available
