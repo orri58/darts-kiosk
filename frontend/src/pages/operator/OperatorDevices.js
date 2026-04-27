@@ -1,7 +1,7 @@
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import { useCentralData } from '../../hooks/useCentralData';
 import { useNavigate } from 'react-router-dom';
-import { Monitor, Wifi, WifiOff, Ban, CheckCircle, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Monitor, Wifi, WifiOff, Ban, CheckCircle, AlertTriangle, ExternalLink, KeyRound } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
 
@@ -41,6 +41,7 @@ export default function OperatorDevices() {
               <th className="px-4 py-2.5 font-medium">Gerät</th>
               <th className="px-4 py-2.5 font-medium">Install-ID</th>
               <th className="px-4 py-2.5 font-medium">Binding</th>
+              <th className="px-4 py-2.5 font-medium">Lizenz</th>
               <th className="px-4 py-2.5 font-medium">Letzter Sync</th>
               <th className="px-4 py-2.5 font-medium">Syncs</th>
               <th className="px-4 py-2.5 font-medium">Geräte-Status</th>
@@ -58,12 +59,31 @@ export default function OperatorDevices() {
                       ? <span className="inline-flex items-center gap-1.5 text-emerald-400 text-xs"><Wifi className="w-3.5 h-3.5" /> Online</span>
                       : <span className="inline-flex items-center gap-1.5 text-zinc-500 text-xs"><WifiOff className="w-3.5 h-3.5" /> Offline</span>}
                   </td>
-                  <td className="px-4 py-2.5 font-medium">{d.device_name || d.id.slice(0, 8)}</td>
+                  <td className="px-4 py-2.5 font-medium">
+                    <button
+                      onClick={() => navigate(`/operator/devices/${d.id}`)}
+                      className="hover:text-white hover:underline"
+                    >
+                      {d.device_name || d.id.slice(0, 8)}
+                    </button>
+                  </td>
                   <td className="px-4 py-2.5 text-xs font-mono text-zinc-400">{d.install_id ? d.install_id.slice(0, 12) + '...' : '—'}</td>
                   <td className="px-4 py-2.5">
                     <span className={`text-xs px-2 py-0.5 rounded-full ${d.binding_status === 'bound' ? 'bg-emerald-500/10 text-emerald-400' : d.binding_status === 'mismatch' ? 'bg-orange-500/10 text-orange-400' : 'bg-zinc-700 text-zinc-400'}`}>
                       {d.binding_status || '—'}
                     </span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {d.license_id ? (
+                      <button
+                        onClick={() => navigate(`/operator/licenses/${d.license_id}?intent=devices`)}
+                        className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+                      >
+                        <KeyRound className="w-3.5 h-3.5" /> {d.license_id.slice(0, 8)}...
+                      </button>
+                    ) : (
+                      <span className="text-xs text-zinc-500">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 text-xs text-zinc-400">{d.last_sync_at ? new Date(d.last_sync_at).toLocaleString('de-DE') : 'Nie'}</td>
                   <td className="px-4 py-2.5 text-zinc-400">{d.sync_count || 0}</td>

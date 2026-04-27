@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import axios from 'axios';
 import { toast } from 'sonner';
@@ -65,6 +65,16 @@ function postureLabel(value) {
     degraded: 'Degraded',
     review_required: 'Review',
     blocked: 'Blocked',
+  }[value] || value || '—';
+}
+
+function tokenStateLabel(value) {
+  return {
+    active: 'Token bereit',
+    consumed: 'Token verbraucht',
+    expired: 'Token abgelaufen',
+    revoked: 'Token widerrufen',
+    missing: 'Kein Token',
   }[value] || value || '—';
 }
 
@@ -183,7 +193,7 @@ function TokenSection({ token, rawToken, onRegenerate, loading, tokenHistory, de
 
       <div className="bg-zinc-950 border border-zinc-800 rounded-md p-3 flex items-center justify-between mb-3">
         <code data-testid="token-display" className="text-sm font-mono text-emerald-400 select-all">
-          {revealed && rawToken ? rawToken : (displayToken ? `${displayToken}...` : '••••••••••••')}
+          {revealed && rawToken ? rawToken : (displayToken || '••••••••••••')}
         </code>
         <div className="flex items-center gap-2">
           {rawToken && (
@@ -215,7 +225,7 @@ function TokenSection({ token, rawToken, onRegenerate, loading, tokenHistory, de
   );
 }
 
-function DevicesSection({ devices, maxDevices, onUnbind, licenseStatus }) {
+function DevicesSection({ devices, maxDevices, onUnbind, onOpenDevice, licenseStatus }) {
   if (!devices || devices.length === 0) {
     return (
       <div data-testid="devices-empty-state" className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5">
@@ -249,7 +259,7 @@ function DevicesSection({ devices, maxDevices, onUnbind, licenseStatus }) {
                     ? <Wifi className="w-4 h-4 text-amber-400" />
                     : <WifiOff className="w-4 h-4 text-zinc-600" />}
                 <div>
-                  <span className="text-zinc-200 text-sm font-medium">{dev.device_name}</span>
+                  <button onClick={() => onOpenDevice?.(dev.id)} className="text-zinc-200 text-sm font-medium hover:text-white hover:underline">{dev.device_name}</button>
                   <span className="text-zinc-600 text-xs ml-2">{dev.id.slice(0, 8)}...</span>
                 </div>
               </div>
@@ -277,12 +287,16 @@ export default function PortalLicenseDetail() {
   const { licenseId } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const { apiBase, authHeaders, canManage } = useCentralAuth();
+  const [searchParams] = useSearchParams();
+  const { apiBase, authHeaders, canManage, canReviewRemoteActions } = useCentralAuth();
   const [lic, setLic] = useState(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(null);
-  const [rawToken, setRawToken] = useState(null);
+  const [rawToken, setRawToken] = useState(location.state?.rawToken || null);
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionFeedback, setActionFeedback] = useState(location.state?.actionFeedback || null);
+  const intent = searchParams.get('intent') || '';
+  const surfacePrefix = location.pathname.startsWith('/operator') ? '/operator' : '/portal';
 
   const classifyError = (err) => {
     const status = err?.response?.status;
@@ -322,6 +336,13 @@ export default function PortalLicenseDetail() {
     try {
       const res = await axios.post(`${apiBase}/licensing/licenses/${licenseId}/regenerate-token`, {}, { headers: authHeaders });
       setRawToken(res.data.raw_token);
+      setActionFeedback({
+        tone: 'success',
+        title: 'Frischer Token erstellt',
+        message: res.data.revoked_count > 0
+          ? `${res.data.revoked_count} alte(r) Token widerrufen. Nur noch den neuen Token am Gerät verwenden.`
+          : 'Nur noch den neuen Token am Gerät verwenden.',
+      });
       toast.success(res.data.revoked_count > 0 ? `Neuer Token erstellt (${res.data.revoked_count} alte widerrufen)` : 'Token erstellt');
       fetchDetail();
     } catch (err) {
@@ -336,6 +357,13 @@ export default function PortalLicenseDetail() {
     try {
       const res = await axios.get(`${apiBase}/licensing/licenses/${licenseId}/token`, { headers: authHeaders });
       if (res.data.raw_token) setRawToken(res.data.raw_token);
+      setActionFeedback({
+        tone: 'success',
+        title: res.data.exists ? 'Aktiver Token bereit' : 'Token erstellt',
+        message: res.data.exists
+          ? 'Den bestehenden Token jetzt am Gerät verwenden oder bei Unsicherheit direkt neu ausstellen.'
+          : 'Nächster Schritt: Token am Gerät eingeben und die Registrierung abschließen.',
+      });
       if (!res.data.exists) toast.success('Token erstellt');
       fetchDetail();
     } catch (err) {
@@ -356,6 +384,51 @@ export default function PortalLicenseDetail() {
     }
   };
 
+  const runSuggestedAction = async (action) => {
+    if (!action) return;
+    const execution = action.execution || {};
+
+    if (execution.mode === 'direct' && execution.action === 'ensure_activation_token' && canReviewRemoteActions) {
+      setActionLoading(true);
+      try {
+        const res = await axios.get(`${apiBase}/licensing/licenses/${licenseId}/token`, { headers: authHeaders });
+        const nextRawToken = res.data.raw_token || null;
+        if (nextRawToken) setRawToken(nextRawToken);
+        setActionFeedback({
+          tone: 'success',
+          title: res.data.exists ? 'Aktiver Token bereit' : 'Token erstellt',
+          message: res.data.exists
+            ? 'Den bestehenden Token jetzt am Gerät verwenden oder bei Unsicherheit direkt neu ausstellen.'
+            : 'Nächster Schritt: Token am Gerät eingeben und die Registrierung abschließen.',
+        });
+        toast.success(res.data.exists ? 'Aktiver Token bereit' : 'Token erstellt');
+        await fetchDetail();
+      } catch (err) {
+        toast.error(err.response?.data?.detail || 'Fehler');
+      } finally {
+        setActionLoading(false);
+      }
+      return;
+    }
+
+    if (execution.mode === 'direct' && execution.action === 'regenerate_activation_token' && canReviewRemoteActions) {
+      await handleRegenerate();
+      return;
+    }
+
+    if (execution.mode === 'direct' && execution.action === 'reactivate_license' && canManage && st === 'deactivated') {
+      await handleStatusChange('activate');
+      return;
+    }
+
+    if (execution.target === 'remote_actions' && isOperatorSurface) {
+      navigate(remoteActionsPath);
+      return;
+    }
+
+    navigate(`${location.pathname}?intent=${encodeURIComponent(action.intent || '')}`);
+  };
+
   const handleStatusChange = async (action) => {
     const labels = { deactivate: 'deaktivieren', archive: 'archivieren', activate: 'reaktivieren' };
     if (!window.confirm(`Lizenz wirklich ${labels[action]}?`)) return;
@@ -363,6 +436,11 @@ export default function PortalLicenseDetail() {
     try {
       if (action === 'activate') {
         await axios.put(`${apiBase}/licensing/licenses/${licenseId}`, { status: 'active' }, { headers: authHeaders });
+        setActionFeedback({
+          tone: 'success',
+          title: 'Lizenz wieder aktiv',
+          message: 'Wenn der Standort noch kein Gerät hat, direkt den Aktivierungstoken prüfen oder neu ausstellen.',
+        });
       } else {
         await axios.delete(`${apiBase}/licensing/licenses/${licenseId}?action=${action}`, { headers: authHeaders });
       }
@@ -404,6 +482,8 @@ export default function PortalLicenseDetail() {
   const isOperatorSurface = location.pathname.startsWith('/operator');
   const listPath = isOperatorSurface ? '/operator/licenses' : '/portal/licenses';
   const remoteActionsPath = `/operator/remote-actions?license_id=${encodeURIComponent(licenseId)}`;
+  const suggestedActions = readiness.suggested_actions || [];
+  const primaryAction = suggestedActions[0];
   const pressureTone = readiness.action_bucket === 'urgent'
     ? 'red'
     : readiness.action_bucket === 'attention'
@@ -441,6 +521,16 @@ export default function PortalLicenseDetail() {
             <p className="mt-1 text-sm text-zinc-400 max-w-2xl">{readiness.recommended_action || 'Kein direkter Eingriff nötig.'}</p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            {primaryAction?.execution?.mode === 'direct' && (
+              <Button size="sm" onClick={() => runSuggestedAction(primaryAction)} disabled={actionLoading} className="bg-emerald-600 hover:bg-emerald-700">
+                {primaryAction.type === 'reactivate_license' ? 'Jetzt reaktivieren' : 'Direkt ausführen'}
+              </Button>
+            )}
+            {suggestedActions.some((item) => item.type === 'review_bound_devices') && isOperatorSurface && (
+              <Button variant="outline" size="sm" onClick={() => navigate(remoteActionsPath)} className="border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/10">
+                Geräte prüfen <ExternalLink className="w-3.5 h-3.5 ml-1.5" />
+              </Button>
+            )}
             {isOperatorSurface && (
               <Button variant="outline" size="sm" onClick={() => navigate(remoteActionsPath)} className="border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/10">
                 Remote Actions <ExternalLink className="w-3.5 h-3.5 ml-1.5" />
@@ -452,12 +542,39 @@ export default function PortalLicenseDetail() {
           </div>
         </div>
 
+        {actionFeedback && (
+          <div className={`mt-4 rounded-2xl border px-4 py-3 ${actionFeedback.tone === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-zinc-700 bg-zinc-900/70 text-zinc-200'}`} data-testid="license-action-feedback">
+            <p className="text-sm font-medium">{actionFeedback.title}</p>
+            {actionFeedback.message && <p className="mt-1 text-xs text-current/80">{actionFeedback.message}</p>}
+          </div>
+        )}
+
         <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
           <ReadinessCard icon={TriangleAlert} label="Bucket" value={bucketLabel(readiness.action_bucket)} hint={readiness.risk_flags?.join(' · ') || 'Keine Flags'} tone={pressureTone} tid="license-readiness-bucket" />
           <ReadinessCard icon={Clock} label="Renewal" value={readiness.renewal_days != null ? `${readiness.renewal_days} Tage` : 'Unbegrenzt'} hint={st === 'grace' ? 'Aktuell in Grace' : 'Vertragslaufzeit'} tone={readiness.renewal_days != null && readiness.renewal_days <= 14 ? 'amber' : 'zinc'} tid="license-readiness-renewal" />
           <ReadinessCard icon={Gauge} label="Kapazität" value={`${lic.device_count ?? 0}/${lic.max_devices ?? '—'}`} hint={capacityLabel(readiness.capacity_state)} tone={['full', 'over_capacity'].includes(readiness.capacity_state) ? 'amber' : readiness.capacity_state === 'near_capacity' ? 'blue' : 'zinc'} tid="license-readiness-capacity" />
+          <ReadinessCard icon={KeyRound} label="Tokenlage" value={tokenStateLabel(readiness.token_state)} hint={readiness.token_summary?.message || 'Kein Tokenstatus'} tone={readiness.token_state === 'active' ? 'blue' : ['expired', 'revoked'].includes(readiness.token_state) ? 'amber' : 'zinc'} tid="license-readiness-token" />
           <ReadinessCard icon={Shield} label="Posture" value={postureLabel(readiness.posture_status)} hint={`${readiness.posture_counts?.blocked || 0} blocked · ${readiness.posture_counts?.review_required || 0} review · ${readiness.posture_counts?.degraded || 0} degraded`} tone={readiness.posture_status === 'blocked' ? 'red' : readiness.posture_status === 'review_required' ? 'amber' : readiness.posture_status === 'degraded' ? 'blue' : 'emerald'} tid="license-readiness-posture" />
         </div>
+
+        {suggestedActions.length > 0 && (
+          <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/20 p-4" data-testid="license-suggested-actions">
+            <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Empfohlene nächste Schritte</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {suggestedActions.map((action) => (
+                <button
+                  key={action.type}
+                  onClick={() => runSuggestedAction(action)}
+                  disabled={actionLoading || (action.execution?.mode === 'direct' && action.type === 'reactivate_license' && !canManage) || (action.execution?.mode === 'direct' && ['generate_activation_token', 'get_activation_token', 'regenerate_activation_token'].includes(action.type) && !canReviewRemoteActions)}
+                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${action.intent === intent ? 'border-white/30 bg-white/10 text-white' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-white'} disabled:cursor-not-allowed disabled:opacity-50`}
+                  title={action.reason}
+                >
+                  {action.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Stammdaten */}
@@ -491,6 +608,7 @@ export default function PortalLicenseDetail() {
         devices={lic.devices}
         maxDevices={lic.max_devices}
         onUnbind={handleUnbind}
+        onOpenDevice={(deviceId) => navigate(`${surfacePrefix}/devices/${deviceId}`)}
         licenseStatus={st}
       />
 

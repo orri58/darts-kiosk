@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { toast } from 'sonner';
 import {
@@ -82,6 +82,7 @@ function StatusCell({ label, value, sub }) {
 export default function PortalDeviceDetail() {
   const { deviceId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { apiBase, authHeaders } = useCentralAuth();
   const [device, setDevice] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -268,7 +269,7 @@ export default function PortalDeviceDetail() {
         <p className="text-sm text-zinc-400 max-w-md mx-auto">{fetchError.message}</p>
         <p className="text-xs text-zinc-600 font-mono">Device ID: {deviceId}</p>
         <div className="flex items-center justify-center gap-3 pt-2">
-          <Button onClick={() => navigate('/portal/devices')} variant="outline" className="border-zinc-700 text-zinc-400" data-testid="error-back-btn">
+          <Button onClick={() => navigate(location.pathname.startsWith('/operator') ? '/operator/devices' : '/portal/devices')} variant="outline" className="border-zinc-700 text-zinc-400" data-testid="error-back-btn">
             <ArrowLeft className="w-4 h-4 mr-2" /> Zurueck zur Liste
           </Button>
           {fetchError.retryable && (
@@ -306,12 +307,15 @@ export default function PortalDeviceDetail() {
   const logs = (device.device_logs || []).filter(l =>
     logFilter === 'all' || l.level === logFilter
   );
+  const surfacePrefix = location.pathname.startsWith('/operator') ? '/operator' : '/portal';
+  const deviceListPath = `${surfacePrefix}/devices`;
+  const licenseDetailPath = device.license_id ? `${surfacePrefix}/licenses/${device.license_id}?intent=devices` : null;
 
   return (
     <div data-testid="device-detail-page" className="space-y-4">
       {/* Header */}
       <div className="flex items-center gap-4">
-        <Button onClick={() => navigate('/portal/devices')} variant="ghost" className="text-zinc-400 hover:text-white p-2" data-testid="device-back-btn">
+        <Button onClick={() => navigate(deviceListPath)} variant="ghost" className="text-zinc-400 hover:text-white p-2" data-testid="device-back-btn">
           <ArrowLeft className="w-5 h-5" />
         </Button>
         <div className="flex-1 min-w-0">
@@ -326,9 +330,16 @@ export default function PortalDeviceDetail() {
             {device.customer?.name} {device.location?.name ? `→ ${device.location.name}` : ''}
           </p>
         </div>
-        <Button onClick={fetchDevice} variant="outline" className="border-zinc-700 text-zinc-400 hover:text-white" data-testid="device-refresh-btn">
-          <RefreshCw className="w-4 h-4" />
-        </Button>
+        <div className="flex items-center gap-2">
+          {licenseDetailPath && (
+            <Button onClick={() => navigate(licenseDetailPath)} variant="outline" className="border-zinc-700 text-zinc-300 hover:text-white" data-testid="device-license-btn">
+              <Hash className="w-4 h-4 mr-2" /> Lizenz öffnen
+            </Button>
+          )}
+          <Button onClick={fetchDevice} variant="outline" className="border-zinc-700 text-zinc-400 hover:text-white" data-testid="device-refresh-btn">
+            <RefreshCw className="w-4 h-4" />
+          </Button>
+        </div>
       </div>
 
       {/* Health Reason Banner */}

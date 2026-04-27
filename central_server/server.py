@@ -1210,6 +1210,7 @@ async def list_licenses(customer_id: str = None, status: str = None, user: AuthU
         cust_map = {c.id: c.name for c in cr.scalars().all()}
     license_ids = [lic.id for lic in lics]
     posture_summary_by_license = {}
+    token_summary_by_license = {}
     if license_ids:
         license_devices_result = await db.execute(select(CentralDevice).where(CentralDevice.license_id.in_(license_ids)))
         license_devices = license_devices_result.scalars().all()
@@ -1219,6 +1220,16 @@ async def list_licenses(customer_id: str = None, status: str = None, user: AuthU
             devices_by_license[device.license_id].append(device_postures.get(device.id))
         for lic_id, postures in devices_by_license.items():
             posture_summary_by_license[lic_id] = _summarize_posture_collection(postures)
+        token_result = await db.execute(
+            select(RegistrationToken)
+            .where(RegistrationToken.license_id.in_(license_ids))
+            .order_by(RegistrationToken.created_at.desc())
+        )
+        tokens_by_license: dict[str, list[RegistrationToken]] = defaultdict(list)
+        for token in token_result.scalars().all():
+            tokens_by_license[token.license_id].append(token)
+        for lic_id, tokens in tokens_by_license.items():
+            token_summary_by_license[lic_id] = _summarize_license_token_state(tokens, now)
     items = []
     for lic in lics:
         d = _ser_license(lic)
@@ -1228,13 +1239,15 @@ async def list_licenses(customer_id: str = None, status: str = None, user: AuthU
         d["device_count"] = dc.scalar() or 0
         d["computed_status"] = _compute_status(lic, now)
         d["device_advisory_summary"] = posture_summary_by_license.get(lic.id) or _summarize_posture_collection([])
-        d["commercial_readiness"] = _build_license_commercial_readiness(lic, d["device_advisory_summary"], now)
+        d["token_summary"] = token_summary_by_license.get(lic.id) or _summarize_license_token_state([], now)
+        d["commercial_readiness"] = _build_license_commercial_readiness(lic, d["device_advisory_summary"], now, d["token_summary"])
         items.append(d)
     return items
 
 
 @app.get("/api/licensing/licenses/portfolio-summary")
 async def license_portfolio_summary(customer_id: str = None, status: str = None, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    now = _utcnow()
     stmt = select(CentralLicense).order_by(CentralLicense.created_at.desc())
     if customer_id:
         if not can_access_customer(user, customer_id):
@@ -1249,6 +1262,7 @@ async def license_portfolio_summary(customer_id: str = None, status: str = None,
     lics = result.scalars().all()
     license_ids = [lic.id for lic in lics]
     posture_summary_by_license = {}
+    token_summary_by_license = {}
     if license_ids:
         license_devices_result = await db.execute(select(CentralDevice).where(CentralDevice.license_id.in_(license_ids)))
         license_devices = license_devices_result.scalars().all()
@@ -1258,8 +1272,18 @@ async def license_portfolio_summary(customer_id: str = None, status: str = None,
             devices_by_license[device.license_id].append(device_postures.get(device.id))
         for lic_id, postures in devices_by_license.items():
             posture_summary_by_license[lic_id] = _summarize_posture_collection(postures)
+        token_result = await db.execute(
+            select(RegistrationToken)
+            .where(RegistrationToken.license_id.in_(license_ids))
+            .order_by(RegistrationToken.created_at.desc())
+        )
+        tokens_by_license: dict[str, list[RegistrationToken]] = defaultdict(list)
+        for token in token_result.scalars().all():
+            tokens_by_license[token.license_id].append(token)
+        for lic_id, tokens in tokens_by_license.items():
+            token_summary_by_license[lic_id] = _summarize_license_token_state(tokens, now)
 
-    return _build_license_portfolio_summary(lics, posture_summary_by_license, _utcnow())
+    return _build_license_portfolio_summary(lics, posture_summary_by_license, now, token_summary_by_license)
 
 
 @app.post("/api/licensing/licenses")
@@ -1358,7 +1382,14 @@ async def get_license_detail(license_id: str, user: AuthUser = Depends(get_curre
     advisory_summary = _summarize_posture_collection([
         d.get("advisory_posture") for d in devices if isinstance(d, dict)
     ])
-    commercial_readiness = _build_license_commercial_readiness(lic, advisory_summary, now)
+    token_summary = _summarize_license_token_state(tokens, now)
+    commercial_readiness = _build_license_commercial_readiness(lic, advisory_summary, now, token_summary)
+    commercial_readiness["suggested_actions"] = _refine_license_detail_suggested_actions(
+        lic,
+        commercial_readiness,
+        active_token=active_token,
+        device_count=len(devices),
+    )
 
     detail = _ser_license(lic)
     detail["computed_status"] = computed_status
@@ -1367,6 +1398,7 @@ async def get_license_detail(license_id: str, user: AuthUser = Depends(get_curre
     detail["devices"] = devices
     detail["device_count"] = len(devices)
     detail["device_advisory_summary"] = advisory_summary
+    detail["token_summary"] = token_summary
     detail["commercial_readiness"] = commercial_readiness
     detail["active_token"] = _finalize_reg_token_summary(_ser_reg_token_summary(active_token), user) if active_token else None
     detail["token_history"] = [_finalize_reg_token_summary(_ser_reg_token_summary(t), user) for t in tokens]
@@ -2003,7 +2035,70 @@ def _summarize_posture_collection(postures: list[dict] | None, *, detail_level: 
     }
 
 
-def _build_license_commercial_readiness(license_row, posture_summary: dict | None = None, now: datetime | None = None) -> dict:
+def _summarize_license_token_state(tokens: list[RegistrationToken] | None, now: datetime | None = None) -> dict:
+    now = now or _utcnow()
+    tokens = list(tokens or [])
+    active_token = None
+    latest_token = tokens[0] if tokens else None
+    used_count = 0
+    revoked_count = 0
+    expired_count = 0
+
+    for token in tokens:
+        status = _token_status(token)
+        if status == "active" and active_token is None:
+            active_token = token
+        elif status == "used":
+            used_count += 1
+        elif status == "revoked":
+            revoked_count += 1
+        elif status == "expired":
+            expired_count += 1
+
+    active_expires_in_days = None
+    if active_token is not None and getattr(active_token, "expires_at", None):
+        active_expires_in_days = math.floor((_aware(active_token.expires_at) - now).total_seconds() / 86400)
+
+    if active_token is not None:
+        state = "active"
+        message = "Aktiver Aktivierungstoken liegt bereits vor"
+    elif used_count > 0:
+        state = "consumed"
+        message = "Letzter Token wurde bereits bei einer Registrierung verbraucht"
+    elif expired_count > 0:
+        state = "expired"
+        message = "Vorherige Aktivierungstoken sind abgelaufen"
+    elif revoked_count > 0:
+        state = "revoked"
+        message = "Vorherige Aktivierungstoken wurden widerrufen"
+    else:
+        state = "missing"
+        message = "Noch kein Aktivierungstoken erstellt"
+
+    return {
+        "state": state,
+        "message": message,
+        "badge_tone": {
+            "active": "blue",
+            "consumed": "emerald",
+            "expired": "amber",
+            "revoked": "red",
+            "missing": "zinc",
+        }.get(state, "zinc"),
+        "active_token": _ser_reg_token_summary(active_token) if active_token else None,
+        "active_expires_in_days": active_expires_in_days,
+        "latest_token_created_at": latest_token.created_at.isoformat() if latest_token and getattr(latest_token, "created_at", None) else None,
+        "counts": {
+            "total": len(tokens),
+            "active": 1 if active_token is not None else 0,
+            "used": used_count,
+            "revoked": revoked_count,
+            "expired": expired_count,
+        },
+    }
+
+
+def _build_license_commercial_readiness(license_row, posture_summary: dict | None = None, now: datetime | None = None, token_summary: dict | None = None) -> dict:
     now = now or _utcnow()
     computed_status = _compute_status(license_row, now)
     device_count = int(posture_summary.get("device_count") or 0) if posture_summary else 0
@@ -2016,7 +2111,8 @@ def _build_license_commercial_readiness(license_row, posture_summary: dict | Non
         days_to_end = math.floor((ends_at - now).total_seconds() / 86400)
 
     risk_flags: list[str] = []
-    if computed_status in {"expired", "blocked", "deactivated", "archived"}:
+    raw_status = str(getattr(license_row, "status", None) or "").lower()
+    if computed_status in {"expired", "blocked"} or raw_status in {"deactivated", "archived"}:
         risk_flags.append("license_inactive")
     elif computed_status == "grace":
         risk_flags.append("license_grace")
@@ -2057,6 +2153,12 @@ def _build_license_commercial_readiness(license_row, posture_summary: dict | Non
     elif any(flag in risk_flags for flag in {"device_degraded", "capacity_near"}):
         action_bucket = "watch"
 
+    token_state = (token_summary or {}).get("state") or "unknown"
+    if device_count == 0 and token_state == "active":
+        risk_flags.append("activation_token_ready")
+    elif device_count == 0 and token_state in {"expired", "revoked"}:
+        risk_flags.append("activation_token_stale")
+
     if "license_inactive" in risk_flags:
         primary_message = f"Lizenzstatus ist {computed_status}"
         recommended_action = "Status oder Vertragslaufzeit in Central prüfen, bevor weitere Geräteaktionen geplant werden."
@@ -2072,6 +2174,12 @@ def _build_license_commercial_readiness(license_row, posture_summary: dict | Non
     elif "capacity_full" in risk_flags:
         primary_message = "Kapazität vollständig belegt"
         recommended_action = "Für weitere Rollouts zuerst Upgrade oder zusätzliche Lizenz vorbereiten."
+    elif "activation_gap" in risk_flags and token_state == "active":
+        primary_message = "Lizenz ist aktiv, ein Aktivierungstoken liegt bereits bereit"
+        recommended_action = "Bestehenden Token ans Gerät bringen oder bei Unsicherheit direkt frisch ausstellen."
+    elif "activation_gap" in risk_flags and token_state in {"expired", "revoked"}:
+        primary_message = "Lizenz ist aktiv, aber der letzte Aktivierungstoken ist nicht mehr nutzbar"
+        recommended_action = "Token jetzt neu ausstellen und die Inbetriebnahme aktiv nachverfolgen."
     elif "activation_gap" in risk_flags:
         primary_message = "Lizenz ist aktiv, aber noch keinem Gerät zugeordnet"
         recommended_action = "Aktivierungstoken erzeugen und Inbetriebnahme aktiv nachverfolgen."
@@ -2088,7 +2196,7 @@ def _build_license_commercial_readiness(license_row, posture_summary: dict | Non
         primary_message = "Lizenz, Kapazität und Geräteposture wirken betriebsbereit"
         recommended_action = "Kein direkter Eingriff nötig; normal weiter überwachen."
 
-    return {
+    readiness = {
         "computed_status": computed_status,
         "device_count": device_count,
         "max_devices": max_devices,
@@ -2101,12 +2209,142 @@ def _build_license_commercial_readiness(license_row, posture_summary: dict | Non
         "risk_flags": risk_flags,
         "primary_message": primary_message,
         "recommended_action": recommended_action,
+        "token_state": token_state,
+        "token_summary": token_summary,
     }
+    readiness["suggested_actions"] = _build_license_suggested_actions(license_row, readiness)
+    return readiness
 
 
-def _build_license_portfolio_summary(licenses: list, posture_summary_by_license: dict[str, dict] | None = None, now: datetime | None = None) -> dict:
+def _build_license_suggested_actions(license_row, readiness: dict | None = None) -> list[dict]:
+    readiness = readiness or {}
+    suggested_actions: list[dict] = []
+    risk_flags = set(readiness.get("risk_flags") or [])
+    computed_status = readiness.get("computed_status") or _compute_status(license_row, _utcnow())
+    raw_status = str(getattr(license_row, "status", None) or "").lower()
+    capacity_state = readiness.get("capacity_state")
+    posture_status = readiness.get("posture_status")
+    token_state = readiness.get("token_state")
+
+    def add(
+        action_type: str,
+        label: str,
+        *,
+        priority: str,
+        intent: str,
+        reason: str,
+        execution: dict | None = None,
+    ):
+        suggested_actions.append({
+            "type": action_type,
+            "label": label,
+            "priority": priority,
+            "intent": intent,
+            "reason": reason,
+            "execution": execution or {"mode": "navigate", "target": "license_detail"},
+        })
+
+    if "license_inactive" in risk_flags:
+        if raw_status == "deactivated":
+            add(
+                "reactivate_license",
+                "Lizenz reaktivieren",
+                priority="urgent",
+                intent="reactivate",
+                reason="Deaktivierte Lizenz wieder fuer Betrieb freischalten",
+                execution={"mode": "direct", "action": "reactivate_license"},
+            )
+        elif raw_status == "archived":
+            add("review_archived_license", "Archivstatus pruefen", priority="urgent", intent="reactivate", reason="Archivierte Lizenz vor neuer Nutzung zuerst pruefen")
+        else:
+            add("review_contract_state", "Vertragsstatus klaeren", priority="urgent", intent="renew", reason="Inaktive/gesperrte Lizenz vor weiteren Rollouts klaeren")
+
+    if "license_grace" in risk_flags or "renewal_due" in risk_flags:
+        add("renew_license", "Renewal vorbereiten", priority="high" if "license_grace" in risk_flags else "medium", intent="renew", reason="Laufzeit oder Grace-Phase aktiv nachverfolgen")
+
+    if "activation_gap" in risk_flags:
+        action_type = "generate_activation_token"
+        label = "Aktivierung starten"
+        reason = "Aktive Lizenz ohne gebundenes Geraet"
+        execution_action = "ensure_activation_token"
+        if token_state == "active":
+            action_type = "get_activation_token"
+            label = "Token abrufen"
+            reason = "Aktiver Token besteht bereits und kann direkt fuer die Inbetriebnahme genutzt werden"
+        elif token_state in {"expired", "revoked"}:
+            action_type = "regenerate_activation_token"
+            label = "Token erneuern"
+            reason = "Vorheriger Token ist nicht mehr nutzbar; frischen Token fuer die Inbetriebnahme erstellen"
+            execution_action = "regenerate_activation_token"
+        add(
+            action_type,
+            label,
+            priority="high",
+            intent="activate",
+            reason=reason,
+            execution={"mode": "direct", "action": execution_action},
+        )
+
+    if capacity_state in {"full", "over_capacity"}:
+        add("upgrade_capacity", "Kapazitaet anpassen", priority="high" if capacity_state == "over_capacity" else "medium", intent="capacity", reason="Gebundene Geraete passen nicht mehr sauber zur Lizenzkapazitaet")
+
+    if posture_status in {"review_required", "blocked"}:
+        add(
+            "review_bound_devices",
+            "Gebundene Geraete pruefen",
+            priority="high" if posture_status == "blocked" else "medium",
+            intent="devices",
+            reason="Advisory-Signale der gebundenen Geraete blockieren Commercial Readiness",
+            execution={"mode": "navigate", "target": "remote_actions"},
+        )
+
+    if not suggested_actions:
+        add("monitor_license", "Weiter beobachten", priority="low", intent="overview", reason="Aktuell kein direkter Eingriff noetig")
+
+    return suggested_actions
+
+
+def _refine_license_detail_suggested_actions(
+    license_row,
+    readiness: dict | None,
+    *,
+    active_token: RegistrationToken | None,
+    device_count: int,
+) -> list[dict]:
+    readiness = dict(readiness or {})
+    suggested_actions = [dict(item) for item in (readiness.get("suggested_actions") or [])]
+    computed_status = readiness.get("computed_status") or _compute_status(license_row, _utcnow())
+    is_operational = computed_status in {"active", "test", "grace"}
+
+    if is_operational and device_count == 0 and active_token is not None:
+        replaced = False
+        for item in suggested_actions:
+            if item.get("type") == "generate_activation_token":
+                item.update({
+                    "type": "regenerate_activation_token",
+                    "label": "Token neu ausstellen",
+                    "reason": "Aktiver Token besteht bereits; bei Weitergabe oder Unklarheit lieber frischen Token verwenden",
+                    "execution": {"mode": "direct", "action": "regenerate_activation_token"},
+                })
+                replaced = True
+                break
+        if not replaced:
+            suggested_actions.insert(0, {
+                "type": "regenerate_activation_token",
+                "label": "Token neu ausstellen",
+                "priority": "medium",
+                "intent": "activate",
+                "reason": "Aktiver Token besteht bereits; bei Weitergabe oder Unklarheit lieber frischen Token verwenden",
+                "execution": {"mode": "direct", "action": "regenerate_activation_token"},
+            })
+
+    return suggested_actions
+
+
+def _build_license_portfolio_summary(licenses: list, posture_summary_by_license: dict[str, dict] | None = None, now: datetime | None = None, token_summary_by_license: dict[str, dict] | None = None) -> dict:
     now = now or _utcnow()
     posture_summary_by_license = posture_summary_by_license or {}
+    token_summary_by_license = token_summary_by_license or {}
     counts = {
         "total": len(licenses),
         "healthy": 0,
@@ -2116,6 +2354,8 @@ def _build_license_portfolio_summary(licenses: list, posture_summary_by_license:
         "renewal_due": 0,
         "in_grace": 0,
         "activation_gap": 0,
+        "token_ready": 0,
+        "token_attention": 0,
         "near_capacity": 0,
         "full_or_over_capacity": 0,
         "review_required": 0,
@@ -2126,7 +2366,7 @@ def _build_license_portfolio_summary(licenses: list, posture_summary_by_license:
     portfolio_items = []
 
     for lic in licenses:
-        readiness = _build_license_commercial_readiness(lic, posture_summary_by_license.get(lic.id), now)
+        readiness = _build_license_commercial_readiness(lic, posture_summary_by_license.get(lic.id), now, token_summary_by_license.get(lic.id))
         counts[readiness["action_bucket"]] += 1
         status_breakdown[readiness["computed_status"]] += 1
         plan_breakdown[str(getattr(lic, "plan_type", None) or "unknown")] += 1
@@ -2136,6 +2376,10 @@ def _build_license_portfolio_summary(licenses: list, posture_summary_by_license:
             counts["in_grace"] += 1
         if "activation_gap" in readiness["risk_flags"]:
             counts["activation_gap"] += 1
+        if "activation_token_ready" in readiness["risk_flags"]:
+            counts["token_ready"] += 1
+        if "activation_token_stale" in readiness["risk_flags"] or readiness["token_state"] == "missing":
+            counts["token_attention"] += 1
         if readiness["capacity_state"] in {"near_capacity", "full", "over_capacity"}:
             counts["near_capacity"] += 1
         if readiness["capacity_state"] in {"full", "over_capacity"}:
@@ -2174,6 +2418,11 @@ def _build_license_portfolio_summary(licenses: list, posture_summary_by_license:
                 and "license_inactive" not in item["risk_flags"]
             ][:6],
             "activation_gaps": [item for item in portfolio_items if "activation_gap" in item["risk_flags"]][:6],
+            "token_follow_up": [
+                item for item in portfolio_items
+                if "activation_gap" in item["risk_flags"]
+                and item.get("token_state") in {"missing", "expired", "revoked", "active"}
+            ][:6],
             "capacity_pressure": [item for item in portfolio_items if item["capacity_state"] in {"near_capacity", "full", "over_capacity"}][:6],
             "device_review": [
                 item for item in portfolio_items

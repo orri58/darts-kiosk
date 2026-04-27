@@ -9,8 +9,10 @@ import {
   RefreshCw,
   Activity,
   Clock,
+  KeyRound,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
+import { useNavigate, useLocation } from "react-router-dom";
 
 function ConnBadge({ connectivity }) {
   if (connectivity === "online")
@@ -48,6 +50,8 @@ function formatDt(isoStr) {
 }
 
 export default function PortalDevices() {
+  const navigate = useNavigate();
+  const location = useLocation();
   const { centralFetch } = useCentralAuth();
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -74,6 +78,7 @@ export default function PortalDevices() {
   }, [refresh]);
 
   const onlineCount = devices.filter((d) => d.connectivity === "online" || d.is_online).length;
+  const surfacePrefix = location.pathname.startsWith('/operator') ? '/operator' : '/portal';
 
   return (
     <div data-testid="portal-devices-page" className="space-y-6">
@@ -155,6 +160,19 @@ export default function PortalDevices() {
                 <div className="flex justify-between">
                   <span>Syncs</span>
                   <span className="text-zinc-300">{d.sync_count ?? 0}</span>
+                </div>
+                <div className="flex justify-between items-center gap-3">
+                  <span>Lizenz</span>
+                  {d.license_id ? (
+                    <button
+                      onClick={() => navigate(`${surfacePrefix}/licenses/${d.license_id}?intent=devices`)}
+                      className="inline-flex items-center gap-1 text-zinc-200 hover:text-white"
+                    >
+                      <KeyRound size={12} /> {d.license_id.slice(0, 8)}...
+                    </button>
+                  ) : (
+                    <span className="text-zinc-500">—</span>
+                  )}
                 </div>
               </CardContent>
             </Card>

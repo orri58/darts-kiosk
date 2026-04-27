@@ -4,6 +4,22 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.19] - 2026-04-27
+
+### Added
+- Added token-state enrichment and a dedicated token follow-up portfolio queue so operator surfaces can distinguish ready-to-send, missing, expired, and revoked activation paths instead of treating all activation gaps the same.
+- Added direct device-detail routing from both operator and portal license/device flows, including license-to-device and device-to-license continuity for bound commercial troubleshooting.
+
+### Improved
+- Expanded the operator licenses command surface with token readiness KPIs, token badges, inline queue actions, and clearer activation feedback so commercial rollout work can be driven from list level with less context switching.
+- Tightened license portfolio summarization coherence by reusing a single evaluation timestamp per request and surfacing richer token summary metadata for downstream UI decisions.
+- Improved the shared device detail surface so operator routes no longer fall back to portal-only navigation and bound-license drill-ins stay in the active surface.
+
+### Validation
+- Focused backend regression suite passed (`11 passed`): `tests/test_license_portfolio_summary.py`, `tests/test_remote_action_operator_wave.py`.
+- Python compile sanity passed for `central_server/server.py`.
+- Frontend production build passed (`cd frontend && npm run build`).
+
 ## [4.4.18] - 2026-04-27
 
 ### Added
