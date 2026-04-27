@@ -4,6 +4,26 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.17] - 2026-04-27
+
+### Added
+- Added a dedicated central remote-action policy module so the shippable action catalog, approval rules, expiry handling, and blocked high-risk actions are defined in one place instead of drifting between endpoints and UI assumptions.
+- Added approval/review maturity to central remote actions with queue/review/outcome state fields, richer audit metadata, and focused regression coverage for the policy envelope.
+- Added a central advisory device posture rollup that combines trust, credential, lease, license, and replacement diagnostics into stable operator-facing findings.
+- Added an Operator Remote Actions page and routing so the central operator surface now has a dedicated workflow for queue, history, filters, and review handling.
+
+### Improved
+- Hardened central remote-action handling so only the current supported action set can be requested or delivered, expiry is enforced consistently, and legacy/stale action types are rejected instead of quietly leaking through.
+- Improved operator authentication/session handling and scope-aware routing so the dedicated operator surface behaves coherently across login restore, `/api/auth/*` usage, and page-level navigation.
+- Promoted advisory trust/commercial posture into the operator dashboard, device, license, and layout surfaces so operators can see commercial/trust risk in context without implying local enforcement.
+- Aligned the operator Remote Actions filter UI with the tightened central policy and kept blocked board/session actions visible for audit/history triage without implying that central may still execute them.
+
+### Validation
+- Focused backend central/operator regression suite passed (`82 passed`).
+- Python compile sanity passed for `central_server` and `backend`.
+- Frontend production build passed.
+- Release artifacts rebuilt for `v4.4.17`.
+
 ## [4.4.16] - 2026-04-25
 
 ### Improved

@@ -357,9 +357,21 @@ class RemoteAction(Base):
     action_type = Column(String(30), nullable=False)
     params = Column(JSON, nullable=True)
     status = Column(String(20), default="pending")     # pending | acked | failed | expired
+    request_state = Column(String(24), default="queued", index=True)  # queued | pending_approval | approved | refused | delivered | finalized | expired
+    approval_state = Column(String(24), default="not_required", index=True)  # not_required | pending | approved | refused
+    outcome_code = Column(String(32), nullable=True, index=True)  # accepted | delivered | succeeded | failed | refused | expired | blocked
+    outcome_detail = Column(String(64), nullable=True)
     issued_by = Column(String(100), nullable=False)
+    request_note = Column(Text, nullable=True)
     issued_at = Column(DateTime, default=_utcnow)
+    requested_at = Column(DateTime, default=_utcnow)
+    reviewed_at = Column(DateTime, nullable=True)
+    reviewed_by = Column(String(100), nullable=True)
+    review_note = Column(Text, nullable=True)
     acked_at = Column(DateTime, nullable=True)
+    delivered_at = Column(DateTime, nullable=True)
+    finalized_at = Column(DateTime, nullable=True)
+    finalized_by = Column(String(100), nullable=True)
     result_message = Column(Text, nullable=True)
 
 

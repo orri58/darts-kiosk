@@ -1990,6 +1990,184 @@ def summarize_findings(findings: list[dict[str, Any]] | None) -> dict[str, Any]:
     }
 
 
+def compute_license_operational_status(license_row, now: datetime | None = None) -> str:
+    now = aware(now) or utcnow()
+    if license_row is None:
+        return "missing"
+    status = str(getattr(license_row, "status", None) or "unknown").lower()
+    if status in {"blocked", "deactivated", "archived", "inactive"}:
+        return status
+    ends_at = aware(getattr(license_row, "ends_at", None))
+    grace_until = aware(getattr(license_row, "grace_until", None))
+    if ends_at and now > ends_at:
+        if grace_until and now <= grace_until:
+            return "grace"
+        return "expired"
+    return status
+
+
+def build_advisory_device_posture(
+    *,
+    device=None,
+    license_row=None,
+    credential=None,
+    lease=None,
+    duplicate_fingerprint_devices: list[Any] | None = None,
+    replacement_target=None,
+    replacement_children: list[Any] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Compute a central-side, advisory-only device posture rollup.
+
+    This intentionally does not persist or enforce anything locally. It converts
+    existing trust/commercial diagnostics into stable, machine-readable operator
+    findings and a single posture verdict per device.
+    """
+    now = aware(now) or utcnow()
+    duplicate_fingerprint_devices = duplicate_fingerprint_devices or []
+    replacement_children = replacement_children or []
+
+    trust_status = str(getattr(device, "trust_status", None) or "legacy_unbound")
+    credential_status = compute_credential_status(credential, now) if credential is not None else str(getattr(device, "credential_status", None) or "none")
+    lease_status = compute_lease_status(lease, now) if lease is not None else str(getattr(device, "lease_status", None) or "none")
+    license_status = compute_license_operational_status(license_row, now)
+
+    findings: list[dict[str, Any]] = []
+
+    def add(code: str, severity: str, domain: str, summary: str, **extra: Any) -> None:
+        findings.append({
+            "code": code,
+            "severity": severity,
+            "domain": domain,
+            "summary": summary,
+            **extra,
+        })
+
+    if credential_status == "none":
+        add("credential_missing", "warning", "trust", "No active device credential is recorded")
+    elif credential_status == "pending":
+        add("credential_pending", "warning", "trust", "Device credential issuance is still pending")
+    elif credential_status == "expired":
+        add("credential_expired", "error", "trust", "Recorded device credential is expired")
+    elif credential_status == "revoked":
+        add("credential_revoked", "error", "trust", "Recorded device credential is revoked")
+
+    if lease_status == "none":
+        add("lease_missing", "warning", "commercial", "No active commercial lease is recorded")
+    elif lease_status == "grace":
+        add("lease_grace", "warning", "commercial", "Commercial lease is operating in grace period")
+    elif lease_status == "expired":
+        add("lease_expired", "error", "commercial", "Commercial lease is expired")
+    elif lease_status == "revoked":
+        add("lease_revoked", "error", "commercial", "Commercial lease is revoked")
+
+    if license_status == "missing":
+        add("license_missing", "warning", "commercial", "Device is not linked to a central license")
+    elif license_status in {"blocked", "deactivated", "archived", "inactive"}:
+        add("license_inactive", "error", "commercial", f"Linked license is {license_status}", license_status=license_status)
+    elif license_status == "expired":
+        add("license_expired", "error", "commercial", "Linked license is expired")
+    elif license_status == "grace":
+        add("license_grace", "warning", "commercial", "Linked license is in grace period")
+    elif license_status == "test":
+        add("license_test", "info", "commercial", "Linked license is a test license")
+
+    if license_row is not None and lease is not None:
+        lease_license_id = getattr(lease, "central_license_id", None)
+        if lease_license_id and lease_license_id != getattr(license_row, "id", None):
+            add("lease_license_mismatch", "error", "commercial", "Lease points to a different license than the device binding")
+
+    if duplicate_fingerprint_devices:
+        add(
+            "duplicate_fingerprint",
+            "error",
+            "trust",
+            "Credential fingerprint is also referenced by another device",
+            other_device_ids=sorted({getattr(item, "id", None) for item in duplicate_fingerprint_devices if getattr(item, "id", None)}),
+        )
+
+    if getattr(device, "replacement_of_device_id", None):
+        add(
+            "replacement_declared",
+            "info",
+            "lifecycle",
+            "Device is marked as a replacement for another device",
+            replacement_of_device_id=getattr(device, "replacement_of_device_id", None),
+        )
+        if replacement_target is None:
+            add("replacement_conflict", "warning", "lifecycle", "Replacement target is missing from central records")
+        elif str(getattr(replacement_target, "trust_status", "")) not in {"replaced", "revoked"}:
+            add("replacement_conflict", "warning", "lifecycle", "Replacement target is still active in central records")
+
+    if replacement_children:
+        add(
+            "replacement_superseded",
+            "warning",
+            "lifecycle",
+            "Another device claims to replace this device",
+            replacement_device_ids=sorted({getattr(item, "id", None) for item in replacement_children if getattr(item, "id", None)}),
+        )
+
+    def domain_posture(domain: str) -> str:
+        scoped = [f for f in findings if f["domain"] == domain]
+        codes = {f["code"] for f in scoped}
+        severities = {f["severity"] for f in scoped}
+        if severities.intersection({"error"}):
+            return "blocked"
+        if codes.intersection({"credential_missing", "credential_pending", "lease_missing", "license_missing"}):
+            return "review_required"
+        if severities.intersection({"warning"}):
+            return "degraded"
+        return "ready"
+
+    trust_posture = domain_posture("trust")
+    commercial_posture = domain_posture("commercial")
+    lifecycle_posture = domain_posture("lifecycle")
+
+    overall_posture = "ready"
+    if "blocked" in {trust_posture, commercial_posture, lifecycle_posture}:
+        overall_posture = "blocked"
+    elif "review_required" in {trust_posture, commercial_posture, lifecycle_posture}:
+        overall_posture = "review_required"
+    elif "degraded" in {trust_posture, commercial_posture, lifecycle_posture}:
+        overall_posture = "degraded"
+
+    if overall_posture == "ready":
+        recommendation = "No operator action needed; keep monitoring centrally."
+    elif overall_posture == "degraded":
+        recommendation = "Investigate the warnings and renew/rotate affected commercial or trust material soon."
+    elif overall_posture == "review_required":
+        recommendation = "Review missing enrollment or commercial records in central before treating this device as fully ready."
+    else:
+        recommendation = "Operator review required now; reconcile revoked/expired/conflicting trust or commercial records in central."
+
+    finding_summary = summarize_findings([
+        {"severity": item["severity"], "source": item["domain"]}
+        for item in findings
+    ])
+
+    return {
+        "schema": "darts.device_advisory_posture.v1",
+        "mode": "central_advisory_read_only",
+        "advisory_only": True,
+        "enforcement": "disabled",
+        "generated_at": iso(now),
+        "device_id": getattr(device, "id", None),
+        "trust_status": trust_status,
+        "credential_status": credential_status,
+        "lease_status": lease_status,
+        "license_status": license_status,
+        "trust_posture": trust_posture,
+        "commercial_posture": commercial_posture,
+        "lifecycle_posture": lifecycle_posture,
+        "overall_posture": overall_posture,
+        "summary": f"{overall_posture}: trust={trust_posture}, commercial={commercial_posture}, lifecycle={lifecycle_posture}",
+        "recommendation": recommendation,
+        "finding_summary": finding_summary,
+        "findings": findings,
+    }
+
+
 def build_reconciliation_summary(*, reconciliation: dict[str, Any] | None) -> dict[str, Any]:
     reconciliation = reconciliation or {}
     findings = reconciliation.get("findings") or []

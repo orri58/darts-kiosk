@@ -29,6 +29,18 @@ import PortalLayout from "./pages/portal/PortalLayout";
 import PortalDashboard from "./pages/portal/PortalDashboard";
 import PortalDevices from "./pages/portal/PortalDevices";
 
+// Operator Pages (central operator surface)
+import OperatorLogin from "./pages/operator/OperatorLogin";
+import OperatorLayout from "./pages/operator/OperatorLayout";
+import OperatorDashboard from "./pages/operator/OperatorDashboard";
+import OperatorCustomers from "./pages/operator/OperatorCustomers";
+import OperatorLocations from "./pages/operator/OperatorLocations";
+import OperatorDevices from "./pages/operator/OperatorDevices";
+import OperatorLicenses from "./pages/operator/OperatorLicenses";
+import OperatorUsers from "./pages/operator/OperatorUsers";
+import OperatorAudit from "./pages/operator/OperatorAudit";
+import OperatorRemoteActions from "./pages/operator/OperatorRemoteActions";
+
 // Context
 import { AuthProvider } from "./context/AuthContext";
 import { SettingsProvider } from "./context/SettingsContext";
@@ -75,13 +87,25 @@ function App() {
               <Route path="reports" element={<AdminReports />} />
             </Route>
             
-            {/* Portal Routes (opt-in central adapter surface) */}
+            {/* Portal / Operator Routes (opt-in central adapter surface) */}
             {PORTAL_SURFACE_ENABLED && (
               <>
                 <Route path="/portal/login" element={<CentralAuthProvider><PortalLogin /></CentralAuthProvider>} />
                 <Route path="/portal" element={<CentralAuthProvider><PortalLayout /></CentralAuthProvider>}>
                   <Route index element={<PortalDashboard />} />
                   <Route path="devices" element={<PortalDevices />} />
+                </Route>
+
+                <Route path="/operator/login" element={<CentralAuthProvider><OperatorLogin /></CentralAuthProvider>} />
+                <Route path="/operator" element={<CentralAuthProvider><OperatorLayout /></CentralAuthProvider>}>
+                  <Route index element={<OperatorDashboard />} />
+                  <Route path="customers" element={<OperatorCustomers />} />
+                  <Route path="locations" element={<OperatorLocations />} />
+                  <Route path="devices" element={<OperatorDevices />} />
+                  <Route path="licenses" element={<OperatorLicenses />} />
+                  <Route path="users" element={<OperatorUsers />} />
+                  <Route path="remote-actions" element={<OperatorRemoteActions />} />
+                  <Route path="audit" element={<OperatorAudit />} />
                 </Route>
               </>
             )}

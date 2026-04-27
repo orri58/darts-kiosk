@@ -1,10 +1,12 @@
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import { useCentralData } from '../../hooks/useCentralData';
-import { Monitor, Wifi, WifiOff, Ban, CheckCircle, AlertTriangle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Monitor, Wifi, WifiOff, Ban, CheckCircle, AlertTriangle, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
 
 export default function OperatorDevices() {
+  const navigate = useNavigate();
   const { apiBase, authHeaders, canManage } = useCentralAuth();
   const { data: devices, loading, error, refetch } = useCentralData('licensing/devices');
 
@@ -42,6 +44,7 @@ export default function OperatorDevices() {
               <th className="px-4 py-2.5 font-medium">Letzter Sync</th>
               <th className="px-4 py-2.5 font-medium">Syncs</th>
               <th className="px-4 py-2.5 font-medium">Geräte-Status</th>
+              <th className="px-4 py-2.5 font-medium">Remote Actions</th>
               {canManage && <th className="px-4 py-2.5 font-medium text-right">Aktionen</th>}
             </tr>
           </thead>
@@ -68,6 +71,14 @@ export default function OperatorDevices() {
                     <span className={`text-xs px-2 py-0.5 rounded-full ${d.status === 'active' ? 'bg-emerald-500/10 text-emerald-400' : d.status === 'blocked' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-500/10 text-zinc-400'}`}>
                       {d.status === 'active' ? 'Aktiv' : d.status === 'blocked' ? 'Gesperrt' : 'Deaktiviert'}
                     </span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <button
+                      onClick={() => navigate(`/operator/remote-actions?device_id=${encodeURIComponent(d.id)}`)}
+                      className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-indigo-300 hover:bg-indigo-500/10"
+                    >
+                      Öffnen <ExternalLink className="w-3.5 h-3.5" />
+                    </button>
                   </td>
                   {canManage && (
                     <td className="px-4 py-2.5 text-right">

@@ -2,14 +2,14 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Monitor, KeyRound, Building2, MapPin,
-  ScrollText, LogOut, Menu, X, Users, Shield
+  ScrollText, LogOut, Menu, X, Users, Shield, Workflow
 } from 'lucide-react';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import ScopeSwitcher from '../../components/central/ScopeSwitcher';
 
 export default function OperatorLayout() {
   const navigate = useNavigate();
-  const { user, logout, loading, isAuthenticated, isSuperadmin, canManage, canManageStaff, roleLabel } = useCentralAuth();
+  const { user, logout, loading, isAuthenticated, canManage, canManageStaff, canReviewRemoteActions, roleLabel } = useCentralAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
@@ -41,6 +41,9 @@ export default function OperatorLayout() {
   }
   if (canManageStaff) {
     NAV_ITEMS.push({ path: '/operator/users', icon: Users, label: 'Benutzer', tid: 'op-nav-users' });
+  }
+  if (canReviewRemoteActions || canManage) {
+    NAV_ITEMS.push({ path: '/operator/remote-actions', icon: Workflow, label: 'Remote Actions', tid: 'op-nav-remote-actions' });
   }
   NAV_ITEMS.push({ path: '/operator/audit', icon: ScrollText, label: 'Aktivität', tid: 'op-nav-audit' });
 

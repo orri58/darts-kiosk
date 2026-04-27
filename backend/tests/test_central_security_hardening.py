@@ -388,7 +388,11 @@ def test_license_detail_redacts_token_audit_fields_and_uses_operator_safe_device
     )
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["active_token"]["token_preview"] == "tok_live_1234"
+    assert data["active_token"]["detail_level"] == "operator_safe"
+    assert data["active_token"]["has_token_preview"] is True
+    assert data["active_token"]["has_device_name_template"] is True
+    assert "token_preview" not in data["active_token"]
+    assert "device_name_template" not in data["active_token"]
     assert "used_by_install_id" not in data["active_token"]
     assert "used_by_device_id" not in data["active_token"]
     assert "created_by" not in data["active_token"]
@@ -396,6 +400,11 @@ def test_license_detail_redacts_token_audit_fields_and_uses_operator_safe_device
     assert "revoked_by" not in data["active_token"]
     assert "raw_token" not in data["active_token"]
     assert "token_history" in data
+    assert data["token_history"][0]["detail_level"] == "operator_safe"
+    assert data["token_history"][0]["has_token_preview"] is True
+    assert data["token_history"][0]["has_device_name_template"] is True
+    assert "token_preview" not in data["token_history"][0]
+    assert "device_name_template" not in data["token_history"][0]
     assert "used_by_install_id" not in data["token_history"][0]
     assert data["devices"][0]["detail_level"] == "operator_safe"
     assert "api_key_preview" not in data["devices"][0]
@@ -431,6 +440,18 @@ def test_installer_license_detail_keeps_internal_device_summary_fields(central_a
         device.credential_fingerprint = "fp-license-installer"
         device.lease_id = "lease-license-installer"
         device.last_error = "installer-visible error"
+        session.add(
+            models.RegistrationToken(
+                license_id=license_row.id,
+                customer_id=seeded_central["customer_id"],
+                location_id=seeded_central["location_id"],
+                token_hash="hash-installer-1",
+                token_preview="tok_installer_1234",
+                device_name_template="Installer Template",
+                expires_at=now + timedelta(hours=12),
+                created_by="superadmin",
+            )
+        )
         session.commit()
         license_id = license_row.id
 
@@ -441,6 +462,12 @@ def test_installer_license_detail_keeps_internal_device_summary_fields(central_a
     )
     assert response.status_code == 200, response.text
     data = response.json()
+    assert data["active_token"]["detail_level"] == "internal"
+    assert data["active_token"]["token_preview"] == "tok_installer_1234"
+    assert data["active_token"]["device_name_template"] == "Installer Template"
+    assert "has_token_preview" not in data["active_token"]
+    assert data["token_history"][0]["detail_level"] == "internal"
+    assert data["token_history"][0]["token_preview"] == "tok_installer_1234"
     assert data["devices"][0]["detail_level"] == "internal"
     assert data["devices"][0]["api_key_preview"].startswith("device-a")
     assert data["devices"][0]["trust_reason"] == "installer trust note"
@@ -1357,6 +1384,557 @@ def test_owner_cannot_issue_remote_action_outside_scope(client, seeded_central):
     assert response.status_code == 403
 
 
+def test_owner_cannot_issue_restart_backend_after_policy_narrowing(client, seeded_central):
+    owner_token = _login(client, "owner", "owner-pass")
+    response = client.post(
+        f"/api/remote-actions/{seeded_central['device_id']}",
+        json={"action_type": "restart_backend"},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 403
+    assert "requires role installer+" in response.json()["detail"]
+
+
+
+def test_remote_action_policy_catalog_matches_current_central_wave():
+    from central_server.remote_action_policy import REMOTE_ACTION_POLICIES, list_remote_action_types
+
+    assert list_remote_action_types() == [
+        "force_sync",
+        "lock_board",
+        "reload_ui",
+        "restart_backend",
+        "start_session",
+        "stop_session",
+        "unlock_board",
+    ]
+    assert set(REMOTE_ACTION_POLICIES.keys()) == set(list_remote_action_types())
+    assert REMOTE_ACTION_POLICIES["force_sync"].queue_allowed is True
+    assert REMOTE_ACTION_POLICIES["reload_ui"].queue_allowed is True
+    assert REMOTE_ACTION_POLICIES["restart_backend"].approval_required is True
+    assert REMOTE_ACTION_POLICIES["restart_backend"].min_role == "installer"
+    assert REMOTE_ACTION_POLICIES["restart_backend"].ttl_seconds == 180
+    for action_type in ("unlock_board", "lock_board", "start_session", "stop_session"):
+        policy = REMOTE_ACTION_POLICIES[action_type]
+        assert policy.queue_allowed is False
+        assert policy.risk_level == "critical"
+        assert policy.approval_required is True
+
+
+
+def test_central_blocks_board_and_session_remote_actions_even_for_superadmin(client, seeded_central):
+    superadmin_token = _login(client, "superadmin", "bootstrap-pass")
+    for action_type in ("unlock_board", "lock_board", "start_session", "stop_session"):
+        response = client.post(
+            f"/api/remote-actions/{seeded_central['device_id']}",
+            json={"action_type": action_type, "params": {"board_id": "b1"}},
+            headers={"Authorization": f"Bearer {superadmin_token}"},
+        )
+        assert response.status_code == 403
+        assert "blocked by central policy" in response.json()["detail"]
+
+
+
+def test_pending_remote_actions_include_policy_metadata_and_expire_stale_entries(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+    now = datetime.now(timezone.utc)
+
+    with Session(sync_engine) as session:
+        fresh = models.RemoteAction(
+            device_id=seeded_central["device_id"],
+            action_type="force_sync",
+            status="pending",
+            issued_by="superadmin",
+            issued_at=now,
+        )
+        stale = models.RemoteAction(
+            device_id=seeded_central["device_id"],
+            action_type="reload_ui",
+            status="pending",
+            issued_by="superadmin",
+            issued_at=now - timedelta(minutes=10),
+        )
+        blocked = models.RemoteAction(
+            device_id=seeded_central["device_id"],
+            action_type="unlock_board",
+            status="pending",
+            issued_by="superadmin",
+            issued_at=now,
+            params={"board_id": "b1"},
+        )
+        session.add_all([fresh, stale, blocked])
+        session.commit()
+        fresh_id = fresh.id
+        stale_id = stale.id
+        blocked_id = blocked.id
+
+    response = client.get(
+        f"/api/remote-actions/{seeded_central['device_id']}/pending",
+        headers={"X-License-Key": "device-api-key"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert [item["id"] for item in data] == [fresh_id]
+    assert data[0]["category"] == "maintenance"
+    assert data[0]["risk_level"] == "low"
+    assert data[0]["approval_required"] is False
+    assert data[0]["request_state"] == "delivered"
+    assert data[0]["outcome_code"] == "delivered"
+    assert data[0]["expires_at"] is not None
+
+    with Session(sync_engine) as session:
+        stale_row = session.get(models.RemoteAction, stale_id)
+        blocked_row = session.get(models.RemoteAction, blocked_id)
+        assert stale_row.status == "expired"
+        assert "Expired before device delivery" in (stale_row.result_message or "")
+        assert blocked_row.status == "expired"
+        assert "Blocked by central remote-action policy" in (blocked_row.result_message or "")
+
+
+def test_restart_backend_requires_central_review_before_device_delivery(client, central_app_env, seeded_central):
+    installer_token = _login(client, "installer", "installer-pass")
+    response = client.post(
+        f"/api/remote-actions/{seeded_central['device_id']}",
+        json={"action_type": "restart_backend", "request_note": "operator requested recovery"},
+        headers={"Authorization": f"Bearer {installer_token}"},
+    )
+    assert response.status_code == 200, response.text
+    issued = response.json()
+    assert issued["approval_state"] == "pending"
+    assert issued["request_state"] == "pending_approval"
+    assert issued["outcome_code"] == "accepted"
+    assert issued["outcome_detail"] == "awaiting_review"
+
+    pending = client.get(
+        f"/api/remote-actions/{seeded_central['device_id']}/pending",
+        headers={"X-License-Key": "device-api-key"},
+    )
+    assert pending.status_code == 200, pending.text
+    assert pending.json() == []
+
+
+def test_remote_action_review_approval_and_summary_flow(client, central_app_env, seeded_central):
+    installer_token = _login(client, "installer", "installer-pass")
+    superadmin_token = _login(client, "superadmin", "bootstrap-pass")
+
+    issued = client.post(
+        f"/api/remote-actions/{seeded_central['device_id']}",
+        json={"action_type": "restart_backend"},
+        headers={"Authorization": f"Bearer {installer_token}"},
+    )
+    assert issued.status_code == 200, issued.text
+    action_id = issued.json()["id"]
+
+    reviewed = client.post(
+        f"/api/remote-actions/{action_id}/review",
+        json={"decision": "approve", "review_note": "maintenance window confirmed"},
+        headers={"Authorization": f"Bearer {superadmin_token}"},
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    reviewed_data = reviewed.json()
+    assert reviewed_data["approval_state"] == "approved"
+    assert reviewed_data["request_state"] == "approved"
+    assert reviewed_data["reviewed_by"] == "superadmin"
+
+    pending = client.get(
+        f"/api/remote-actions/{seeded_central['device_id']}/pending",
+        headers={"X-License-Key": "device-api-key"},
+    )
+    assert pending.status_code == 200, pending.text
+    items = pending.json()
+    assert len(items) == 1
+    assert items[0]["id"] == action_id
+    assert items[0]["request_state"] == "delivered"
+
+    ack = client.post(
+        f"/api/remote-actions/{seeded_central['device_id']}/ack",
+        json={"action_id": action_id, "success": True, "message": "backend restarted"},
+        headers={"X-License-Key": "device-api-key"},
+    )
+    assert ack.status_code == 200, ack.text
+
+    summary = client.get(
+        f"/api/remote-actions/{seeded_central['device_id']}/summary",
+        headers={"Authorization": f"Bearer {installer_token}"},
+    )
+    assert summary.status_code == 200, summary.text
+    summary_data = summary.json()
+    assert summary_data["counts"]["finalized_success"] >= 1
+    assert summary_data["by_outcome"]["succeeded"] >= 1
+
+
+def test_remote_action_review_refusal_finalizes_request(client, seeded_central):
+    installer_token = _login(client, "installer", "installer-pass")
+    superadmin_token = _login(client, "superadmin", "bootstrap-pass")
+
+    issued = client.post(
+        f"/api/remote-actions/{seeded_central['device_id']}",
+        json={"action_type": "restart_backend"},
+        headers={"Authorization": f"Bearer {installer_token}"},
+    )
+    assert issued.status_code == 200, issued.text
+    action_id = issued.json()["id"]
+
+    refused = client.post(
+        f"/api/remote-actions/{action_id}/review",
+        json={"decision": "refuse", "review_note": "unsafe timing"},
+        headers={"Authorization": f"Bearer {superadmin_token}"},
+    )
+    assert refused.status_code == 200, refused.text
+    data = refused.json()
+    assert data["approval_state"] == "refused"
+    assert data["request_state"] == "refused"
+    assert data["outcome_code"] == "refused"
+    assert data["status"] == "failed"
+
+
+
+def test_remote_action_overview_rolls_up_location_and_license_triage(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+    now = datetime.now(timezone.utc)
+
+    with Session(sync_engine) as session:
+        license_row = models.CentralLicense(
+            customer_id=seeded_central["customer_id"],
+            location_id=seeded_central["location_id"],
+            plan_type="pro",
+            max_devices=2,
+            status="active",
+            starts_at=now - timedelta(days=2),
+        )
+        session.add(license_row)
+        session.flush()
+
+        device = session.get(models.CentralDevice, seeded_central["device_id"])
+        device.license_id = license_row.id
+
+        session.add_all([
+            models.RemoteAction(
+                device_id=device.id,
+                action_type="restart_backend",
+                status="pending",
+                request_state="pending_approval",
+                approval_state="pending",
+                issued_by="installer",
+                issued_at=now - timedelta(minutes=5),
+            ),
+            models.RemoteAction(
+                device_id=device.id,
+                action_type="force_sync",
+                status="acked",
+                request_state="finalized",
+                approval_state="not_required",
+                outcome_code="succeeded",
+                issued_by="installer",
+                issued_at=now - timedelta(minutes=3),
+                acked_at=now - timedelta(minutes=2),
+                finalized_at=now - timedelta(minutes=2),
+            ),
+        ])
+        session.commit()
+        license_id = license_row.id
+
+    owner_token = _login(client, "owner", "owner-pass")
+    response = client.get(
+        "/api/remote-actions/overview",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["summary"]["counts"]["pending_approval"] == 1
+    assert data["summary"]["counts"]["finalized_success"] == 1
+    assert data["summary"]["has_pending_review"] is True
+    assert data["location_summaries"][0]["scope"]["location_id"] == seeded_central["location_id"]
+    assert data["location_summaries"][0]["triage_priority"]["pending_approval"] == 1
+    assert data["license_summaries"][0]["scope"]["license_id"] == license_id
+    assert data["recent_items"][0]["detail_level"] == "operator_safe"
+    assert data["recent_items"][0]["scope"]["license_id"] == license_id
+    assert data["queue_metrics"]["totals"]["needs_triage"] >= 1
+    assert data["window"]["returned"] == 2
+
+
+def test_dashboard_surfaces_remote_action_queue_metrics(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+    now = datetime.now(timezone.utc)
+
+    with Session(sync_engine) as session:
+        session.add_all([
+            models.RemoteAction(
+                device_id=seeded_central["device_id"],
+                action_type="restart_backend",
+                status="pending",
+                request_state="pending_approval",
+                approval_state="pending",
+                outcome_code="accepted",
+                outcome_detail="awaiting_review",
+                issued_by="installer",
+                issued_at=now - timedelta(minutes=10),
+            ),
+            models.RemoteAction(
+                device_id=seeded_central["device_id"],
+                action_type="force_sync",
+                status="failed",
+                request_state="finalized",
+                approval_state="not_required",
+                outcome_code="failed",
+                outcome_detail="device_reported_failure",
+                issued_by="installer",
+                issued_at=now - timedelta(minutes=4),
+                acked_at=now - timedelta(minutes=3),
+                finalized_at=now - timedelta(minutes=3),
+            ),
+        ])
+        session.commit()
+
+    owner_token = _login(client, "owner", "owner-pass")
+    response = client.get(
+        "/api/dashboard",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    queue = data["remote_action_queue"]
+    assert queue["summary"]["counts"]["pending_approval"] == 1
+    assert queue["totals"]["finalized_failed"] == 1
+    assert queue["totals"]["needs_triage"] == 2
+    assert queue["sla"]["has_pending_review"] is True
+
+
+
+def test_remote_action_review_queue_supports_lifecycle_filters(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+    now = datetime.now(timezone.utc)
+
+    with Session(sync_engine) as session:
+        session.add_all([
+            models.RemoteAction(
+                device_id=seeded_central["device_id"],
+                action_type="restart_backend",
+                status="pending",
+                request_state="pending_approval",
+                approval_state="pending",
+                outcome_code="accepted",
+                outcome_detail="awaiting_review",
+                issued_by="installer",
+                issued_at=now - timedelta(minutes=4),
+            ),
+            models.RemoteAction(
+                device_id=seeded_central["device_id"],
+                action_type="restart_backend",
+                status="failed",
+                request_state="refused",
+                approval_state="refused",
+                outcome_code="refused",
+                outcome_detail="manual_review",
+                issued_by="installer",
+                issued_at=now - timedelta(minutes=3),
+                acked_at=now - timedelta(minutes=2),
+                finalized_at=now - timedelta(minutes=2),
+            ),
+        ])
+        session.commit()
+
+    installer_token = _login(client, "installer", "installer-pass")
+    pending = client.get(
+        "/api/remote-actions/review-queue",
+        params={"request_state": "pending_approval"},
+        headers={"Authorization": f"Bearer {installer_token}"},
+    )
+    assert pending.status_code == 200, pending.text
+    pending_data = pending.json()
+    assert pending_data["summary"]["counts"]["pending_approval"] == 1
+    assert len(pending_data["items"]) == 1
+    assert pending_data["items"][0]["scope"]["customer_id"] == seeded_central["customer_id"]
+
+    refused = client.get(
+        "/api/remote-actions/review-queue",
+        params={"approval_state": "refused"},
+        headers={"Authorization": f"Bearer {installer_token}"},
+    )
+    assert refused.status_code == 200, refused.text
+    refused_data = refused.json()
+    assert refused_data["summary"]["counts"]["refused"] == 1
+    assert refused_data["items"][0]["outcome_code"] == "refused"
+
+
+def test_remote_action_review_queue_supports_windowing_and_exclude_expired(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+    now = datetime.now(timezone.utc)
+
+    with Session(sync_engine) as session:
+        session.add_all([
+            models.RemoteAction(
+                device_id=seeded_central["device_id"],
+                action_type="force_sync",
+                status="pending",
+                request_state="queued",
+                approval_state="not_required",
+                outcome_code="accepted",
+                outcome_detail="queued",
+                issued_by="installer",
+                issued_at=now - timedelta(minutes=5),
+            ),
+            models.RemoteAction(
+                device_id=seeded_central["device_id"],
+                action_type="force_sync",
+                status="expired",
+                request_state="expired",
+                approval_state="not_required",
+                outcome_code="expired",
+                outcome_detail="ttl_elapsed",
+                issued_by="installer",
+                issued_at=now - timedelta(minutes=4),
+                acked_at=now - timedelta(minutes=3),
+                finalized_at=now - timedelta(minutes=3),
+            ),
+            models.RemoteAction(
+                device_id=seeded_central["device_id"],
+                action_type="force_sync",
+                status="acked",
+                request_state="finalized",
+                approval_state="not_required",
+                outcome_code="succeeded",
+                outcome_detail="device_ack",
+                issued_by="installer",
+                issued_at=now - timedelta(minutes=2),
+                acked_at=now - timedelta(minutes=1),
+                finalized_at=now - timedelta(minutes=1),
+            ),
+        ])
+        session.commit()
+
+    installer_token = _login(client, "installer", "installer-pass")
+    response = client.get(
+        "/api/remote-actions/review-queue",
+        params={"include_expired": "false", "offset": 1, "limit": 1},
+        headers={"Authorization": f"Bearer {installer_token}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["window"]["offset"] == 1
+    assert data["window"]["limit"] == 1
+    assert data["window"]["returned"] == 1
+    assert data["window"]["has_more"] is True
+    assert all(item["status"] != "expired" for item in data["items"])
+
+
+def test_remote_action_audit_log_exposes_structured_lifecycle_details(client, seeded_central):
+    installer_token = _login(client, "installer", "installer-pass")
+
+    issued = client.post(
+        f"/api/remote-actions/{seeded_central['device_id']}",
+        json={"action_type": "restart_backend", "request_note": "maintenance window"},
+        headers={"Authorization": f"Bearer {installer_token}"},
+    )
+    assert issued.status_code == 200, issued.text
+    action_id = issued.json()["id"]
+
+    audit = client.get(
+        "/api/licensing/audit-log",
+        params={"action": "remote_action_issued", "device_id": seeded_central["device_id"], "limit": 5},
+        headers={"Authorization": f"Bearer {installer_token}"},
+    )
+    assert audit.status_code == 200, audit.text
+    entries = audit.json()
+    matching = [e for e in entries if (e.get("details") or {}).get("action_id") == action_id]
+    assert matching, entries
+    details = matching[0]["details"]
+    assert details["schema"] == "darts.remote_action_audit.v1"
+    assert details["event"] == "issued"
+    assert details["risk_level"] == "high"
+    assert details["approval_required"] is True
+    assert details["request_note_present"] is True
+    assert matching[0]["scope"]["customer_id"] == seeded_central["customer_id"]
+
+
+
+def test_remote_action_audit_log_filters_and_scope_enrichment(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+    now = datetime.now(timezone.utc)
+
+    with Session(sync_engine) as session:
+        license_row = models.CentralLicense(
+            customer_id=seeded_central["customer_id"],
+            location_id=seeded_central["location_id"],
+            plan_type="ops",
+            max_devices=1,
+            status="active",
+            starts_at=now - timedelta(days=1),
+        )
+        session.add(license_row)
+        session.flush()
+        device = session.get(models.CentralDevice, seeded_central["device_id"])
+        device.license_id = license_row.id
+        session.add_all([
+            models.CentralAuditLog(
+                action="remote_action_issued",
+                device_id=device.id,
+                license_id=license_row.id,
+                actor="installer",
+                message="issued",
+                timestamp=now,
+            ),
+            models.CentralAuditLog(
+                action="remote_action_finalized",
+                device_id=device.id,
+                license_id=license_row.id,
+                actor="device",
+                message="finalized",
+                timestamp=now - timedelta(minutes=1),
+            ),
+        ])
+        session.commit()
+        license_id = license_row.id
+
+    owner_token = _login(client, "owner", "owner-pass")
+    response = client.get(
+        "/api/licensing/audit-log",
+        params={"action_prefix": "remote_action_", "license_id": license_id},
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert len(data) == 2
+    assert data[0]["scope"]["customer_id"] == seeded_central["customer_id"]
+    assert data[0]["scope"]["location_id"] == seeded_central["location_id"]
+    assert data[0]["scope"]["license_id"] == license_id
+
+
+
+def test_remote_action_ack_cannot_overwrite_finalized_state(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+    now = datetime.now(timezone.utc)
+
+    with Session(sync_engine) as session:
+        action = models.RemoteAction(
+            device_id=seeded_central["device_id"],
+            action_type="force_sync",
+            status="acked",
+            issued_by="superadmin",
+            issued_at=now,
+            acked_at=now,
+            result_message="done",
+        )
+        session.add(action)
+        session.commit()
+        action_id = action.id
+
+    response = client.post(
+        f"/api/remote-actions/{seeded_central['device_id']}/ack",
+        json={"action_id": action_id, "success": False, "message": "rewrite-attempt"},
+        headers={"X-License-Key": "device-api-key"},
+    )
+    assert response.status_code == 409
+    assert "already finalized" in response.json()["detail"]
+
+
 def test_owner_remote_action_list_is_operator_safe_and_scoped(client, central_app_env, seeded_central):
     models = central_app_env["models"]
     sync_engine = central_app_env["database"].sync_engine
@@ -1884,6 +2462,211 @@ def test_device_trust_current_lease_reports_grace_after_expiry(client, central_a
     assert payload["lease_status"] == "grace"
     assert payload["trust_status"] == "degraded"
     assert payload["lease"]["computed_status"] == "grace"
+
+
+def test_device_trust_support_diagnostics_exposes_advisory_posture_for_missing_material(client, seeded_central):
+    owner_token = _login(client, "owner", "owner-pass")
+
+    response = client.get(
+        f"/api/device-trust/devices/{seeded_central['device_id']}/support-diagnostics",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    posture = payload["advisory_posture"]
+    assert posture["detail_level"] == "operator_safe"
+    assert posture["schema"] == "darts.device_advisory_posture.v1"
+    assert posture["mode"] == "central_advisory_read_only"
+    assert posture["advisory_only"] is True
+    assert posture["enforcement"] == "disabled"
+    assert posture["trust_posture"] == "review_required"
+    assert posture["commercial_posture"] == "review_required"
+    assert posture["overall_posture"] == "review_required"
+    finding_codes = {item["code"] for item in posture["findings"]}
+    assert {"credential_missing", "lease_missing", "license_missing"}.issubset(finding_codes)
+
+
+def test_device_trust_current_lease_advisory_posture_rolls_up_blockers_and_duplicates(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+    now = central_app_env["server"]._utcnow()
+
+    with Session(sync_engine) as session:
+        blocked_license = models.CentralLicense(
+            customer_id=seeded_central["customer_id"],
+            location_id=seeded_central["location_id"],
+            plan_type="pro",
+            max_devices=2,
+            status="blocked",
+            starts_at=now - timedelta(days=10),
+            ends_at=now + timedelta(days=10),
+        )
+        session.add(blocked_license)
+        session.flush()
+
+        device = session.get(models.CentralDevice, seeded_central["device_id"])
+        outsider = session.get(models.CentralDevice, seeded_central["outsider_device_id"])
+        device.license_id = blocked_license.id
+        device.credential_fingerprint = "dup-fingerprint"
+        outsider.credential_fingerprint = "dup-fingerprint"
+
+        lease = models.DeviceLease(
+            device_id=device.id,
+            central_license_id=blocked_license.id,
+            lease_id="lease-expired-advisory",
+            status=models.DeviceLeaseStatus.ACTIVE.value,
+            issued_at=now - timedelta(days=3),
+            expires_at=now - timedelta(hours=2),
+            grace_until=now - timedelta(hours=1),
+            details_json={"mode": "placeholder", "issued_by": "test"},
+        )
+        session.add(lease)
+        session.commit()
+
+    response = client.get(
+        "/api/device-trust/lease/current",
+        headers={"X-License-Key": "device-api-key"},
+    )
+    assert response.status_code == 200, response.text
+    posture = response.json()["advisory_posture"]
+    assert posture["detail_level"] == "operator_safe"
+    assert posture["commercial_posture"] == "blocked"
+    assert posture["trust_posture"] == "blocked"
+    assert posture["overall_posture"] == "blocked"
+    finding_codes = {item["code"] for item in posture["findings"]}
+    assert {"duplicate_fingerprint", "lease_expired", "license_inactive"}.issubset(finding_codes)
+
+
+def test_device_trust_detail_advisory_posture_surfaces_replacement_conflict(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+
+    with Session(sync_engine) as session:
+        device = session.get(models.CentralDevice, seeded_central["device_id"])
+        replacement = models.CentralDevice(
+            location_id=seeded_central["location_id"],
+            device_name="Replacement Board",
+            api_key="replacement-api-key",
+            install_id="replacement-install-1",
+            status="active",
+            binding_status="bound",
+            replacement_of_device_id=device.id,
+        )
+        session.add(replacement)
+        session.commit()
+
+    owner_token = _login(client, "owner", "owner-pass")
+    response = client.get(
+        f"/api/device-trust/devices/{seeded_central['device_id']}",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200, response.text
+    posture = response.json()["advisory_posture"]
+    assert posture["lifecycle_posture"] in {"degraded", "review_required"}
+    finding_codes = {item["code"] for item in posture["findings"]}
+    assert "replacement_superseded" in finding_codes
+
+
+def test_owner_device_list_includes_operator_safe_advisory_posture(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+
+    with Session(sync_engine) as session:
+        device = session.get(models.CentralDevice, seeded_central["device_id"])
+        device.credential_fingerprint = "owner-posture-fp"
+        session.commit()
+
+    owner_token = _login(client, "owner", "owner-pass")
+    response = client.get(
+        "/api/licensing/devices",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200, response.text
+    payload = next(item for item in response.json() if item["id"] == seeded_central["device_id"])
+    posture = payload["advisory_posture"]
+    assert posture["detail_level"] == "operator_safe"
+    assert posture["overall_posture"] == "review_required"
+    assert "credential_missing" in posture["finding_codes"]
+    assert "lease_missing" in posture["finding_codes"]
+    assert "license_missing" in posture["finding_codes"]
+
+
+def test_license_list_includes_device_advisory_summary(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+    now = datetime.now(timezone.utc)
+
+    with Session(sync_engine) as session:
+        license_row = models.CentralLicense(
+            customer_id=seeded_central["customer_id"],
+            location_id=seeded_central["location_id"],
+            plan_type="pro",
+            max_devices=2,
+            status="blocked",
+            starts_at=now - timedelta(days=5),
+            ends_at=now + timedelta(days=5),
+        )
+        session.add(license_row)
+        session.flush()
+
+        device = session.get(models.CentralDevice, seeded_central["device_id"])
+        device.license_id = license_row.id
+
+        session.add(
+            models.DeviceLease(
+                device_id=device.id,
+                central_license_id=license_row.id,
+                lease_id="license-summary-lease",
+                status=models.DeviceLeaseStatus.ACTIVE.value,
+                issued_at=now - timedelta(days=1),
+                expires_at=now + timedelta(days=1),
+                grace_until=now + timedelta(days=2),
+                details_json={"mode": "placeholder"},
+            )
+        )
+        session.commit()
+        license_id = license_row.id
+
+    owner_token = _login(client, "owner", "owner-pass")
+    response = client.get(
+        "/api/licensing/licenses",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200, response.text
+    payload = next(item for item in response.json() if item["id"] == license_id)
+    summary = payload["device_advisory_summary"]
+    assert payload["computed_status"] == "blocked"
+    assert summary["detail_level"] == "operator_safe"
+    assert summary["device_count"] == 1
+    assert summary["overall_posture"] == "blocked"
+    assert summary["counts"]["blocked"] == 1
+    assert any(item["code"] == "license_inactive" for item in summary["top_findings"])
+
+
+def test_owner_user_list_includes_scope_fleet_summary(client, central_app_env, seeded_central):
+    models = central_app_env["models"]
+    sync_engine = central_app_env["database"].sync_engine
+
+    with Session(sync_engine) as session:
+        device = session.get(models.CentralDevice, seeded_central["device_id"])
+        device.credential_fingerprint = "scope-summary-fp"
+        session.commit()
+
+    owner_token = _login(client, "owner", "owner-pass")
+    response = client.get(
+        "/api/users",
+        headers={"Authorization": f"Bearer {owner_token}"},
+    )
+    assert response.status_code == 200, response.text
+    payload = next(item for item in response.json() if item["username"] == "owner")
+    scope_summary = payload["scope_summary"]
+    fleet = scope_summary["fleet_advisory_summary"]
+    assert scope_summary["detail_level"] == "operator_safe"
+    assert scope_summary["customer_count"] == 1
+    assert fleet["detail_level"] == "operator_safe"
+    assert fleet["device_count"] == 1
+    assert fleet["overall_posture"] == "review_required"
+    assert fleet["counts"]["review_required"] == 1
 
 
 def test_device_trust_credential_issuance_normalizes_material_and_sets_key_id(client, central_app_env, seeded_central):

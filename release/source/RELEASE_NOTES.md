@@ -1,73 +1,75 @@
-# Darts Kiosk — Release Notes v4.4.16
+# Darts Kiosk — Release Notes v4.4.17
 
-## Premium UI polish across kiosk and admin
+## Central / Operator hardening and release-grade workflow maturity
 
-Darts Kiosk 4.4.16 is a quality release focused on finish.
-Instead of adding one isolated feature, this version carries a more modern, professional design language through the product so kiosk and admin finally feel like one cohesive system.
+Darts Kiosk 4.4.17 is a central/operator release.
+This wave tightens what central is actually willing to do remotely, makes approval and audit handling much more explicit, and gives operators a clearer surface for seeing trust/commercial posture without pretending those advisory signals are local enforcement.
+
+In short: less ambiguity, better reviewability, and fewer ways for the operator UI to drift away from the real central policy.
 
 ## What changed
 
-### 1. Shared UI foundations were upgraded
-The frontend’s base design primitives were refined so the whole product benefits from the same stronger visual language:
-- better dark-surface depth
-- cleaner shadows and layering
-- more consistent corners and spacing
-- improved focus states
-- more polished buttons, inputs, and tabs
+### 1. Remote actions are now governed by an explicit central policy
+The release introduces a dedicated remote-action policy layer for central.
+That policy now defines:
+- the action catalog that is actually shippable
+- which actions require approval
+- which legacy/high-risk actions are intentionally blocked
+- expiry behavior and delivery guards
 
-This is the layer that makes everything else feel less improvised.
+This matters because remote execution should be boringly predictable.
+If the UI offers actions central no longer accepts, that is not flexibility — that is a support bug waiting to happen.
 
-### 2. The kiosk now feels more premium during the full customer journey
-Several of the most visible kiosk screens were reworked so they feel intentional and release-grade instead of merely functional:
-- Locked screen
-- Setup flow
-- In-game screen
-- Match result screen
-- Credit-blocked state
-- Error / recovery state
+### 2. Approval, review, and audit flow grew up
+Remote actions now carry richer lifecycle state instead of only a thin pending/acked model.
+The central side now tracks request, approval, delivery, finalization, reviewer metadata, and outcome signals more explicitly.
 
-Highlights include:
-- stronger hero and status panels
-- clearer hierarchy and guidance text
-- better player / tariff / credit context
-- a more credible premium feel during both happy-path and edge-case flows
-- much clearer communication when credits are missing or a match has ended
+That gives operators and reviewers a much clearer answer to questions like:
+- what is waiting for approval
+- what was refused
+- what was delivered
+- what expired
+- who reviewed it and why
 
-### 3. The admin panel is now substantially more consistent
-The upgraded admin language now runs through the most important remaining holdout pages.
-This version continues the shell/settings work and extends the same design standards to:
-- Users
-- Licensing
-- Logs
-- Leaderboard
-- Setup Wizard
+### 3. Advisory trust/commercial posture is visible where operators actually work
+This version adds a central advisory posture rollup that combines:
+- trust status
+- credential state
+- lease state
+- license state
+- replacement/lifecycle findings
 
-That means better section structure, calmer operator-facing copy, stronger metrics and empty states, cleaner status treatment, and less “old tool vs new tool” inconsistency.
+Those signals are then surfaced into operator-facing views so staff can spot degraded or blocked posture faster.
+Important nuance: this is intentionally advisory/read-only central posture, not a surprise local enforcement switch.
 
-### 4. High-friction operational states got clearer
-This release also improves the quality of the product in stressful or high-attention moments:
-- insufficient-credit states are easier to understand
-- end-of-match flow looks more deliberate and polished
-- recovery/error actions are grouped more clearly
-- first-run and security-sensitive setup flows feel more trustworthy
-- role/status visibility in admin is easier to scan quickly
+### 4. The operator surface is more coherent
+The operator app now has stronger auth/session handling and a dedicated Remote Actions page.
+Dashboard/layout/device/license surfaces were aligned so the operator experience reflects the tightened central policy rather than stale assumptions.
+
+That includes making blocked board/session actions visible for history/audit context without falsely suggesting they remain executable.
 
 ## Why this matters
 
-A professional product is not only about features.
-It is also about whether every important screen feels deliberate, trustworthy, and consistent.
-Version 4.4.16 closes several of the remaining visual and UX gaps that made parts of the product feel older than the rest.
+This release is mostly about operational trust.
+When a system can issue remote actions, show posture, and mediate approvals, the worst possible state is half-consistent behavior where backend policy, audit trail, and UI vocabulary disagree.
+
+Version 4.4.17 narrows that gap substantially.
+It is a safer and more honest release: central does what it says, operators see what is really true, and the release artifacts match that behavior.
 
 ## Validation performed for this release
 
 Executed successfully:
 
 ```bash
+./.venv/bin/python -m pytest backend/tests/test_central_security_hardening.py -q
+./.venv/bin/python -m compileall central_server backend
 cd frontend && npm run build
-bash release/build_release.sh
+cd .. && bash release/build_release.sh
 ```
 
 Observed result:
+- focused backend central/operator regression suite passed (`82 passed`)
+- Python compile sanity passed for `central_server` and `backend`
 - frontend production build passed cleanly
-- release artifacts were rebuilt for `v4.4.16`
+- release artifacts were rebuilt for `v4.4.17`
 - release packages are ready for Windows, Linux, and Source distribution

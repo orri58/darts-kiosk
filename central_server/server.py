@@ -15,6 +15,7 @@ import hashlib
 import logging
 import os
 import secrets
+from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
@@ -40,6 +41,7 @@ from central_server.auth import (
 from central_server.ws_hub import device_ws_hub
 from central_server.device_trust import (
     attach_lease_key_metadata,
+    build_advisory_device_posture,
     build_credential_rotation_lineage,
     build_issuer_profile_diagnostics,
     build_placeholder_signed_lease,
@@ -59,6 +61,14 @@ from central_server.device_trust import (
     sync_device_trust_snapshot,
     verify_placeholder_certificate,
     verify_placeholder_signed_lease,
+)
+from central_server.remote_action_policy import (
+    RemoteActionPolicyError,
+    can_deliver_remote_action,
+    get_remote_action_policy,
+    is_remote_action_expired,
+    list_remote_action_types,
+    validate_remote_action_request,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [CENTRAL] %(levelname)s %(message)s")
@@ -307,6 +317,34 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"[MIGRATE] remote_actions.params: {e}")
 
+    # v3.15.x: Add approval/audit maturity columns to remote_actions
+    _remote_action_cols = [
+        ("request_state", "VARCHAR(24) DEFAULT 'queued'"),
+        ("approval_state", "VARCHAR(24) DEFAULT 'not_required'"),
+        ("outcome_code", "VARCHAR(32)"),
+        ("outcome_detail", "VARCHAR(64)"),
+        ("request_note", "TEXT"),
+        ("requested_at", "DATETIME"),
+        ("reviewed_at", "DATETIME"),
+        ("reviewed_by", "VARCHAR(100)"),
+        ("review_note", "TEXT"),
+        ("delivered_at", "DATETIME"),
+        ("finalized_at", "DATETIME"),
+        ("finalized_by", "VARCHAR(100)"),
+    ]
+    for _col, _typ in _remote_action_cols:
+        try:
+            async with AsyncSessionLocal() as db:
+                await db.execute(_text(f"SELECT {_col} FROM remote_actions LIMIT 1"))
+        except Exception:
+            try:
+                async with AsyncSessionLocal() as db:
+                    await db.execute(_text(f"ALTER TABLE remote_actions ADD COLUMN {_col} {_typ}"))
+                    await db.commit()
+                    logger.info(f"[MIGRATE] Added {_col} to remote_actions")
+            except Exception as e:
+                logger.warning(f"[MIGRATE] remote_actions.{_col}: {e}")
+
     # v3.9.4: Create config_history table
     async with AsyncSessionLocal() as db:
         try:
@@ -490,7 +528,32 @@ async def list_users(user: AuthUser = Depends(get_current_user), db: AsyncSessio
             (CentralUser.created_by_user_id == user.id) | (CentralUser.id == user.id)
         )
     result = await db.execute(stmt)
-    return [_ser_user(u) for u in result.scalars().all()]
+    users = result.scalars().all()
+    payload = []
+    now = _utcnow()
+    for target in users:
+        item = _ser_user(target)
+        scoped_customer_ids = list(target.allowed_customer_ids or [])
+        device_stmt = select(CentralDevice)
+        target_is_superadmin = getattr(target, "role", None) == "superadmin"
+        if not target_is_superadmin:
+            if scoped_customer_ids:
+                device_stmt = device_stmt.join(CentralLocation, CentralDevice.location_id == CentralLocation.id).where(
+                    CentralLocation.customer_id.in_(scoped_customer_ids)
+                )
+            else:
+                device_stmt = device_stmt.where(False)
+        device_result = await db.execute(device_stmt)
+        scoped_devices = device_result.scalars().all()
+        posture_map = await _build_device_advisory_posture_map(db, scoped_devices, now=now)
+        item["scope_summary"] = {
+            "customer_count": len(scoped_customer_ids) if not target_is_superadmin else None,
+            "has_global_scope": bool(target_is_superadmin),
+            "fleet_advisory_summary": _summarize_posture_collection(list(posture_map.values())),
+            "detail_level": "operator_safe",
+        }
+        payload.append(item)
+    return payload
 
 
 @app.post("/api/users")
@@ -637,7 +700,15 @@ async def scope_devices(location_id: str = None, customer_id: str = None, user: 
             stmt = apply_customer_scope(stmt, user, CentralLocation.customer_id)
     stmt = stmt.order_by(CentralDevice.device_name)
     result = await db.execute(stmt)
-    return [{"id": d.id, "device_name": d.device_name, "location_id": d.location_id, "status": d.status} for d in result.scalars().all()]
+    devices = result.scalars().all()
+    posture_map = await _build_device_advisory_posture_map(db, devices)
+    return [{
+        "id": d.id,
+        "device_name": d.device_name,
+        "location_id": d.location_id,
+        "status": d.status,
+        "advisory_posture": _compact_advisory_posture(posture_map.get(d.id)),
+    } for d in devices]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -713,7 +784,9 @@ async def dashboard(customer_id: str = None, location_id: str = None, user: Auth
     recent_devices = []
     try:
         dev_result = await db.execute(dev_stmt)
-        for d in dev_result.scalars().all():
+        dashboard_devices = dev_result.scalars().all()
+        dashboard_postures = await _build_device_advisory_posture_map(db, dashboard_devices)
+        for d in dashboard_devices:
             try:
                 connectivity = _compute_device_connectivity(d.last_heartbeat_at)
                 recent_devices.append(_finalize_device_summary({
@@ -721,6 +794,7 @@ async def dashboard(customer_id: str = None, location_id: str = None, user: Auth
                     "online": connectivity == "online",
                     "connectivity": connectivity,
                     "binding_status": d.binding_status,
+                    "advisory_posture": _compact_advisory_posture(dashboard_postures.get(d.id), detail_level="internal" if _can_view_internal_device_detail(user) else "operator_safe"),
                     "last_sync_at": _safe_raw_dt_static(d.last_sync_at),
                     "last_heartbeat_at": _safe_raw_dt_static(d.last_heartbeat_at),
                     "sync_count": d.sync_count or 0,
@@ -735,9 +809,23 @@ async def dashboard(customer_id: str = None, location_id: str = None, user: Auth
         except Exception:
             pass
 
+    remote_action_stmt = select(RemoteAction).join(CentralDevice, RemoteAction.device_id == CentralDevice.id)
+    if location_id:
+        remote_action_stmt = remote_action_stmt.where(CentralDevice.location_id == location_id)
+    elif customer_id:
+        remote_action_stmt = remote_action_stmt.join(CentralLocation, CentralDevice.location_id == CentralLocation.id).where(CentralLocation.customer_id == customer_id)
+    elif not user.is_superadmin:
+        allowed = user.allowed_customer_ids or []
+        remote_action_stmt = remote_action_stmt.join(CentralLocation, CentralDevice.location_id == CentralLocation.id).where(CentralLocation.customer_id.in_(allowed) if allowed else False)
+    remote_action_stmt = remote_action_stmt.order_by(RemoteAction.issued_at.desc()).limit(250)
+    remote_actions = (await db.execute(remote_action_stmt)).scalars().all()
+    remote_action_metrics = _remote_action_queue_metrics(remote_actions)
+
     return {
         "customers": customers, "locations": locations, "devices": devices,
         "licenses_total": total_lic, "licenses_active": active_lic,
+        "fleet_advisory_summary": _summarize_posture_collection(list(dashboard_postures.values()) if 'dashboard_postures' in locals() else []),
+        "remote_action_queue": remote_action_metrics,
         "recent_devices": recent_devices,
     }
 
@@ -993,12 +1081,19 @@ async def list_devices(location_id: str = None, customer_id: str = None, user: A
     stmt = stmt.order_by(CentralDevice.created_at.desc())
     # v3.15.2: Defensive — ORM crash → rollback → fresh-session raw SQL fallback
     devices = []
+    advisory_map = {}
     try:
         result = await db.execute(stmt)
         all_devs = result.scalars().all()
+        advisory_map = await _build_device_advisory_posture_map(db, all_devs)
         for d in all_devs:
             try:
-                devices.append(_finalize_device_summary(_ser_device(d), user))
+                base = _ser_device(d)
+                base["advisory_posture"] = _compact_advisory_posture(
+                    advisory_map.get(d.id),
+                    detail_level="internal" if _can_view_internal_device_detail(user) else "operator_safe",
+                )
+                devices.append(_finalize_device_summary(base, user))
             except Exception as e:
                 logger.warning(f"[DEVICES-LIST] Serialization failed for device: {e}")
                 devices.append(_finalize_device_summary({"id": str(getattr(d, 'id', '?')), "device_name": str(getattr(d, 'device_name', 'Fehler')), "status": "error", "_error": str(e)}, user))
@@ -1028,6 +1123,7 @@ async def list_devices(location_id: str = None, customer_id: str = None, user: A
                         "sync_count": r.get("sync_count", 0) or 0,
                         "last_sync_at": None, "last_heartbeat_at": None,
                         "created_at": None, "ws_connected": False,
+                        "advisory_posture": None,
                     }, user))
         except Exception as e2:
             logger.error(f"[DEVICES-LIST] Even fresh-session raw SQL failed: {e2}")
@@ -1093,6 +1189,17 @@ async def list_licenses(customer_id: str = None, status: str = None, user: AuthU
     if cust_ids:
         cr = await db.execute(select(CentralCustomer).where(CentralCustomer.id.in_(cust_ids)))
         cust_map = {c.id: c.name for c in cr.scalars().all()}
+    license_ids = [lic.id for lic in lics]
+    posture_summary_by_license = {}
+    if license_ids:
+        license_devices_result = await db.execute(select(CentralDevice).where(CentralDevice.license_id.in_(license_ids)))
+        license_devices = license_devices_result.scalars().all()
+        device_postures = await _build_device_advisory_posture_map(db, license_devices)
+        devices_by_license: dict[str, list[dict]] = defaultdict(list)
+        for device in license_devices:
+            devices_by_license[device.license_id].append(device_postures.get(device.id))
+        for lic_id, postures in devices_by_license.items():
+            posture_summary_by_license[lic_id] = _summarize_posture_collection(postures)
     items = []
     for lic in lics:
         d = _ser_license(lic)
@@ -1100,6 +1207,8 @@ async def list_licenses(customer_id: str = None, status: str = None, user: AuthU
         # Count bound devices
         dc = await db.execute(select(func.count()).where(CentralDevice.license_id == lic.id))
         d["device_count"] = dc.scalar() or 0
+        d["computed_status"] = _compute_status(lic, _utcnow())
+        d["device_advisory_summary"] = posture_summary_by_license.get(lic.id) or _summarize_posture_collection([])
         items.append(d)
     return items
 
@@ -1204,8 +1313,8 @@ async def get_license_detail(license_id: str, user: AuthUser = Depends(get_curre
     detail["location_name"] = loc_name
     detail["devices"] = devices
     detail["device_count"] = len(devices)
-    detail["active_token"] = _ser_reg_token_summary(active_token) if active_token else None
-    detail["token_history"] = [_ser_reg_token_summary(t) for t in tokens]
+    detail["active_token"] = _finalize_reg_token_summary(_ser_reg_token_summary(active_token), user) if active_token else None
+    detail["token_history"] = [_finalize_reg_token_summary(_ser_reg_token_summary(t), user) for t in tokens]
     return detail
 
 
@@ -1337,34 +1446,117 @@ async def unbind_device_from_license(license_id: str, device_id: str, user: Auth
 # ═══════════════════════════════════════════════════════════════
 
 @app.get("/api/licensing/audit-log")
-async def get_audit_log(limit: int = 50, user: AuthUser = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    stmt = select(CentralAuditLog).order_by(CentralAuditLog.timestamp.desc()).limit(limit)
+async def get_audit_log(
+    limit: int = 50,
+    action: str = None,
+    action_prefix: str = None,
+    actor: str = None,
+    device_id: str = None,
+    license_id: str = None,
+    customer_id: str = None,
+    location_id: str = None,
+    user: AuthUser = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    stmt = select(CentralAuditLog).order_by(CentralAuditLog.timestamp.desc())
+    if action:
+        stmt = stmt.where(CentralAuditLog.action == action)
+    if action_prefix:
+        stmt = stmt.where(CentralAuditLog.action.like(f"{action_prefix}%"))
+    if actor:
+        stmt = stmt.where(CentralAuditLog.actor == actor)
+    if device_id:
+        stmt = stmt.where(CentralAuditLog.device_id == device_id)
+    if license_id:
+        stmt = stmt.where(CentralAuditLog.license_id == license_id)
+    stmt = stmt.limit(max(1, min(limit, 250)))
     result = await db.execute(stmt)
     entries = result.scalars().all()
 
-    if not user.is_superadmin:
-        allowed_cids = set(user.allowed_customer_ids or [])
-        loc_result = await db.execute(select(CentralLocation.id).where(CentralLocation.customer_id.in_(allowed_cids)))
-        allowed_lids = {r[0] for r in loc_result.fetchall()}
-        dev_result = await db.execute(select(CentralDevice.id).where(CentralDevice.location_id.in_(allowed_lids)))
-        allowed_dids = {r[0] for r in dev_result.fetchall()}
-        lic_result = await db.execute(select(CentralLicense.id).where(CentralLicense.customer_id.in_(allowed_cids)))
-        allowed_licids = {r[0] for r in lic_result.fetchall()}
+    devices_by_id = {}
+    locations_by_id = {}
+    customers_by_id = {}
+    licenses_by_id = {}
 
-        entries = [
+    scoped_entries = entries
+    if not user.is_superadmin or customer_id or location_id:
+        allowed_cids = set(user.allowed_customer_ids or []) if not user.is_superadmin else None
+        loc_stmt = select(CentralLocation)
+        if customer_id:
+            if not can_access_customer(user, customer_id):
+                raise HTTPException(403, "Access denied")
+            loc_stmt = loc_stmt.where(CentralLocation.customer_id == customer_id)
+        elif location_id:
+            if not await can_access_location(user, location_id, db):
+                raise HTTPException(403, "Access denied")
+            loc_stmt = loc_stmt.where(CentralLocation.id == location_id)
+        elif not user.is_superadmin:
+            loc_stmt = loc_stmt.where(CentralLocation.customer_id.in_(allowed_cids) if allowed_cids else False)
+        loc_result = await db.execute(loc_stmt)
+        allowed_locations = loc_result.scalars().all()
+        locations_by_id = {loc.id: loc for loc in allowed_locations}
+        allowed_lids = set(locations_by_id.keys())
+        customer_ids = {loc.customer_id for loc in allowed_locations}
+        if customer_ids:
+            customer_result = await db.execute(select(CentralCustomer).where(CentralCustomer.id.in_(customer_ids)))
+            customers_by_id = {customer.id: customer for customer in customer_result.scalars().all()}
+        dev_result = await db.execute(select(CentralDevice).where(CentralDevice.location_id.in_(allowed_lids) if allowed_lids else False))
+        devices = dev_result.scalars().all()
+        devices_by_id = {device.id: device for device in devices}
+        lic_stmt = select(CentralLicense)
+        if customer_id:
+            lic_stmt = lic_stmt.where(CentralLicense.customer_id == customer_id)
+        elif location_id:
+            lic_stmt = lic_stmt.where(CentralLicense.location_id == location_id)
+        elif not user.is_superadmin:
+            lic_stmt = lic_stmt.where(CentralLicense.customer_id.in_(allowed_cids) if allowed_cids else False)
+        lic_result = await db.execute(lic_stmt)
+        licenses_by_id = {lic.id: lic for lic in lic_result.scalars().all()}
+
+        scoped_entries = [
             e for e in entries
-            if (not e.device_id or e.device_id in allowed_dids)
-            and (not e.license_id or e.license_id in allowed_licids)
+            if (not e.device_id or e.device_id in devices_by_id)
+            and (not e.license_id or e.license_id in licenses_by_id)
         ]
+    else:
+        device_ids = {e.device_id for e in entries if e.device_id}
+        if device_ids:
+            dev_result = await db.execute(select(CentralDevice).where(CentralDevice.id.in_(device_ids)))
+            devices = dev_result.scalars().all()
+            devices_by_id = {device.id: device for device in devices}
+            location_ids = {device.location_id for device in devices if device.location_id}
+            if location_ids:
+                loc_result = await db.execute(select(CentralLocation).where(CentralLocation.id.in_(location_ids)))
+                locations = loc_result.scalars().all()
+                locations_by_id = {loc.id: loc for loc in locations}
+                customer_ids = {loc.customer_id for loc in locations if loc.customer_id}
+                if customer_ids:
+                    customer_result = await db.execute(select(CentralCustomer).where(CentralCustomer.id.in_(customer_ids)))
+                    customers_by_id = {customer.id: customer for customer in customer_result.scalars().all()}
+        license_ids = {e.license_id for e in entries if e.license_id}
+        if license_ids:
+            lic_result = await db.execute(select(CentralLicense).where(CentralLicense.id.in_(license_ids)))
+            licenses_by_id = {lic.id: lic for lic in lic_result.scalars().all()}
 
-    return [
-        {
-            "id": e.id, "timestamp": e.timestamp.isoformat() if e.timestamp else None,
-            "action": e.action, "device_id": e.device_id, "install_id": e.install_id,
-            "message": e.message, "actor": e.actor,
-        }
-        for e in entries
-    ]
+    payload = []
+    for e in scoped_entries:
+        device = devices_by_id.get(e.device_id)
+        location = locations_by_id.get(device.location_id) if device is not None else None
+        customer = customers_by_id.get(location.customer_id) if location is not None else None
+        license_row = licenses_by_id.get(e.license_id) or (licenses_by_id.get(device.license_id) if device is not None and getattr(device, "license_id", None) else None)
+        payload.append({
+            "id": e.id,
+            "timestamp": e.timestamp.isoformat() if e.timestamp else None,
+            "action": e.action,
+            "device_id": e.device_id,
+            "install_id": e.install_id,
+            "license_id": e.license_id,
+            "message": e.message,
+            "actor": e.actor,
+            "details": e.details or None,
+            "scope": _remote_action_scope_snapshot({}, device=device, location=location, customer=customer, license_row=license_row),
+        })
+    return payload
 
 
 @app.get("/api/health")
@@ -1415,6 +1607,21 @@ def _ser_reg_token_summary(t: RegistrationToken) -> dict:
         "created_at": t.created_at.isoformat() if t.created_at else None,
         "status": _token_status(t),
     }
+
+
+def _finalize_reg_token_summary(token_summary: dict | None, user: AuthUser) -> dict | None:
+    if token_summary is None:
+        return None
+    payload = dict(token_summary)
+    if _can_view_internal_device_detail(user):
+        payload["detail_level"] = "internal"
+        return payload
+    payload.pop("token_preview", None)
+    payload.pop("device_name_template", None)
+    payload["has_token_preview"] = bool(token_summary.get("token_preview"))
+    payload["has_device_name_template"] = bool(token_summary.get("device_name_template"))
+    payload["detail_level"] = "operator_safe"
+    return payload
 
 def _token_status(t: RegistrationToken) -> str:
     if t.is_revoked: return "revoked"
@@ -1542,6 +1749,203 @@ async def _get_device_with_scope_check(device_id: str, user: AuthUser, db: Async
     if not await can_access_location(user, device.location_id, db):
         raise HTTPException(403, "Access denied")
     return device
+
+
+async def _build_device_advisory_posture(
+    db: AsyncSession,
+    *,
+    device: CentralDevice,
+    credential: DeviceCredential | None = None,
+    lease: DeviceLease | None = None,
+    now: datetime | None = None,
+) -> dict:
+    license_row = None
+    if getattr(device, "license_id", None):
+        license_row = await db.get(CentralLicense, device.license_id)
+
+    duplicate_devices: list[CentralDevice] = []
+    fingerprint = getattr(credential, "fingerprint", None) or getattr(device, "credential_fingerprint", None)
+    if fingerprint:
+        dup_result = await db.execute(
+            select(CentralDevice).where(
+                CentralDevice.credential_fingerprint == fingerprint,
+                CentralDevice.id != device.id,
+            )
+        )
+        duplicate_devices = dup_result.scalars().all()
+
+    replacement_target = None
+    if getattr(device, "replacement_of_device_id", None):
+        replacement_target = await db.get(CentralDevice, device.replacement_of_device_id)
+
+    replacement_children_result = await db.execute(
+        select(CentralDevice).where(CentralDevice.replacement_of_device_id == device.id)
+    )
+    replacement_children = replacement_children_result.scalars().all()
+
+    return build_advisory_device_posture(
+        device=device,
+        license_row=license_row,
+        credential=credential,
+        lease=lease,
+        duplicate_fingerprint_devices=duplicate_devices,
+        replacement_target=replacement_target,
+        replacement_children=replacement_children,
+        now=now,
+    )
+
+
+async def _build_device_advisory_posture_map(
+    db: AsyncSession,
+    devices: list[CentralDevice],
+    *,
+    now: datetime | None = None,
+) -> dict[str, dict]:
+    now = now or _utcnow()
+    if not devices:
+        return {}
+
+    device_ids = [device.id for device in devices if getattr(device, "id", None)]
+    license_ids = sorted({device.license_id for device in devices if getattr(device, "license_id", None)})
+    replacement_target_ids = sorted({device.replacement_of_device_id for device in devices if getattr(device, "replacement_of_device_id", None)})
+    fingerprints = sorted({
+        getattr(device, "credential_fingerprint", None)
+        for device in devices
+        if getattr(device, "credential_fingerprint", None)
+    })
+
+    credentials_result = await db.execute(
+        select(DeviceCredential)
+        .where(DeviceCredential.device_id.in_(device_ids))
+        .order_by(DeviceCredential.device_id.asc(), DeviceCredential.created_at.desc())
+    )
+    credentials_by_device: dict[str, list[DeviceCredential]] = defaultdict(list)
+    for credential in credentials_result.scalars().all():
+        credentials_by_device[credential.device_id].append(credential)
+
+    leases_result = await db.execute(
+        select(DeviceLease)
+        .where(DeviceLease.device_id.in_(device_ids))
+        .order_by(DeviceLease.device_id.asc(), DeviceLease.created_at.desc())
+    )
+    leases_by_device: dict[str, list[DeviceLease]] = defaultdict(list)
+    for lease in leases_result.scalars().all():
+        leases_by_device[lease.device_id].append(lease)
+
+    licenses_by_id = {}
+    if license_ids:
+        license_result = await db.execute(select(CentralLicense).where(CentralLicense.id.in_(license_ids)))
+        licenses_by_id = {license_row.id: license_row for license_row in license_result.scalars().all()}
+
+    replacement_targets_by_id = {}
+    if replacement_target_ids:
+        target_result = await db.execute(select(CentralDevice).where(CentralDevice.id.in_(replacement_target_ids)))
+        replacement_targets_by_id = {row.id: row for row in target_result.scalars().all()}
+
+    replacement_children_result = await db.execute(
+        select(CentralDevice).where(CentralDevice.replacement_of_device_id.in_(device_ids))
+    )
+    replacement_children_by_parent: dict[str, list[CentralDevice]] = defaultdict(list)
+    for child in replacement_children_result.scalars().all():
+        replacement_children_by_parent[child.replacement_of_device_id].append(child)
+
+    fingerprint_candidates_by_value: dict[str, list[CentralDevice]] = defaultdict(list)
+    if fingerprints:
+        fingerprint_result = await db.execute(
+            select(CentralDevice).where(CentralDevice.credential_fingerprint.in_(fingerprints))
+        )
+        for row in fingerprint_result.scalars().all():
+            if getattr(row, "credential_fingerprint", None):
+                fingerprint_candidates_by_value[row.credential_fingerprint].append(row)
+
+    posture_map: dict[str, dict] = {}
+    for device in devices:
+        credentials = credentials_by_device.get(device.id, [])
+        credentials_by_id = {c.id: c for c in credentials}
+        active_credential = next((c for c in credentials if c.status == DeviceCredentialStatus.ACTIVE.value), None)
+        leases = leases_by_device.get(device.id, [])
+        current_lease = leases[0] if leases else None
+        lease_credential = None
+        if current_lease is not None:
+            lease_credential = credentials_by_id.get((current_lease.details_json or {}).get("credential_id")) or active_credential
+        effective_credential = lease_credential or active_credential
+
+        device_fingerprint = getattr(effective_credential, "fingerprint", None) or getattr(device, "credential_fingerprint", None)
+        duplicate_devices = [
+            row for row in fingerprint_candidates_by_value.get(device_fingerprint, [])
+            if row.id != device.id
+        ] if device_fingerprint else []
+
+        posture_map[device.id] = build_advisory_device_posture(
+            device=device,
+            license_row=licenses_by_id.get(getattr(device, "license_id", None)),
+            credential=effective_credential,
+            lease=current_lease,
+            duplicate_fingerprint_devices=duplicate_devices,
+            replacement_target=replacement_targets_by_id.get(getattr(device, "replacement_of_device_id", None)),
+            replacement_children=replacement_children_by_parent.get(device.id, []),
+            now=now,
+        )
+
+    return posture_map
+
+
+def _compact_advisory_posture(posture: dict | None, *, detail_level: str = "operator_safe") -> dict | None:
+    if not posture:
+        return None
+    compact = {
+        "schema": posture.get("schema"),
+        "mode": posture.get("mode"),
+        "advisory_only": posture.get("advisory_only"),
+        "enforcement": posture.get("enforcement"),
+        "generated_at": posture.get("generated_at"),
+        "overall_posture": posture.get("overall_posture"),
+        "trust_posture": posture.get("trust_posture"),
+        "commercial_posture": posture.get("commercial_posture"),
+        "lifecycle_posture": posture.get("lifecycle_posture"),
+        "summary": posture.get("summary"),
+        "recommendation": posture.get("recommendation"),
+        "finding_summary": posture.get("finding_summary"),
+        "finding_codes": [item.get("code") for item in (posture.get("findings") or []) if item.get("code")],
+        "detail_level": detail_level,
+    }
+    return compact
+
+
+def _summarize_posture_collection(postures: list[dict] | None, *, detail_level: str = "operator_safe") -> dict:
+    postures = [item for item in (postures or []) if item]
+    counts = {"ready": 0, "degraded": 0, "review_required": 0, "blocked": 0}
+    finding_counts: dict[str, int] = defaultdict(int)
+    highest = "ready"
+    order = {"ready": 0, "degraded": 1, "review_required": 2, "blocked": 3}
+
+    for posture in postures:
+        overall = posture.get("overall_posture") or "ready"
+        if overall not in counts:
+            counts[overall] = 0
+        counts[overall] += 1
+        if order.get(overall, -1) > order.get(highest, -1):
+            highest = overall
+        for item in posture.get("findings") or []:
+            code = item.get("code")
+            if code:
+                finding_counts[code] += 1
+
+    top_findings = [
+        {"code": code, "count": count}
+        for code, count in sorted(finding_counts.items(), key=lambda item: (-item[1], item[0]))[:5]
+    ]
+    return {
+        "schema": "darts.fleet_advisory_summary.v1",
+        "mode": "central_advisory_read_only",
+        "advisory_only": True,
+        "enforcement": "disabled",
+        "device_count": len(postures),
+        "overall_posture": highest,
+        "counts": counts,
+        "top_findings": top_findings,
+        "detail_level": detail_level,
+    }
 
 
 @app.post("/api/registration-tokens")
@@ -1962,10 +2366,18 @@ async def get_device_trust_detail(device_id: str, user: AuthUser = Depends(get_c
         device=device,
         credentials=credentials,
     )
+    advisory_posture = await _build_device_advisory_posture(
+        db,
+        device=device,
+        credential=effective_credential,
+        lease=current_lease,
+        now=now,
+    )
 
     return _finalize_device_trust_detail({
         "device": _ser_device(device),
         "diagnostics_timestamp": now.isoformat(),
+        "advisory_posture": advisory_posture,
         "credentials": [_ser_device_credential_summary(c, device=device) for c in credentials],
         "leases": [
             _ser_device_lease_summary(
@@ -2034,9 +2446,17 @@ async def get_device_trust_support_diagnostics(device_id: str, user: AuthUser = 
         device=device,
         credentials=credentials,
     )
+    advisory_posture = await _build_device_advisory_posture(
+        db,
+        device=device,
+        credential=lease_credential,
+        lease=current_lease,
+        now=now,
+    )
     payload = {
         "device": _ser_device(device),
         "diagnostics_timestamp": now.isoformat(),
+        "advisory_posture": advisory_posture,
         "reconciliation": reconciliation,
         "reconciliation_summary": reconciliation.get("summary") or build_reconciliation_summary(reconciliation=reconciliation),
         "issuer_profiles": issuer_profiles,
@@ -2324,6 +2744,13 @@ async def get_current_device_lease(request: Request, db: AsyncSession = Depends(
         device=device,
         credentials=credentials,
     )
+    advisory_posture = await _build_device_advisory_posture(
+        db,
+        device=device,
+        credential=lease_credential,
+        lease=lease,
+        now=now,
+    )
 
     return _to_device_safe_current_lease_payload({
         "device_id": device.id,
@@ -2331,6 +2758,7 @@ async def get_current_device_lease(request: Request, db: AsyncSession = Depends(
         "trust_status": getattr(device, "trust_status", DeviceTrustStatus.LEGACY_UNBOUND.value),
         "credential_status": getattr(device, "credential_status", DeviceCredentialStatus.NONE.value),
         "lease_status": getattr(device, "lease_status", DeviceLeaseStatus.NONE.value),
+        "advisory_posture": advisory_posture,
         "credential": _ser_device_credential(lease_credential, device=device) if lease_credential else None,
         "lease": _ser_device_lease(lease, device=device, credential=lease_credential) if lease else None,
         "reconciliation": reconciliation,
@@ -2810,11 +3238,11 @@ async def _aggregate_daily_stats(db: AsyncSession, device_ids: list, start_date:
 # AUDIT LOG HELPER
 # ═══════════════════════════════════════════════════════════════
 
-async def _log_audit(db, action, device_id=None, install_id=None, license_id=None, actor=None, message=None):
+async def _log_audit(db, action, device_id=None, install_id=None, license_id=None, actor=None, message=None, details=None):
     try:
         entry = CentralAuditLog(
             action=action, device_id=device_id, install_id=install_id,
-            license_id=license_id, actor=actor, message=message, timestamp=_utcnow(),
+            license_id=license_id, actor=actor, message=message, details=details, timestamp=_utcnow(),
         )
         db.add(entry)
         await db.flush()
@@ -3346,10 +3774,317 @@ async def get_config_diff(
 # v3.9.0: REMOTE ACTIONS
 # ═══════════════════════════════════════════════════════════════
 
-VALID_ACTIONS = {
-    "force_sync", "restart_backend", "reload_ui",
-    "unlock_board", "lock_board", "start_session", "stop_session",
-}
+VALID_ACTIONS = set(list_remote_action_types())
+
+FINAL_REMOTE_ACTION_STATUSES = {"acked", "failed", "expired"}
+
+
+def _normalize_remote_action_request_state(action) -> str:
+    request_state = getattr(action, "request_state", None)
+    if request_state:
+        return request_state
+    approval_state = getattr(action, "approval_state", None)
+    status = getattr(action, "status", None)
+    if approval_state == "pending":
+        return "pending_approval"
+    if approval_state == "refused":
+        return "refused"
+    if status in FINAL_REMOTE_ACTION_STATUSES:
+        return "finalized" if status in {"acked", "failed"} else "expired"
+    return "queued"
+
+
+def _derive_remote_action_outcome(action) -> tuple[str | None, str | None]:
+    outcome_code = getattr(action, "outcome_code", None)
+    outcome_detail = getattr(action, "outcome_detail", None)
+    if outcome_code:
+        return outcome_code, outcome_detail
+
+    request_state = _normalize_remote_action_request_state(action)
+    status = getattr(action, "status", None)
+    approval_state = getattr(action, "approval_state", None)
+    if approval_state == "refused" or request_state == "refused":
+        return "refused", "manual_review"
+    if request_state == "pending_approval":
+        return "accepted", "awaiting_review"
+    if status == "pending":
+        return "accepted", "queued"
+    if status == "acked":
+        return "succeeded", "device_ack"
+    if status == "failed":
+        return "failed", "device_reported_failure"
+    if status == "expired":
+        message = (getattr(action, "result_message", "") or "").lower()
+        if "blocked" in message:
+            return "blocked", "central_policy"
+        return "expired", "ttl_elapsed"
+    return None, None
+
+
+def _build_remote_action_review_fields(policy, user: AuthUser, body: dict) -> dict:
+    approval_required = bool(policy.approval_required)
+    request_note = body.get("request_note") or body.get("note")
+    return {
+        "request_state": "pending_approval" if approval_required else "queued",
+        "approval_state": "pending" if approval_required else "not_required",
+        "outcome_code": "accepted",
+        "outcome_detail": "awaiting_review" if approval_required else "queued",
+        "request_note": request_note,
+        "requested_at": _utcnow(),
+        "reviewed_at": None,
+        "reviewed_by": None,
+        "review_note": None,
+        "delivered_at": None,
+        "finalized_at": None,
+        "finalized_by": None,
+    }
+
+
+def _remote_action_summary_payload(actions: list[RemoteAction]) -> dict:
+    counts = {
+        "total": len(actions),
+        "pending_delivery": 0,
+        "pending_approval": 0,
+        "approved": 0,
+        "refused": 0,
+        "finalized_success": 0,
+        "finalized_failed": 0,
+        "expired": 0,
+    }
+    by_outcome: dict[str, int] = defaultdict(int)
+    by_action_type: dict[str, int] = defaultdict(int)
+    by_request_state: dict[str, int] = defaultdict(int)
+    by_approval_state: dict[str, int] = defaultdict(int)
+    oldest_pending_approval_at = None
+    latest_issued_at = None
+    latest_finalized_at = None
+    for action in actions:
+        state = _normalize_remote_action_request_state(action)
+        outcome_code, _ = _derive_remote_action_outcome(action)
+        by_action_type[action.action_type] += 1
+        by_request_state[state] += 1
+        approval_state = getattr(action, "approval_state", None) or ("pending" if state == "pending_approval" else "not_required")
+        by_approval_state[approval_state] += 1
+        issued_at = _aware(getattr(action, "issued_at", None))
+        finalized_at = _aware(getattr(action, "finalized_at", None) or getattr(action, "acked_at", None))
+        if issued_at and (latest_issued_at is None or issued_at > latest_issued_at):
+            latest_issued_at = issued_at
+        if finalized_at and (latest_finalized_at is None or finalized_at > latest_finalized_at):
+            latest_finalized_at = finalized_at
+        if state == "pending_approval" and issued_at and (oldest_pending_approval_at is None or issued_at < oldest_pending_approval_at):
+            oldest_pending_approval_at = issued_at
+        if outcome_code:
+            by_outcome[outcome_code] += 1
+        if state == "pending_approval":
+            counts["pending_approval"] += 1
+        elif state == "approved":
+            counts["approved"] += 1
+        elif state == "refused":
+            counts["refused"] += 1
+        elif state == "expired":
+            counts["expired"] += 1
+        elif state in {"finalized", "delivered"}:
+            if getattr(action, "status", None) == "acked":
+                counts["finalized_success"] += 1
+            elif getattr(action, "status", None) == "failed":
+                counts["finalized_failed"] += 1
+        else:
+            counts["pending_delivery"] += 1
+    return {
+        "schema": "darts.remote_action_summary.v1",
+        "counts": counts,
+        "by_outcome": dict(sorted(by_outcome.items())),
+        "by_action_type": dict(sorted(by_action_type.items())),
+        "by_request_state": dict(sorted(by_request_state.items())),
+        "by_approval_state": dict(sorted(by_approval_state.items())),
+        "latest_issued_at": latest_issued_at.isoformat() if latest_issued_at else None,
+        "latest_finalized_at": latest_finalized_at.isoformat() if latest_finalized_at else None,
+        "oldest_pending_approval_at": oldest_pending_approval_at.isoformat() if oldest_pending_approval_at else None,
+        "has_pending_review": counts["pending_approval"] > 0,
+    }
+
+
+def _remote_action_scope_snapshot(action: RemoteAction | dict, *, device=None, location=None, customer=None, license_row=None) -> dict:
+    getv = action.get if isinstance(action, dict) else lambda name, default=None: getattr(action, name, default)
+    return {
+        "device_id": getv("device_id"),
+        "device_name": getattr(device, "device_name", None) if device is not None else None,
+        "location_id": getattr(device, "location_id", None) if device is not None else getv("location_id"),
+        "location_name": getattr(location, "name", None) if location is not None else None,
+        "customer_id": getattr(location, "customer_id", None) if location is not None else getv("customer_id"),
+        "customer_name": getattr(customer, "name", None) if customer is not None else None,
+        "license_id": getattr(device, "license_id", None) if device is not None else getv("license_id"),
+        "license_plan_type": getattr(license_row, "plan_type", None) if license_row is not None else None,
+    }
+
+
+def _remote_action_triage_priority(summary: dict) -> tuple:
+    counts = (summary or {}).get("counts") or {}
+    return (
+        -(counts.get("pending_approval") or 0),
+        -(counts.get("pending_delivery") or 0),
+        -(counts.get("expired") or 0),
+        -(counts.get("refused") or 0),
+        -(counts.get("total") or 0),
+    )
+
+
+def _remote_action_queue_metrics(actions: list[RemoteAction]) -> dict:
+    summary = _remote_action_summary_payload(actions)
+    counts = summary.get("counts") or {}
+    pending_review = counts.get("pending_approval") or 0
+    pending_delivery = counts.get("pending_delivery") or 0
+    expired = counts.get("expired") or 0
+    refused = counts.get("refused") or 0
+    finalized_failed = counts.get("finalized_failed") or 0
+    needs_triage = pending_review + expired + refused + finalized_failed
+    return {
+        "schema": "darts.remote_action_queue_metrics.v1",
+        "summary": summary,
+        "totals": {
+            "needs_triage": needs_triage,
+            "pending_review": pending_review,
+            "pending_delivery": pending_delivery,
+            "expired": expired,
+            "refused": refused,
+            "finalized_failed": finalized_failed,
+        },
+        "sla": {
+            "oldest_pending_approval_at": summary.get("oldest_pending_approval_at"),
+            "has_pending_review": summary.get("has_pending_review") is True,
+        },
+    }
+
+
+def _remote_action_lifecycle_details(action: RemoteAction | dict, *, event: str, actor: str | None = None, extra: dict | None = None) -> dict:
+    getv = action.get if isinstance(action, dict) else lambda name, default=None: getattr(action, name, default)
+    details = {
+        "schema": "darts.remote_action_audit.v1",
+        "event": event,
+        "action_id": getv("id"),
+        "device_id": getv("device_id"),
+        "action_type": getv("action_type"),
+        "status": getv("status"),
+        "request_state": getv("request_state") or _normalize_remote_action_request_state(action),
+        "approval_state": getv("approval_state"),
+        "outcome_code": getv("outcome_code"),
+        "outcome_detail": getv("outcome_detail"),
+        "issued_by": getv("issued_by"),
+        "actor": actor,
+        "issued_at": _aware(getv("issued_at")).isoformat() if _aware(getv("issued_at")) else None,
+        "requested_at": _aware(getv("requested_at")).isoformat() if _aware(getv("requested_at")) else None,
+        "reviewed_at": _aware(getv("reviewed_at")).isoformat() if _aware(getv("reviewed_at")) else None,
+        "reviewed_by": getv("reviewed_by"),
+        "delivered_at": _aware(getv("delivered_at")).isoformat() if _aware(getv("delivered_at")) else None,
+        "finalized_at": _aware(getv("finalized_at") or getv("acked_at")).isoformat() if _aware(getv("finalized_at") or getv("acked_at")) else None,
+        "finalized_by": getv("finalized_by"),
+        "expires_at": None,
+        "params_present": getv("params") is not None,
+        "request_note_present": bool(getv("request_note")),
+        "review_note_present": bool(getv("review_note")),
+    }
+    try:
+        policy = get_remote_action_policy(getv("action_type"))
+        expires_at = policy.expires_at(getv("issued_at"))
+        details.update({
+            "category": policy.category,
+            "risk_level": policy.risk_level,
+            "approval_required": policy.approval_required,
+            "ttl_seconds": policy.ttl_seconds,
+            "queue_allowed": policy.queue_allowed,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        })
+    except Exception:
+        pass
+    if extra:
+        details.update(extra)
+    return details
+
+
+async def _load_remote_action_scope_maps(db: AsyncSession, actions: list[RemoteAction]) -> tuple[dict, dict, dict, dict]:
+    device_ids = {a.device_id for a in actions if getattr(a, "device_id", None)}
+    devices_by_id = {}
+    locations_by_id = {}
+    customers_by_id = {}
+    licenses_by_id = {}
+    if device_ids:
+        device_result = await db.execute(select(CentralDevice).where(CentralDevice.id.in_(device_ids)))
+        devices = device_result.scalars().all()
+        devices_by_id = {device.id: device for device in devices}
+        location_ids = {device.location_id for device in devices if getattr(device, "location_id", None)}
+        license_ids = {device.license_id for device in devices if getattr(device, "license_id", None)}
+        if location_ids:
+            location_result = await db.execute(select(CentralLocation).where(CentralLocation.id.in_(location_ids)))
+            locations = location_result.scalars().all()
+            locations_by_id = {location.id: location for location in locations}
+            customer_ids = {location.customer_id for location in locations if getattr(location, "customer_id", None)}
+            if customer_ids:
+                customer_result = await db.execute(select(CentralCustomer).where(CentralCustomer.id.in_(customer_ids)))
+                customers_by_id = {customer.id: customer for customer in customer_result.scalars().all()}
+        if license_ids:
+            license_result = await db.execute(select(CentralLicense).where(CentralLicense.id.in_(license_ids)))
+            licenses_by_id = {license_row.id: license_row for license_row in license_result.scalars().all()}
+    return devices_by_id, locations_by_id, customers_by_id, licenses_by_id
+
+
+async def _query_scoped_remote_actions(
+    db: AsyncSession,
+    user: AuthUser,
+    *,
+    customer_id: str | None = None,
+    location_id: str | None = None,
+    license_id: str | None = None,
+    device_id: str | None = None,
+    request_state: str | None = None,
+    approval_state: str | None = None,
+    outcome_code: str | None = None,
+    action_type: str | None = None,
+    include_expired: bool = True,
+    offset: int | None = None,
+    limit: int | None = None,
+) -> list[RemoteAction]:
+    stmt = select(RemoteAction).join(CentralDevice, RemoteAction.device_id == CentralDevice.id).join(CentralLocation, CentralDevice.location_id == CentralLocation.id)
+    if customer_id:
+        if not can_access_customer(user, customer_id):
+            raise HTTPException(403, "Access denied")
+        stmt = stmt.where(CentralLocation.customer_id == customer_id)
+    elif location_id:
+        if not await can_access_location(user, location_id, db):
+            raise HTTPException(403, "Access denied")
+        stmt = stmt.where(CentralDevice.location_id == location_id)
+    elif device_id:
+        await _get_device_with_scope_check(device_id, user, db)
+        stmt = stmt.where(RemoteAction.device_id == device_id)
+    elif not user.is_superadmin:
+        allowed_customer_ids = user.allowed_customer_ids or []
+        stmt = stmt.where(CentralLocation.customer_id.in_(allowed_customer_ids) if allowed_customer_ids else False)
+
+    if license_id:
+        license_row = await db.get(CentralLicense, license_id)
+        if not license_row:
+            raise HTTPException(404, "License not found")
+        if not can_access_customer(user, license_row.customer_id):
+            raise HTTPException(403, "Access denied")
+        stmt = stmt.where(CentralDevice.license_id == license_id)
+
+    if request_state:
+        stmt = stmt.where(RemoteAction.request_state == request_state)
+    if approval_state:
+        stmt = stmt.where(RemoteAction.approval_state == approval_state)
+    if outcome_code:
+        stmt = stmt.where(RemoteAction.outcome_code == outcome_code)
+    if action_type:
+        stmt = stmt.where(RemoteAction.action_type == action_type)
+    if not include_expired:
+        stmt = stmt.where(RemoteAction.status != "expired")
+
+    stmt = stmt.order_by(RemoteAction.issued_at.desc())
+    if offset:
+        stmt = stmt.offset(max(0, offset))
+    if limit:
+        stmt = stmt.limit(limit)
+    result = await db.execute(stmt)
+    return result.scalars().all()
 
 
 # ── Config Export / Import — v3.9.8 ──
@@ -3633,17 +4368,42 @@ async def apply_import(
 
 
 def _ser_action(a):
+    request_state = _normalize_remote_action_request_state(a)
+    outcome_code, outcome_detail = _derive_remote_action_outcome(a)
     d = {
         "id": a.id, "device_id": a.device_id, "action_type": a.action_type,
         "status": a.status, "issued_by": a.issued_by,
         "issued_at": a.issued_at.isoformat() if a.issued_at else None,
         "acked_at": a.acked_at.isoformat() if a.acked_at else None,
         "result_message": a.result_message,
+        "request_state": request_state,
+        "approval_state": getattr(a, "approval_state", None) or ("pending" if request_state == "pending_approval" else "not_required"),
+        "outcome_code": outcome_code,
+        "outcome_detail": outcome_detail,
+        "request_note": getattr(a, "request_note", None),
+        "requested_at": a.requested_at.isoformat() if getattr(a, "requested_at", None) else (a.issued_at.isoformat() if a.issued_at else None),
+        "reviewed_at": a.reviewed_at.isoformat() if getattr(a, "reviewed_at", None) else None,
+        "reviewed_by": getattr(a, "reviewed_by", None),
+        "review_note": getattr(a, "review_note", None),
+        "delivered_at": a.delivered_at.isoformat() if getattr(a, "delivered_at", None) else None,
+        "finalized_at": a.finalized_at.isoformat() if getattr(a, "finalized_at", None) else (a.acked_at.isoformat() if a.acked_at else None),
+        "finalized_by": getattr(a, "finalized_by", None),
     }
     # v3.15.1: Defensive — params column may not exist in old DBs
     try:
-        if getattr(a, 'params', None):
+        if getattr(a, 'params', None) is not None:
             d["params"] = a.params
+    except Exception:
+        pass
+    try:
+        policy = get_remote_action_policy(a.action_type)
+        expires_at = policy.expires_at(a.issued_at)
+        d.update({
+            "category": policy.category,
+            "risk_level": policy.risk_level,
+            "approval_required": policy.approval_required,
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        })
     except Exception:
         pass
     return d
@@ -3677,6 +4437,10 @@ async def bulk_remote_actions(
         raise HTTPException(400, f"Maximal {_BULK_MAX_DEVICES} Geraete pro Bulk-Aktion")
     if action_type not in VALID_ACTIONS:
         raise HTTPException(400, f"action_type must be one of: {', '.join(sorted(VALID_ACTIONS))}")
+    try:
+        policy = validate_remote_action_request(action_type=action_type, params=action_params, user_role=user.role)
+    except RemoteActionPolicyError as e:
+        raise HTTPException(403, str(e))
 
     unique_ids = list(dict.fromkeys(device_ids))
     results = []
@@ -3706,9 +4470,15 @@ async def bulk_remote_actions(
             skipped_count += 1
             continue
 
-        action = RemoteAction(id=secrets.token_hex(18), device_id=did, action_type=action_type, params=action_params, issued_by=user.username)
+        action = RemoteAction(
+            id=secrets.token_hex(18), device_id=did, action_type=action_type, params=action_params, issued_by=user.username,
+            **_build_remote_action_review_fields(policy, user, body),
+        )
         db.add(action)
-        results.append({"device_id": did, "device_name": dev.device_name, "status": "created", "action_id": action.id})
+        results.append({
+            "device_id": did, "device_name": dev.device_name, "status": "created", "action_id": action.id,
+            "request_state": action.request_state, "approval_state": action.approval_state,
+        })
         created_count += 1
 
     await db.commit()
@@ -3763,18 +4533,25 @@ async def issue_remote_action(
         raise HTTPException(400, f"action_type must be one of: {', '.join(sorted(VALID_ACTIONS))}")
 
     action_params = body.get("params")
+    try:
+        policy = validate_remote_action_request(action_type=action_type, params=action_params, user_role=user.role)
+    except RemoteActionPolicyError as e:
+        raise HTTPException(403, str(e))
 
     action = RemoteAction(
         device_id=device_id, action_type=action_type,
         params=action_params if action_params else None,
         issued_by=user.username,
+        **_build_remote_action_review_fields(policy, user, body),
     )
     db.add(action)
     await db.commit()
     await db.refresh(action)
 
     await _log_audit(db, "remote_action_issued", device_id=device_id, actor=user.username,
-                     message=f"Action '{action_type}' issued for device {dev.device_name or device_id}")
+                     license_id=getattr(dev, "license_id", None),
+                     message=f"Action '{action_type}' issued for device {dev.device_name or device_id}",
+                     details=_remote_action_lifecycle_details(action, event="issued", actor=user.username))
     await db.commit()
 
     # v3.10.0: Push action_created to target device
@@ -3786,6 +4563,249 @@ async def issue_remote_action(
     return _ser_action(action)
 
 
+@app.post("/api/remote-actions/{action_id}/review")
+async def review_remote_action(
+    action_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    require_installer_or_above(user)
+    action = await db.get(RemoteAction, action_id)
+    if not action:
+        raise HTTPException(404, "Action not found")
+    await _get_device_with_scope_check(action.device_id, user, db)
+
+    body = await request.json()
+    decision = (body.get("decision") or "").strip().lower()
+    if decision not in {"approve", "refuse"}:
+        raise HTTPException(400, "decision must be approve|refuse")
+    if (getattr(action, "approval_state", None) or "not_required") != "pending":
+        raise HTTPException(409, f"Action review not pending (approval_state='{getattr(action, 'approval_state', None) or 'not_required'}')")
+
+    now = _utcnow()
+    action.reviewed_at = now
+    action.reviewed_by = user.username
+    action.review_note = body.get("review_note") or body.get("note")
+    if decision == "approve":
+        action.approval_state = "approved"
+        action.request_state = "approved"
+        action.outcome_code = "accepted"
+        action.outcome_detail = "approved"
+        audit_action = "remote_action_review_approved"
+    else:
+        action.approval_state = "refused"
+        action.request_state = "refused"
+        action.status = "failed"
+        action.outcome_code = "refused"
+        action.outcome_detail = "manual_review"
+        action.finalized_at = now
+        action.finalized_by = user.username
+        action.acked_at = now
+        action.result_message = action.result_message or "Refused during central review"
+        audit_action = "remote_action_review_refused"
+
+    await db.commit()
+    await db.refresh(action)
+    await _log_audit(db, audit_action, device_id=action.device_id, actor=user.username,
+                     license_id=getattr((await db.get(CentralDevice, action.device_id)), "license_id", None),
+                     message=f"Remote action {action.action_type} {decision}d",
+                     details=_remote_action_lifecycle_details(action, event=f"review_{decision}d", actor=user.username, extra={"decision": decision}))
+    await db.commit()
+    return _finalize_remote_action(_ser_action(action), user)
+
+
+@app.get("/api/remote-actions/overview")
+async def get_remote_action_overview(
+    customer_id: str = None,
+    location_id: str = None,
+    license_id: str = None,
+    request_state: str = None,
+    approval_state: str = None,
+    outcome_code: str = None,
+    action_type: str = None,
+    include_expired: bool = True,
+    offset: int = 0,
+    limit: int = 100,
+    recent_limit: int = 25,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    require_min_role(user, "staff")
+    capped_limit = max(1, min(limit, 250))
+    actions = await _query_scoped_remote_actions(
+        db,
+        user,
+        customer_id=customer_id,
+        location_id=location_id,
+        license_id=license_id,
+        request_state=request_state,
+        approval_state=approval_state,
+        outcome_code=outcome_code,
+        action_type=action_type,
+        include_expired=include_expired,
+        offset=max(0, offset),
+        limit=capped_limit,
+    )
+    devices_by_id, locations_by_id, customers_by_id, licenses_by_id = await _load_remote_action_scope_maps(db, actions)
+
+    def build_grouped_summary(group_key: str):
+        grouped: dict[str, dict] = {}
+        for action in actions:
+            device = devices_by_id.get(action.device_id)
+            if device is None:
+                continue
+            location = locations_by_id.get(device.location_id)
+            customer = customers_by_id.get(location.customer_id) if location is not None else None
+            license_row = licenses_by_id.get(device.license_id)
+            if group_key == "location" and location is None:
+                continue
+            if group_key == "license" and license_row is None:
+                continue
+            if group_key == "customer" and customer is None:
+                continue
+
+            if group_key == "location":
+                gid = location.id
+                name = location.name
+            elif group_key == "license":
+                gid = license_row.id
+                name = f"{license_row.plan_type}"
+            else:
+                gid = customer.id
+                name = customer.name
+
+            bucket = grouped.setdefault(gid, {
+                "group_id": gid,
+                "group_type": group_key,
+                "group_name": name,
+                "scope": _remote_action_scope_snapshot(action, device=device, location=location, customer=customer, license_row=license_row),
+                "actions": [],
+            })
+            bucket["actions"].append(action)
+
+        items = []
+        for bucket in grouped.values():
+            summary = _remote_action_summary_payload(bucket.pop("actions"))
+            items.append({
+                **bucket,
+                "summary": summary,
+                "triage_priority": {
+                    "pending_approval": summary["counts"]["pending_approval"],
+                    "pending_delivery": summary["counts"]["pending_delivery"],
+                    "expired": summary["counts"]["expired"],
+                    "refused": summary["counts"]["refused"],
+                    "has_pending_review": summary["has_pending_review"],
+                },
+            })
+        items.sort(key=lambda item: _remote_action_triage_priority(item.get("summary")))
+        return items
+
+    recent_items = []
+    for action in actions[: max(1, min(recent_limit, 100))]:
+        payload = _ser_action(action)
+        device = devices_by_id.get(action.device_id)
+        location = locations_by_id.get(device.location_id) if device is not None else None
+        customer = customers_by_id.get(location.customer_id) if location is not None else None
+        license_row = licenses_by_id.get(device.license_id) if device is not None else None
+        payload["scope"] = _remote_action_scope_snapshot(payload, device=device, location=location, customer=customer, license_row=license_row)
+        recent_items.append(_finalize_remote_action(payload, user))
+
+    return {
+        "scope": {
+            "customer_id": customer_id,
+            "location_id": location_id,
+            "license_id": license_id,
+        },
+        "filters": {
+            "request_state": request_state,
+            "approval_state": approval_state,
+            "outcome_code": outcome_code,
+            "action_type": action_type,
+            "include_expired": include_expired,
+        },
+        "window": {
+            "offset": max(0, offset),
+            "limit": capped_limit,
+            "returned": len(actions),
+            "has_more": len(actions) == capped_limit,
+            "recent_limit": max(1, min(recent_limit, 100)),
+        },
+        "summary": _remote_action_summary_payload(actions),
+        "queue_metrics": _remote_action_queue_metrics(actions),
+        "customer_summaries": build_grouped_summary("customer"),
+        "location_summaries": build_grouped_summary("location"),
+        "license_summaries": build_grouped_summary("license"),
+        "recent_items": recent_items,
+    }
+
+
+@app.get("/api/remote-actions/review-queue")
+async def get_remote_action_review_queue(
+    request_state: str = None,
+    approval_state: str = None,
+    outcome_code: str = None,
+    action_type: str = None,
+    customer_id: str = None,
+    location_id: str = None,
+    license_id: str = None,
+    device_id: str = None,
+    include_expired: bool = True,
+    offset: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    require_min_role(user, "staff")
+    capped_limit = max(1, min(limit, 250))
+    actions = await _query_scoped_remote_actions(
+        db,
+        user,
+        customer_id=customer_id,
+        location_id=location_id,
+        license_id=license_id,
+        device_id=device_id,
+        request_state=request_state,
+        approval_state=approval_state,
+        outcome_code=outcome_code,
+        action_type=action_type,
+        include_expired=include_expired,
+        offset=max(0, offset),
+        limit=capped_limit,
+    )
+    devices_by_id, locations_by_id, customers_by_id, licenses_by_id = await _load_remote_action_scope_maps(db, actions)
+    items = []
+    for action in actions:
+        payload = _ser_action(action)
+        device = devices_by_id.get(action.device_id)
+        location = locations_by_id.get(device.location_id) if device is not None else None
+        customer = customers_by_id.get(location.customer_id) if location is not None else None
+        license_row = licenses_by_id.get(device.license_id) if device is not None else None
+        payload["scope"] = _remote_action_scope_snapshot(payload, device=device, location=location, customer=customer, license_row=license_row)
+        items.append(_finalize_remote_action(payload, user))
+
+    return {
+        "filters": {
+            "request_state": request_state,
+            "approval_state": approval_state,
+            "outcome_code": outcome_code,
+            "action_type": action_type,
+            "customer_id": customer_id,
+            "location_id": location_id,
+            "license_id": license_id,
+            "device_id": device_id,
+            "include_expired": include_expired,
+        },
+        "window": {
+            "offset": max(0, offset),
+            "limit": capped_limit,
+            "returned": len(items),
+            "has_more": len(items) == capped_limit,
+        },
+        "summary": _remote_action_summary_payload(actions),
+        "queue_metrics": _remote_action_queue_metrics(actions),
+        "items": items,
+    }
 
 
 @app.get("/api/remote-actions/{device_id}")
@@ -3805,6 +4825,39 @@ async def list_device_actions(
     stmt = stmt.order_by(RemoteAction.issued_at.desc()).limit(limit)
     result = await db.execute(stmt)
     return [_finalize_remote_action(_ser_action(a), user) for a in result.scalars().all()]
+
+
+@app.get("/api/remote-actions/{device_id}/summary")
+async def get_device_action_summary(
+    device_id: str,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    require_min_role(user, "staff")
+    await _get_device_with_scope_check(device_id, user, db)
+    stmt = select(RemoteAction).where(RemoteAction.device_id == device_id).order_by(RemoteAction.issued_at.desc()).limit(limit)
+    result = await db.execute(stmt)
+    actions = result.scalars().all()
+    return _remote_action_summary_payload(actions)
+
+
+@app.get("/api/remote-actions/{device_id}/history")
+async def get_device_action_history(
+    device_id: str,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+):
+    require_min_role(user, "staff")
+    await _get_device_with_scope_check(device_id, user, db)
+    stmt = select(RemoteAction).where(RemoteAction.device_id == device_id).order_by(RemoteAction.issued_at.desc()).limit(limit)
+    result = await db.execute(stmt)
+    actions = result.scalars().all()
+    return {
+        "summary": _remote_action_summary_payload(actions),
+        "items": [_finalize_remote_action(_ser_action(a), user) for a in actions],
+    }
 
 
 @app.get("/api/remote-actions/{device_id}/pending")
@@ -3827,7 +4880,59 @@ async def get_pending_actions(
         .order_by(RemoteAction.issued_at.asc())
     )
     result = await db.execute(stmt)
-    return [_ser_action(a) for a in result.scalars().all()]
+    actions = result.scalars().all()
+
+    deliverable = []
+    mutated = False
+    for action in actions:
+        if (getattr(action, "approval_state", None) or "not_required") == "pending":
+            continue
+        if not can_deliver_remote_action(action.action_type):
+            action.status = "expired"
+            action.request_state = "expired"
+            action.approval_state = getattr(action, "approval_state", None) or "not_required"
+            action.outcome_code = "blocked"
+            action.outcome_detail = "central_policy"
+            action.acked_at = _utcnow()
+            action.finalized_at = action.acked_at
+            action.finalized_by = "central_policy"
+            action.result_message = "Blocked by central remote-action policy before device delivery"
+            mutated = True
+            continue
+        if is_remote_action_expired(action.action_type, action.issued_at):
+            action.status = "expired"
+            action.request_state = "expired"
+            action.outcome_code = "expired"
+            action.outcome_detail = "ttl_elapsed"
+            action.acked_at = _utcnow()
+            action.finalized_at = action.acked_at
+            action.finalized_by = "central_ttl"
+            action.result_message = "Expired before device delivery"
+            mutated = True
+            continue
+        action.request_state = "delivered"
+        action.delivered_at = action.delivered_at or _utcnow()
+        action.outcome_code = "delivered"
+        action.outcome_detail = "ready_for_device_execution"
+        mutated = True
+        deliverable.append(action)
+
+    if mutated:
+        await db.commit()
+        for action in actions:
+            if action.status == "expired" and action.outcome_code in {"blocked", "expired"}:
+                await _log_audit(
+                    db,
+                    "remote_action_auto_finalized",
+                    device_id=action.device_id,
+                    license_id=getattr(device, "license_id", None),
+                    actor="central",
+                    message=f"Remote action {action.action_type} auto-finalized ({action.outcome_detail})",
+                    details=_remote_action_lifecycle_details(action, event="auto_finalized", actor="central", extra={"auto_finalized_reason": action.outcome_detail}),
+                )
+        await db.commit()
+
+    return [_ser_action(a) for a in deliverable]
 
 
 @app.post("/api/remote-actions/{device_id}/ack")
@@ -3849,10 +4954,27 @@ async def ack_remote_action(
     action = await db.get(RemoteAction, action_id)
     if not action or action.device_id != device_id:
         raise HTTPException(404, "Action not found")
+    if action.status != "pending":
+        raise HTTPException(409, f"Action already finalized with status '{action.status}'")
 
     action.status = "acked" if success else "failed"
+    action.request_state = "finalized"
+    action.outcome_code = "succeeded" if success else "failed"
+    action.outcome_detail = "device_ack" if success else "device_reported_failure"
     action.acked_at = _utcnow()
+    action.finalized_at = action.acked_at
+    action.finalized_by = "device"
     action.result_message = message
+    await db.commit()
+    await _log_audit(
+        db,
+        "remote_action_finalized",
+        device_id=device_id,
+        license_id=getattr(device, "license_id", None),
+        actor="device",
+        message=f"Remote action {action.action_type} finalized with {action.outcome_code}",
+        details=_remote_action_lifecycle_details(action, event="finalized", actor="device", extra={"success": bool(success)}),
+    )
     await db.commit()
     return {"ok": True}
 
@@ -4099,17 +5221,24 @@ def _to_operator_safe_recent_event(event: dict) -> dict:
 
 
 def _to_operator_safe_recent_action(action: dict) -> dict:
-    return {
+    payload = {
         "id": action.get("id"),
         "device_id": action.get("device_id"),
         "action_type": action.get("action_type"),
         "status": action.get("status"),
+        "request_state": action.get("request_state"),
+        "approval_state": action.get("approval_state"),
+        "outcome_code": action.get("outcome_code"),
+        "outcome_detail": action.get("outcome_detail"),
         "issued_at": action.get("issued_at"),
         "acked_at": action.get("acked_at"),
         "has_result_message": action.get("result_message") not in (None, ""),
         "has_params": "params" in action and action.get("params") not in (None, "", {}, []),
         "detail_level": "operator_safe",
     }
+    if action.get("scope") is not None:
+        payload["scope"] = action.get("scope")
+    return payload
 
 
 def _finalize_remote_action(action: dict, user: AuthUser) -> dict:
@@ -4656,6 +5785,7 @@ def _to_internal_reconciliation_summary(reconciliation_summary: dict | None) -> 
 
 def _to_device_safe_current_lease_payload(payload: dict | None) -> dict:
     payload = dict(payload or {})
+    payload["advisory_posture"] = _stamp_detail_level(payload.get("advisory_posture"), "operator_safe")
     payload["credential"] = _to_operator_safe_trust_credential(payload.get("credential") or {}) if payload.get("credential") else None
     payload["lease"] = _to_operator_safe_trust_lease(payload.get("lease") or {}) if payload.get("lease") else None
     payload["reconciliation"] = _to_operator_safe_reconciliation(payload.get("reconciliation"))
@@ -4672,6 +5802,7 @@ def _finalize_device_trust_detail(detail: dict, user: AuthUser) -> dict:
     payload.setdefault("detail_level", "internal" if _can_view_internal_device_detail(user) else "operator_safe")
     payload["device"] = _finalize_device_summary(payload.get("device") or {}, user)
     if _can_view_internal_device_detail(user):
+        payload["advisory_posture"] = _stamp_detail_level(payload.get("advisory_posture"), "internal")
         payload["credentials"] = [_to_internal_trust_credential(item) for item in (payload.get("credentials") or [])]
         payload["leases"] = [_to_internal_trust_lease(item) for item in (payload.get("leases") or [])]
         if payload.get("credential"):
@@ -4684,6 +5815,7 @@ def _finalize_device_trust_detail(detail: dict, user: AuthUser) -> dict:
         payload["signing_registry"] = _to_internal_signing_registry(payload.get("signing_registry"))
         payload["endpoint_summary"] = _finalize_endpoint_summary(payload.get("endpoint_summary"), detail_level="internal")
         return payload
+    payload["advisory_posture"] = _stamp_detail_level(payload.get("advisory_posture"), "operator_safe")
     payload["credentials"] = [_to_operator_safe_trust_credential(item) for item in (payload.get("credentials") or [])]
     payload["leases"] = [_to_operator_safe_trust_lease(item) for item in (payload.get("leases") or [])]
     if payload.get("credential"):

@@ -2,7 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import axios from 'axios';
-import { KeyRound, Plus, CheckCircle, AlertTriangle, Ban, Shield, Clock, Archive, Filter, ChevronRight } from 'lucide-react';
+import { KeyRound, Plus, CheckCircle, AlertTriangle, Ban, Shield, Clock, Archive, Filter, ChevronRight, ExternalLink } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { toast } from 'sonner';
 
@@ -206,6 +206,7 @@ export default function OperatorLicenses() {
                     <th className="text-left px-4 py-2">Geräte</th>
                     <th className="text-left px-4 py-2">Status</th>
                     <th className="text-left px-4 py-2">Gültig bis</th>
+                    <th className="text-left px-4 py-2">Remote Actions</th>
                     <th className="px-4 py-2"></th>
                   </tr></thead>
                   <tbody>
@@ -218,6 +219,14 @@ export default function OperatorLicenses() {
                         <td className="px-4 py-2.5 text-zinc-400">{lic.device_count ?? 0}/{lic.max_devices}</td>
                         <td className="px-4 py-2.5"><StatusBadge status={lic.status} /></td>
                         <td className="px-4 py-2.5 text-zinc-500">{lic.ends_at ? new Date(lic.ends_at).toLocaleDateString('de-DE') : 'Unbegrenzt'}</td>
+                        <td className="px-4 py-2.5">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigate(`/operator/remote-actions?license_id=${encodeURIComponent(lic.id)}`); }}
+                            className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-indigo-300 hover:bg-indigo-500/10"
+                          >
+                            Öffnen <ExternalLink className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
                         <td className="px-4 py-2.5"><ChevronRight className="w-4 h-4 text-zinc-600" /></td>
                       </tr>
                     ))}
@@ -243,6 +252,14 @@ export default function OperatorLicenses() {
                         <td className="px-4 py-2 text-zinc-500">{lic.device_count ?? 0}/{lic.max_devices}</td>
                         <td className="px-4 py-2"><StatusBadge status={lic.status} /></td>
                         <td className="px-4 py-2 text-zinc-600">{lic.ends_at ? new Date(lic.ends_at).toLocaleDateString('de-DE') : '—'}</td>
+                        <td className="px-4 py-2">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigate(`/operator/remote-actions?license_id=${encodeURIComponent(lic.id)}`); }}
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs text-indigo-300 hover:bg-indigo-500/10"
+                          >
+                            Öffnen <ExternalLink className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
                         <td className="px-4 py-2"><ChevronRight className="w-4 h-4 text-zinc-700" /></td>
                       </tr>
                     ))}
