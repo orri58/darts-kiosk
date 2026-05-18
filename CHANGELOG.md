@@ -1,3 +1,14 @@
+## [4.5.1] - 2026-05-18
+
+### Changed
+- Published a clean canonical release line so automated update checks can resolve a single latest version with the correct Windows ZIP asset.
+- Aligned the broader product/control-plane/UI/field-readiness cut under a higher semantic version than the earlier partial releases to avoid updater confusion.
+
+### Validation
+- Frontend production build passed.
+- Release artifacts rebuilt for `v4.5.1`.
+- GitHub release published with Windows ZIP, Linux TAR.GZ, and Source ZIP assets.
+
 ## [4.5.0] - 2026-05-18
 
 ### Changed
