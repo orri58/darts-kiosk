@@ -321,3 +321,19 @@ The project follows semantic versioning for product releases.
 - Focused backend validation suite passed.
 - Frontend production build passed.
 - Release artifacts for Windows, Linux, and source were built successfully.
+
+
+## [4.4.20] - 2026-05-18
+
+### Added
+- Added an explicit admin unlock option to free a board without credits or time so it can stay manually unlocked until staff lock it again.
+
+### Changed
+- Manual unlock sessions are now marked explicitly in backend session data and kiosk UI so operators and players can see that the board is running in free/manual mode.
+- Kiosk session handling now bypasses normal credit/time consumption for manual unlock sessions while keeping existing manual re-lock behavior.
+
+### Validation
+- Focused backend/manual-unlock + runtime/field-readiness + central security suites passed locally.
+- Frontend production build passed.
+- Release artifacts rebuilt for `v4.4.20`.
+

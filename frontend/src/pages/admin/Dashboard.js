@@ -347,9 +347,14 @@ export default function AdminDashboard() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <RefreshCw className="w-8 h-8 text-amber-500 animate-spin" />
-      </div>
+      <AdminPage eyebrow="Darts Control" title="Control" description="Boards steuern, Credits nachbuchen, Probleme direkt sehen.">
+        <AdminSection>
+          <div className="flex items-center justify-center h-64 text-amber-400 gap-3">
+            <RefreshCw className="w-8 h-8 animate-spin" />
+            <span className="text-sm text-[var(--color-text-secondary)]">Board- und Sessionstatus wird geladen…</span>
+          </div>
+        </AdminSection>
+      </AdminPage>
     );
   }
 
@@ -397,8 +402,8 @@ export default function AdminDashboard() {
           }
         >
           {actionBoards.length === 0 ? (
-            <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.75)] bg-[rgb(var(--color-bg-rgb)/0.34)] px-4 py-4 text-sm text-[var(--color-text-secondary)]">
-              Noch keine Boards vorhanden.
+            <div className="rounded-3xl border border-dashed border-[rgb(var(--color-border-rgb)/0.75)] bg-[rgb(var(--color-bg-rgb)/0.34)] px-4 py-6 text-center text-sm text-[var(--color-text-secondary)]">
+              Noch keine Boards vorhanden. Sobald ein Board registriert ist, erscheint hier dieselbe Control-Rhythmik wie auf den Central Surfaces.
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2 2xl:grid-cols-3">
