@@ -1,12 +1,16 @@
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import { useCentralData } from '../../hooks/useCentralData';
-import { useNavigate } from 'react-router-dom';
-import { Monitor, Wifi, WifiOff, Ban, CheckCircle, AlertTriangle, ExternalLink, KeyRound } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Activity, Monitor, Wifi, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
+import { ProductPageHeader, ProductSection, ProductStatCard } from '../../components/shell/ProductShell';
+import { ProductFilterSummary, ProductPageState } from '../../components/shell/ProductDataDisplay';
+import { ProductFleetEmptyState, ProductFleetTable } from '../../components/shell/ProductSurfaceSystems';
 
 export default function OperatorDevices() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { apiBase, authHeaders, canManage } = useCentralAuth();
   const { data: devices, loading, error, refetch } = useCentralData('licensing/devices');
 
@@ -21,98 +25,61 @@ export default function OperatorDevices() {
     }
   };
 
-  if (loading) return <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" /></div>;
-  if (error) return <div className="text-center py-12 text-red-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p>{error}</p></div>;
+  if (loading) return <ProductPageState kind="loading" title="Geräte werden geladen" description="Inventory, Bindings und letzte Syncs werden aus dem Central Scope gezogen." data-testid="operator-devices-loading" />;
+  if (error) return <ProductPageState kind="error" title="Geräte konnten nicht geladen werden" description={error} data-testid="operator-devices-error" />;
 
-  const now = new Date();
+  const list = devices || [];
+  const onlineCount = list.filter((d) => d.connectivity === 'online' || d.is_online).length;
+  const degradedCount = list.filter((d) => d.connectivity === 'degraded').length;
+  const licensedCount = list.filter((d) => Boolean(d.license_id)).length;
+  const surfacePrefix = location.pathname.startsWith('/portal') ? '/portal' : '/operator';
+  const currentListPath = `${location.pathname}${location.search || ''}`;
+  const openDevice = (d) => navigate(`${surfacePrefix}/devices/${d.id}?returnTo=${encodeURIComponent(currentListPath)}&returnLabel=${encodeURIComponent('Geräte')}`);
+  const openLicense = (d) => navigate(`${surfacePrefix}/licenses/${d.license_id}?intent=devices&returnTo=${encodeURIComponent(currentListPath)}&returnLabel=${encodeURIComponent('Geräte')}`);
+  const openRemoteActions = (d) => navigate(`/operator/remote-actions?device_id=${encodeURIComponent(d.id)}`);
 
   return (
-    <div className="space-y-5" data-testid="operator-devices">
-      <div>
-        <h1 className="text-xl font-bold text-white">Geräte</h1>
-        <p className="text-sm text-zinc-500 mt-0.5">{devices?.length || 0} Geräte</p>
+    <div className="space-y-6" data-testid="operator-devices">
+      <ProductPageHeader
+        eyebrow="Fleet"
+        title="Geräte"
+        description={`${list.length} registriert, ${onlineCount} online${degradedCount ? `, ${degradedCount} degraded` : ''}. Dieselbe Fleet-Semantik wie Portal, aber mit direktem Steuerzugang.`}
+      />
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <ProductStatCard icon={Monitor} label="Geräte gesamt" value={list.length} hint="Im aktuellen Operator-Scope" data-testid="operator-devices-total" />
+        <ProductStatCard icon={Wifi} label="Online" value={onlineCount} hint="Aktive Verbindung / Heartbeat" tone="emerald" data-testid="operator-devices-online" />
+        <ProductStatCard icon={AlertTriangle} label="Degraded" value={degradedCount} hint="Beobachtung oder Störung" tone="amber" data-testid="operator-devices-degraded" />
+        <ProductStatCard icon={Activity} label="Lizenziert" value={licensedCount} hint="Mit gebundener Lizenz" tone="blue" data-testid="operator-devices-licensed" />
       </div>
 
-      <div className="rounded-xl border border-zinc-800 overflow-hidden">
-        <table className="w-full text-sm" data-testid="devices-table">
-          <thead>
-            <tr className="bg-zinc-900/50 text-zinc-400 text-left">
-              <th className="px-4 py-2.5 font-medium">Status</th>
-              <th className="px-4 py-2.5 font-medium">Gerät</th>
-              <th className="px-4 py-2.5 font-medium">Install-ID</th>
-              <th className="px-4 py-2.5 font-medium">Binding</th>
-              <th className="px-4 py-2.5 font-medium">Lizenz</th>
-              <th className="px-4 py-2.5 font-medium">Letzter Sync</th>
-              <th className="px-4 py-2.5 font-medium">Syncs</th>
-              <th className="px-4 py-2.5 font-medium">Geräte-Status</th>
-              <th className="px-4 py-2.5 font-medium">Remote Actions</th>
-              {canManage && <th className="px-4 py-2.5 font-medium text-right">Aktionen</th>}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-800/50">
-            {(devices || []).map(d => {
-              const online = d.last_sync_at && ((now - new Date(d.last_sync_at)) / 1000) < 600;
-              return (
-                <tr key={d.id} className="text-zinc-300 hover:bg-zinc-900/30">
-                  <td className="px-4 py-2.5">
-                    {online
-                      ? <span className="inline-flex items-center gap-1.5 text-emerald-400 text-xs"><Wifi className="w-3.5 h-3.5" /> Online</span>
-                      : <span className="inline-flex items-center gap-1.5 text-zinc-500 text-xs"><WifiOff className="w-3.5 h-3.5" /> Offline</span>}
-                  </td>
-                  <td className="px-4 py-2.5 font-medium">
-                    <button
-                      onClick={() => navigate(`/operator/devices/${d.id}`)}
-                      className="hover:text-white hover:underline"
-                    >
-                      {d.device_name || d.id.slice(0, 8)}
-                    </button>
-                  </td>
-                  <td className="px-4 py-2.5 text-xs font-mono text-zinc-400">{d.install_id ? d.install_id.slice(0, 12) + '...' : '—'}</td>
-                  <td className="px-4 py-2.5">
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${d.binding_status === 'bound' ? 'bg-emerald-500/10 text-emerald-400' : d.binding_status === 'mismatch' ? 'bg-orange-500/10 text-orange-400' : 'bg-zinc-700 text-zinc-400'}`}>
-                      {d.binding_status || '—'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {d.license_id ? (
-                      <button
-                        onClick={() => navigate(`/operator/licenses/${d.license_id}?intent=devices`)}
-                        className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
-                      >
-                        <KeyRound className="w-3.5 h-3.5" /> {d.license_id.slice(0, 8)}...
-                      </button>
-                    ) : (
-                      <span className="text-xs text-zinc-500">—</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 text-xs text-zinc-400">{d.last_sync_at ? new Date(d.last_sync_at).toLocaleString('de-DE') : 'Nie'}</td>
-                  <td className="px-4 py-2.5 text-zinc-400">{d.sync_count || 0}</td>
-                  <td className="px-4 py-2.5">
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${d.status === 'active' ? 'bg-emerald-500/10 text-emerald-400' : d.status === 'blocked' ? 'bg-red-500/10 text-red-400' : 'bg-zinc-500/10 text-zinc-400'}`}>
-                      {d.status === 'active' ? 'Aktiv' : d.status === 'blocked' ? 'Gesperrt' : 'Deaktiviert'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <button
-                      onClick={() => navigate(`/operator/remote-actions?device_id=${encodeURIComponent(d.id)}`)}
-                      className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-indigo-300 hover:bg-indigo-500/10"
-                    >
-                      Öffnen <ExternalLink className="w-3.5 h-3.5" />
-                    </button>
-                  </td>
-                  {canManage && (
-                    <td className="px-4 py-2.5 text-right">
-                      <button onClick={() => handleToggle(d)} className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-white" data-testid={`toggle-device-${d.id}`}>
-                        {d.status === 'active' ? <Ban className="w-3.5 h-3.5" /> : <CheckCircle className="w-3.5 h-3.5" />}
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      <ProductSection eyebrow="Inventory" title="Fleet Table" description="Shared Tabellen-Semantik für Gerät, Binding, Lizenz, Sync und Drill-in.">
+        <div className="space-y-4 p-4">
+          <ProductFilterSummary
+            label="Scope"
+            items={[
+              { key: 'Geräte', value: String(list.length) },
+              { key: 'Online', value: String(onlineCount) },
+              { key: 'Instabil', value: String(degradedCount) },
+              { key: 'Lizenziert', value: String(licensedCount) },
+            ]}
+            data-testid="operator-devices-scope-summary"
+          />
+
+          {list.length === 0 ? (
+            <ProductFleetEmptyState scopeLabel="Geräte" compact testId="operator-devices-empty" />
+          ) : (
+            <ProductFleetTable
+              devices={list}
+              canManage={canManage}
+              onOpenDevice={openDevice}
+              onOpenLicense={openLicense}
+              onOpenRemoteActions={openRemoteActions}
+              onToggleDevice={handleToggle}
+            />
+          )}
+        </div>
+      </ProductSection>
     </div>
   );
 }

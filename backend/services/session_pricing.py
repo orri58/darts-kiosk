@@ -16,6 +16,14 @@ AUTHORITATIVE_FINISH_TRIGGERS = frozenset(
     }
 )
 ABORT_TRIGGERS = frozenset({"aborted", "match_abort_delete"})
+MANUAL_UNLOCK_SENTINEL = "[manual_unlock]"
+
+
+def is_manual_unlock_session(session: Any) -> bool:
+    note = str(getattr(session, "note", "") or "")
+    if MANUAL_UNLOCK_SENTINEL and MANUAL_UNLOCK_SENTINEL in note:
+        return True
+    return bool(getattr(session, "manual_unlock", False))
 
 
 @dataclass(frozen=True)
@@ -29,6 +37,14 @@ class ChargeDecision:
     credits_after: int
     players_count: int
     reason: str
+
+    @property
+    def allowed(self) -> bool:
+        return self.accepted
+
+    @property
+    def delta_credits(self) -> int:
+        return self.credits_after - self.credits_before
 
 
 @dataclass(frozen=True)
@@ -85,6 +101,9 @@ def apply_authoritative_start_charge(
 ) -> ChargeDecision:
     credits_before = int(getattr(session, "credits_remaining", 0) or 0)
     resolved_players = sync_authoritative_players(session, players_count=players_count, players=players)
+
+    if is_manual_unlock_session(session):
+        return ChargeDecision(True, False, False, 0, 0, credits_before, credits_before, resolved_players, "manual_unlock")
 
     if getattr(session, "pricing_mode", None) != PricingMode.PER_PLAYER.value:
         return ChargeDecision(True, False, False, 0, 0, credits_before, credits_before, resolved_players, "pricing_mode_not_start_billed")
@@ -152,6 +171,9 @@ def should_charge_on_finalize(session: Any, trigger: str, board_status: str | No
 
 def has_remaining_capacity(session: Any, now: datetime | None = None) -> bool:
     now = now or datetime.now(timezone.utc)
+    if is_manual_unlock_session(session):
+        return True
+
     pricing_mode = getattr(session, "pricing_mode", None)
     if pricing_mode == PricingMode.PER_TIME.value:
         expires_at = getattr(session, "expires_at", None)

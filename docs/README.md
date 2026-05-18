@@ -1,191 +1,47 @@
-# Docs Map
+# Documentation Navigator
 
-This folder has grown into a mix of:
-- **current source-of-truth docs**
-- **implementation plans**
-- **historical wave notes**
-- **analysis / audit artifacts**
+This `docs/README.md` is the **front‑door** for all documentation in the repository. It points developers to the current, canonical entry points and clearly marks legacy material.
 
-If you are new here, do **not** start by reading every file in alphabetical order.
-That way lies madness, stale assumptions, and at least one avoidable coffee overdose.
+## Quick links (canonical)
 
-Use this map instead.
+- **DEVELOPING.md** – Set up a development environment, run tests, and build the project.
+- **OPERATIONS.md** – Operator run‑book, update workflow, and troubleshooting guide.
+- **BOARD_PC_CERTIFICATION_RUNBOOK.md** – Real Windows board-PC certification flow and artifact expectations.
+- **RC_FIELD_EVIDENCE_CHECKLIST.md** – RC gate for field evidence; the short "don't fake it" list.
+- **RELEASING.md** – Release process, versioning, and packaging.
+- **EXTERNAL_DEVELOPER_HANDOFF.md** – High‑level product overview for external contributors.
+- **ARCHITECTURE.md** – Deep dive into the runtime architecture.
 
----
+## Legacy / historical docs
 
-## 1. Start here
+Older wave notes, audits, and dated planning docs in this `docs/` folder are **not** part of the current truth set, but they are retained for reference.
 
-If you need the fastest real orientation, read these in order:
-
-1. `../README.md`
-2. `EXTERNAL_DEVELOPER_HANDOFF.md`
-3. `TEST_READINESS.md`
-4. `../EXECUTION_BOARD.md`
-5. `ARCHITECTURE.md`
-
-That gets you:
-- what the project is
-- local core vs central control plane
-- current real status
-- what is healthy vs not
-- where the next practical work should happen
-
----
-
-## 2. Best docs by purpose
-
-## I want the current plain-English truth
-Read:
-- `EXTERNAL_DEVELOPER_HANDOFF.md`
-- `TEST_READINESS.md`
-- `STATUS.md`
-
-Use these when you want the current story without reconstructing it from wave files.
-
-## I want to understand the runtime architecture
-Read:
-- `ARCHITECTURE.md`
-- `CREDITS_PRICING.md`
-- `RUNBOOK.md`
-- `TESTING.md`
-
-Use these when working on:
-- board/session lifecycle
-- kiosk flow
-- unlock / pricing / match handling
-- operator/runtime behavior
-
-## I want to understand the central rebuild direction
-Read:
-- `CENTRAL_REBUILD_MASTERPLAN.md`
-- `IMPLEMENTATION_PLAN.md`
-- `IMPLEMENTATION_GOVERNANCE.md`
-- `CENTRAL_CONTRACT.md`
-
-Use these when working on:
-- central auth
-- central control-plane scope
-- contracts between runtime and central
-- phased implementation strategy
-
-## I want device trust / licensing context
-Read:
-- `DEVICE_TRUST_MODEL.md`
-- `ACCESS_CONTROL_MATRIX.md`
-- `COMMERCIAL_LEDGER_FLOW.md`
-- `DEVICE_FOOTPRINT_POLICY.md`
-
-Use these when working on:
-- enrollment / trust
-- device identity
-- anti-cloning assumptions
-- licensing / lease semantics
-- what should actually live on a production device
-
-## I want packaging / board-PC drill context
-Read:
-- `TEST_READINESS.md`
-- `DEVICE_PACKAGING_AUDIT_2026-04-13.md`
-- latest `DEVICE_RUNTIME_PACKAGE_WAVE*.md` files only
-
-Recommended starting point for this lane:
-- `DEVICE_RUNTIME_PACKAGE_WAVE34.md`
-- `DEVICE_RUNTIME_PACKAGE_WAVE35.md`
-- `DEVICE_RUNTIME_PACKAGE_WAVE36.md`
-- `DEVICE_RUNTIME_PACKAGE_WAVE37.md`
-- `DEVICE_RUNTIME_PACKAGE_WAVE38.md`
-
-Do **not** start by reading all 38 waves unless you enjoy self-inflicted archaeology.
-Use the newest waves first, then go backwards only if something is unclear.
-
-## I want historical analysis / audits
-Read as needed:
-- `ANALYSIS.md`
-- `ANALYSIS_BASELINE.md`
-- `AUTODARTS_ANALYSIS.md`
-- `AUTODARTS_TRIGGERS.md`
-- `LOCAL_CORE_AUDIT.md`
-
-These are useful when you need deeper background, not as first-contact docs.
-
----
-
-## 3. Source-of-truth vs history
-
-## Current source-of-truth docs
-These are the most important ongoing docs:
-- `EXTERNAL_DEVELOPER_HANDOFF.md`
-- `TEST_READINESS.md`
-- `ARCHITECTURE.md`
-- `CENTRAL_REBUILD_MASTERPLAN.md`
-- `IMPLEMENTATION_PLAN.md`
-- `CENTRAL_CONTRACT.md`
-- `DEVICE_TRUST_MODEL.md`
-- `RUNBOOK.md`
-- `TESTING.md`
-
-## Mostly historical / wave-log docs
-Treat these as implementation history and supporting detail:
+Examples:
 - `DEVICE_RUNTIME_PACKAGE_WAVE*.md`
-- `PHASE2_IMPLEMENTATION.md`
-- `PHASE3_4_IMPLEMENTATION.md`
-- `PHASE5_6_IMPLEMENTATION.md`
-- dated operational pass notes
-- older analysis snapshots
+- dated files such as `PROJECT_*_2026-05-06.md` and audit/checkpoint snapshots
+- older analysis/readiness notes when superseded by the canonical docs above
 
-These are useful, but they are **not** the best first entry point.
+> **Note:** When a legacy document is referenced elsewhere, it should be prefixed with *Legacy:* and linked via this navigator for context only.
 
----
+## Suggested reading order for new contributors
 
-## 4. Suggested reading paths
-
-## A) New external developer
-Read in this order:
-1. `../README.md`
-2. `EXTERNAL_DEVELOPER_HANDOFF.md`
-3. `TEST_READINESS.md`
-4. `ARCHITECTURE.md`
-5. `CENTRAL_REBUILD_MASTERPLAN.md`
-6. `DEVICE_TRUST_MODEL.md`
-
-## B) Local runtime / kiosk work
-Read in this order:
-1. `ARCHITECTURE.md`
-2. `CREDITS_PRICING.md`
-3. `RUNBOOK.md`
-4. `TESTING.md`
-5. `STATUS.md`
-
-## C) Central / trust work
-Read in this order:
-1. `EXTERNAL_DEVELOPER_HANDOFF.md`
-2. `TEST_READINESS.md`
-3. `CENTRAL_REBUILD_MASTERPLAN.md`
-4. `IMPLEMENTATION_PLAN.md`
-5. `CENTRAL_CONTRACT.md`
-6. `DEVICE_TRUST_MODEL.md`
-
-## D) Runtime packaging / field drill work
-Read in this order:
-1. `TEST_READINESS.md`
-2. `../EXECUTION_BOARD.md`
-3. latest `DEVICE_RUNTIME_PACKAGE_WAVE*.md`
-4. `RUNBOOK.md`
-5. `DEVICE_FOOTPRINT_POLICY.md`
+1. `../README.md` – repository overview and latest product version.
+2. `DEVELOPING.md` – how to get the code running locally.
+3. `OPERATIONS.md` – how to operate a board‑PC in the field.
+4. `BOARD_PC_CERTIFICATION_RUNBOOK.md` – how to certify one real machine before RC claims.
+5. `RC_FIELD_EVIDENCE_CHECKLIST.md` – what evidence must exist before shipping an RC.
+6. `RELEASING.md` – how releases are built and published.
+7. `EXTERNAL_DEVELOPER_HANDOFF.md` – product summary and status.
+8. `ARCHITECTURE.md` – technical architecture details.
 
 ---
+## Surface matrix (supported / optional / legacy)
 
-## 5. Practical rules for contributors
+| Surface | Status | Description |
+|---|---|---|
+| Core local runtime (backend, frontend admin/kiosk) | **Supported** | Fully validated by the authoritative test suite and nightly smoke checks.
+| Central adapter (`central_server/`) | Optional | Present in‑tree for future expansion; not required for local operation.
+| Historical wave notes (`docs/history/`) | **Legacy** | Retained for context only; may contain outdated information.
+| Early implementation plans (`docs/PROJECT_MASTERPLAN_*.md`) | **Legacy** | Provides roadmap context; the current truth is captured in the canonical docs.
 
-- Prefer the **current summary docs** before diving into wave history.
-- When changing contracts, update **tests + docs in the same branch**.
-- When a doc becomes the best current explanation, link to it from `../README.md` or from here.
-- If a file is mostly history, treat it as history instead of pretending it is the active truth.
-
----
-
-## 6. Short version
-
-If you only remember one thing:
-
-> Read the summary docs first. Use the wave files as supporting evidence, not as the front door.
+Use this matrix to decide which documentation to update when making changes.

@@ -23,6 +23,7 @@ import {
   AdminStatsGrid,
   AdminStatusPill,
 } from '../../components/admin/AdminShell';
+import { ProductCallout, ProductInlineActions } from '../../components/shell/ProductDetail';
 
 const API = `${process.env.REACT_APP_BACKEND_URL}/api`;
 
@@ -272,6 +273,14 @@ export default function Reports() {
           tone="violet"
         />
       </AdminStatsGrid>
+
+      <ProductCallout
+        tone="blue"
+        eyebrow="Reporting advisory"
+        title="Lokale Reporting-Surface mit derselben Advisory-Rhythmik"
+        description="Gut für Tagesabschluss, Rückfragen und CSV-Export. Absichtlich keine zentrale Fleet- oder Buchhaltungs-Illusion."
+        actions={<ProductInlineActions mode="admin" items={[{ label: 'Aktualisieren', onClick: fetchReport, className: 'border-zinc-700 text-zinc-300 hover:text-white' }, { label: 'CSV exportieren', onClick: exportCSV, className: 'bg-emerald-600 hover:bg-emerald-500 text-white' }]} />}
+      />
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr,0.8fr]">
         <AdminSection

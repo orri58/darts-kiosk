@@ -102,6 +102,30 @@ Why they are not the main gate:
 - some describe recovery states more than current architecture
 - some are broader but less reliable for day-to-day local-core changes
 
+### Integration/env-dependent request suites
+
+There is also a large bucket of older request-driven suites under `backend/tests/` that hit a live backend via `REACT_APP_BACKEND_URL`.
+
+Current handling:
+- these suites are marked `@pytest.mark.integration`
+- the repo default (`pytest.ini`) excludes them with `-m "not integration"`
+- if `REACT_APP_BACKEND_URL` is not set, they now skip cleanly instead of failing during collection
+
+Why:
+- they depend on an already running environment, seeded credentials/data, and sometimes optional central services
+- they are useful for directed smoke work, but they are not an honest default release gate inside this repo by themselves
+
+Run them explicitly only when you have the right environment:
+
+```bash
+source .venv/bin/activate
+REACT_APP_BACKEND_URL=http://localhost:8001 python -m pytest -q -m integration
+```
+
+Treat failures there in two buckets:
+- **real code/runtime bug** when the provisioned target should support the contract and does not
+- **environment/setup issue** when the target is missing required services, seed data, or platform prerequisites
+
 ## 7. Recommended workflow for contributors
 
 ### For docs-only changes

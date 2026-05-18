@@ -4,9 +4,11 @@ import { useCentralAuth } from '../../context/CentralAuthContext';
 import axios from 'axios';
 import { toast } from 'sonner';
 import { Button } from '../../components/ui/button';
+import { ProductBackLink, ProductCallout, ProductDetailCard, ProductHero, ProductInlineActions, ProductKeyValueList, ProductMetricGrid } from '../../components/shell/ProductDetail';
+import { getTokenStatePresentation, resolveLicenseBackTarget } from '../operator/operatorCommercialFlow';
 import {
-  KeyRound, Copy, RefreshCw, ArrowLeft, Monitor, Wifi, WifiOff,
-  Ban, CheckCircle, AlertTriangle, Archive, Unlink, Shield, Clock, Users,
+  KeyRound, Copy, RefreshCw, Monitor, Wifi, WifiOff,
+  Ban, CheckCircle, AlertTriangle, Archive, Unlink, Shield, Clock,
   Sparkles, Gauge, ExternalLink, TriangleAlert
 } from 'lucide-react';
 
@@ -27,15 +29,6 @@ function StatusBadge({ status }) {
     <span data-testid="license-status-badge" className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${c.cls}`}>
       <Icon className="w-3 h-3" /> {c.label}
     </span>
-  );
-}
-
-function InfoRow({ label, value, tid }) {
-  return (
-    <div className="flex justify-between py-2 border-b border-zinc-800/50">
-      <span className="text-zinc-500 text-sm">{label}</span>
-      <span data-testid={tid} className="text-zinc-200 text-sm font-medium">{value || '—'}</span>
-    </div>
   );
 }
 
@@ -69,13 +62,7 @@ function postureLabel(value) {
 }
 
 function tokenStateLabel(value) {
-  return {
-    active: 'Token bereit',
-    consumed: 'Token verbraucht',
-    expired: 'Token abgelaufen',
-    revoked: 'Token widerrufen',
-    missing: 'Kein Token',
-  }[value] || value || '—';
+  return getTokenStatePresentation({ state: value }, { compact: true }).label;
 }
 
 function ReadinessBadge({ readiness }) {
@@ -116,11 +103,12 @@ function ReadinessCard({ icon: Icon, label, value, hint, tone = 'zinc', tid }) {
   );
 }
 
-function TokenSection({ token, rawToken, onRegenerate, loading, tokenHistory, deviceCount }) {
+function TokenSection({ token, rawToken, onRegenerate, loading, tokenHistory, deviceCount, tokenSummary }) {
   const [revealed, setRevealed] = useState(false);
   const displayToken = rawToken || (token ? token.token_preview : null);
   const hasHistory = tokenHistory && tokenHistory.length > 0;
   const allUsed = hasHistory && tokenHistory.every(t => t.used_at || t.is_revoked);
+  const tokenMeta = getTokenStatePresentation(tokenSummary || { state: token ? 'active' : (allUsed ? 'consumed' : 'missing') });
 
   const copyToken = () => {
     if (rawToken) {
@@ -180,10 +168,13 @@ function TokenSection({ token, rawToken, onRegenerate, loading, tokenHistory, de
   // State 3: Active token exists
   return (
     <div data-testid="token-section" className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5">
-      <div className="flex items-center justify-between mb-4">
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <KeyRound className="w-5 h-5 text-emerald-400" />
-          <h3 className="text-zinc-300 font-medium">Aktivierungstoken</h3>
+          <div>
+            <h3 className="text-zinc-300 font-medium">Aktivierungstoken</h3>
+            <div className={`mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] ${tokenMeta.tone}`}>{tokenMeta.label}{tokenMeta.detail ? ` · ${tokenMeta.detail}` : ''}</div>
+          </div>
         </div>
         <Button data-testid="regenerate-token-btn" variant="outline" size="sm" onClick={onRegenerate} disabled={loading}
           className="border-zinc-700 hover:border-zinc-600 text-zinc-400 hover:text-zinc-200">
@@ -297,6 +288,12 @@ export default function PortalLicenseDetail() {
   const [actionFeedback, setActionFeedback] = useState(location.state?.actionFeedback || null);
   const intent = searchParams.get('intent') || '';
   const surfacePrefix = location.pathname.startsWith('/operator') ? '/operator' : '/portal';
+  const { returnTo, returnLabel } = resolveLicenseBackTarget({
+    search: location.search,
+    state: location.state,
+    fallbackPath: `${surfacePrefix}/licenses`,
+    fallbackLabel: 'Portfolio',
+  });
 
   const classifyError = (err) => {
     const status = err?.response?.status;
@@ -492,104 +489,77 @@ export default function PortalLicenseDetail() {
         ? 'blue'
         : 'emerald';
 
-  return (
-    <div data-testid="license-detail-page" className="max-w-4xl mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-4">
-          <button data-testid="back-btn" onClick={() => navigate(listPath)} className="text-zinc-500 hover:text-zinc-300">
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div>
-            <h1 className="text-xl font-semibold text-zinc-100">Lizenz: {lic.plan_type}</h1>
-            <p className="text-zinc-500 text-sm mt-0.5">{lic.id}</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <ReadinessBadge readiness={readiness} />
-          <StatusBadge status={st} />
-        </div>
-      </div>
+  const modeActions = [
+    ...(primaryAction?.execution?.mode === 'direct' ? [{ label: actionLoading ? 'Wird ausgeführt…' : (primaryAction.type === 'reactivate_license' ? 'Jetzt reaktivieren' : 'Direkt ausführen'), onClick: () => runSuggestedAction(primaryAction), disabled: actionLoading, className: 'bg-emerald-600 hover:bg-emerald-700 text-white' }] : []),
+    ...(suggestedActions.some((item) => item.type === 'review_bound_devices') && isOperatorSurface ? [{ label: 'Geräte prüfen', onClick: () => navigate(remoteActionsPath), trailingIcon: ExternalLink, className: 'border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/10' }] : []),
+    ...(isOperatorSurface ? [{ label: 'Remote Actions', onClick: () => navigate(remoteActionsPath), trailingIcon: ExternalLink, className: 'border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/10' }] : []),
+    { label: returnLabel, onClick: () => navigate(returnTo), className: 'border-zinc-700 text-zinc-300 hover:bg-zinc-800' },
+  ];
 
-      <section className="rounded-3xl border border-zinc-800 bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950 p-5" data-testid="license-readiness-hero">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-3 py-1 text-xs text-indigo-300">
-              <Sparkles className="w-3.5 h-3.5" /> Commercial Readiness Drill-in
-            </div>
-            <h2 className="mt-3 text-lg font-semibold text-white">{readiness.primary_message || 'Lizenzlage wird ausgewertet'}</h2>
-            <p className="mt-1 text-sm text-zinc-400 max-w-2xl">{readiness.recommended_action || 'Kein direkter Eingriff nötig.'}</p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            {primaryAction?.execution?.mode === 'direct' && (
-              <Button size="sm" onClick={() => runSuggestedAction(primaryAction)} disabled={actionLoading} className="bg-emerald-600 hover:bg-emerald-700">
-                {primaryAction.type === 'reactivate_license' ? 'Jetzt reaktivieren' : 'Direkt ausführen'}
-              </Button>
-            )}
-            {suggestedActions.some((item) => item.type === 'review_bound_devices') && isOperatorSurface && (
-              <Button variant="outline" size="sm" onClick={() => navigate(remoteActionsPath)} className="border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/10">
-                Geräte prüfen <ExternalLink className="w-3.5 h-3.5 ml-1.5" />
-              </Button>
-            )}
-            {isOperatorSurface && (
-              <Button variant="outline" size="sm" onClick={() => navigate(remoteActionsPath)} className="border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/10">
-                Remote Actions <ExternalLink className="w-3.5 h-3.5 ml-1.5" />
-              </Button>
-            )}
-            <Button variant="outline" size="sm" onClick={() => navigate(listPath)} className="border-zinc-700 text-zinc-300 hover:bg-zinc-800">
-              Portfolio
-            </Button>
-          </div>
-        </div>
+  return (
+    <div data-testid="license-detail-page" className="mx-auto max-w-5xl space-y-6 p-6">
+      <ProductHero
+        eyebrow={isOperatorSurface ? 'Operator detail' : 'Portal detail'}
+        title={`Lizenz: ${lic.plan_type}`}
+        description={lic.id}
+        badge={<div className="flex items-center gap-2 flex-wrap"><ReadinessBadge readiness={readiness} /><StatusBadge status={st} /></div>}
+        backAction={<ProductBackLink data-testid="back-btn" label={returnLabel} onClick={() => navigate(returnTo)} />}
+        tone={pressureTone}
+        data-testid="license-readiness-hero"
+      >
+        <ProductCallout
+          tone={pressureTone}
+          eyebrow="Commercial readiness drill-in"
+          title={readiness.primary_message || 'Lizenzlage wird ausgewertet'}
+          description={readiness.recommended_action || 'Kein direkter Eingriff nötig.'}
+          icon={Sparkles}
+          actions={<ProductInlineActions mode={isOperatorSurface ? 'operator' : 'read-only'} items={modeActions} />}
+        />
 
         {actionFeedback && (
-          <div className={`mt-4 rounded-2xl border px-4 py-3 ${actionFeedback.tone === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-zinc-700 bg-zinc-900/70 text-zinc-200'}`} data-testid="license-action-feedback">
+          <div className={`rounded-2xl border px-4 py-3 ${actionFeedback.tone === 'success' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-200' : 'border-zinc-700 bg-zinc-900/70 text-zinc-200'}`} data-testid="license-action-feedback">
             <p className="text-sm font-medium">{actionFeedback.title}</p>
             {actionFeedback.message && <p className="mt-1 text-xs text-current/80">{actionFeedback.message}</p>}
           </div>
         )}
 
-        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <ProductMetricGrid columns="xl:grid-cols-5">
           <ReadinessCard icon={TriangleAlert} label="Bucket" value={bucketLabel(readiness.action_bucket)} hint={readiness.risk_flags?.join(' · ') || 'Keine Flags'} tone={pressureTone} tid="license-readiness-bucket" />
           <ReadinessCard icon={Clock} label="Renewal" value={readiness.renewal_days != null ? `${readiness.renewal_days} Tage` : 'Unbegrenzt'} hint={st === 'grace' ? 'Aktuell in Grace' : 'Vertragslaufzeit'} tone={readiness.renewal_days != null && readiness.renewal_days <= 14 ? 'amber' : 'zinc'} tid="license-readiness-renewal" />
           <ReadinessCard icon={Gauge} label="Kapazität" value={`${lic.device_count ?? 0}/${lic.max_devices ?? '—'}`} hint={capacityLabel(readiness.capacity_state)} tone={['full', 'over_capacity'].includes(readiness.capacity_state) ? 'amber' : readiness.capacity_state === 'near_capacity' ? 'blue' : 'zinc'} tid="license-readiness-capacity" />
-          <ReadinessCard icon={KeyRound} label="Tokenlage" value={tokenStateLabel(readiness.token_state)} hint={readiness.token_summary?.message || 'Kein Tokenstatus'} tone={readiness.token_state === 'active' ? 'blue' : ['expired', 'revoked'].includes(readiness.token_state) ? 'amber' : 'zinc'} tid="license-readiness-token" />
+          <ReadinessCard icon={KeyRound} label="Tokenlage" value={getTokenStatePresentation(readiness.token_summary || { state: readiness.token_state }, { compact: true }).label} hint={getTokenStatePresentation(readiness.token_summary || { state: readiness.token_state }).detail || readiness.token_summary?.message || 'Kein Tokenstatus'} tone={readiness.token_state === 'active' ? 'blue' : ['expired', 'revoked'].includes(readiness.token_state) ? 'amber' : 'zinc'} tid="license-readiness-token" />
           <ReadinessCard icon={Shield} label="Posture" value={postureLabel(readiness.posture_status)} hint={`${readiness.posture_counts?.blocked || 0} blocked · ${readiness.posture_counts?.review_required || 0} review · ${readiness.posture_counts?.degraded || 0} degraded`} tone={readiness.posture_status === 'blocked' ? 'red' : readiness.posture_status === 'review_required' ? 'amber' : readiness.posture_status === 'degraded' ? 'blue' : 'emerald'} tid="license-readiness-posture" />
-        </div>
+        </ProductMetricGrid>
 
         {suggestedActions.length > 0 && (
-          <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/20 p-4" data-testid="license-suggested-actions">
-            <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Empfohlene nächste Schritte</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {suggestedActions.map((action) => (
-                <button
-                  key={action.type}
-                  onClick={() => runSuggestedAction(action)}
-                  disabled={actionLoading || (action.execution?.mode === 'direct' && action.type === 'reactivate_license' && !canManage) || (action.execution?.mode === 'direct' && ['generate_activation_token', 'get_activation_token', 'regenerate_activation_token'].includes(action.type) && !canReviewRemoteActions)}
-                  className={`rounded-full border px-3 py-1 text-xs transition-colors ${action.intent === intent ? 'border-white/30 bg-white/10 text-white' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-white'} disabled:cursor-not-allowed disabled:opacity-50`}
-                  title={action.reason}
-                >
-                  {action.label}
-                </button>
-              ))}
-            </div>
-          </div>
+          <ProductInlineActions
+            mode={isOperatorSurface ? 'operator' : 'read-only'}
+            data-testid="license-suggested-actions"
+            items={suggestedActions.map((action) => ({
+              label: action.label,
+              onClick: () => runSuggestedAction(action),
+              disabled: actionLoading || (action.execution?.mode === 'direct' && action.type === 'reactivate_license' && !canManage) || (action.execution?.mode === 'direct' && ['generate_activation_token', 'get_activation_token', 'regenerate_activation_token'].includes(action.type) && !canReviewRemoteActions),
+              className: `${action.intent === intent ? 'border-white/30 bg-white/10 text-white' : 'border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-white'}`,
+            }))}
+          />
         )}
-      </section>
+      </ProductHero>
 
-      {/* Stammdaten */}
-      <div className="bg-zinc-900/50 border border-zinc-800 rounded-lg p-5">
-        <h3 className="text-zinc-300 font-medium mb-3 flex items-center gap-2"><Shield className="w-4 h-4 text-zinc-500" /> Stammdaten</h3>
-        <InfoRow label="Kunde" value={lic.customer_name} tid="lic-customer" />
-        <InfoRow label="Standort" value={lic.location_name} tid="lic-location" />
-        <InfoRow label="Plan" value={lic.plan_type} tid="lic-plan" />
-        <InfoRow label="Max. Geräte" value={lic.max_devices} tid="lic-max-devices" />
-        <InfoRow label="Gültig ab" value={lic.starts_at ? new Date(lic.starts_at).toLocaleDateString('de-DE') : 'Sofort'} tid="lic-starts" />
-        <InfoRow label="Gültig bis" value={lic.ends_at ? new Date(lic.ends_at).toLocaleDateString('de-DE') : 'Unbegrenzt'} tid="lic-ends" />
-        <InfoRow label="Erstellt am" value={lic.created_at ? new Date(lic.created_at).toLocaleDateString('de-DE') : '—'} tid="lic-created" />
-        <InfoRow label="Erstellt von" value={lic.created_by} tid="lic-created-by" />
-        {lic.notes && <InfoRow label="Notizen" value={lic.notes} tid="lic-notes" />}
-      </div>
+      <ProductDetailCard title="Stammdaten" description="Shared Detail-Anatomie für Commercial-Fälle und Standortbezug.">
+        <ProductKeyValueList
+          items={[
+            { label: 'Kunde', value: lic.customer_name, tid: 'lic-customer' },
+            { label: 'Standort', value: lic.location_name, tid: 'lic-location' },
+            { label: 'Plan', value: lic.plan_type, tid: 'lic-plan' },
+            { label: 'Max. Geräte', value: lic.max_devices, tid: 'lic-max-devices' },
+            { label: 'Gültig ab', value: lic.starts_at ? new Date(lic.starts_at).toLocaleDateString('de-DE') : 'Sofort', tid: 'lic-starts' },
+            { label: 'Gültig bis', value: lic.ends_at ? new Date(lic.ends_at).toLocaleDateString('de-DE') : 'Unbegrenzt', tid: 'lic-ends' },
+            { label: 'Erstellt am', value: lic.created_at ? new Date(lic.created_at).toLocaleDateString('de-DE') : '—', tid: 'lic-created' },
+            { label: 'Erstellt von', value: lic.created_by, tid: 'lic-created-by' },
+            ...(lic.notes ? [{ label: 'Notizen', value: lic.notes, tid: 'lic-notes' }] : []),
+          ]}
+        />
+      </ProductDetailCard>
 
       {/* Token */}
       {isOperational && (
@@ -600,6 +570,7 @@ export default function PortalLicenseDetail() {
           loading={actionLoading}
           tokenHistory={lic.token_history}
           deviceCount={lic.device_count}
+          tokenSummary={readiness.token_summary}
         />
       )}
 
@@ -608,32 +579,21 @@ export default function PortalLicenseDetail() {
         devices={lic.devices}
         maxDevices={lic.max_devices}
         onUnbind={handleUnbind}
-        onOpenDevice={(deviceId) => navigate(`${surfacePrefix}/devices/${deviceId}`)}
+        onOpenDevice={(deviceId) => navigate(`${surfacePrefix}/devices/${deviceId}?returnTo=${encodeURIComponent(`${location.pathname}${location.search || ''}`)}&returnLabel=${encodeURIComponent(`${lic.plan_type} · Lizenz`)}`)}
         licenseStatus={st}
       />
 
       {/* Actions */}
       {canManage && (
-        <div data-testid="license-actions" className="flex flex-wrap gap-3 pt-2">
-          {st === 'deactivated' && (
-            <Button data-testid="activate-btn" onClick={() => handleStatusChange('activate')} disabled={actionLoading}
-              size="sm" className="bg-emerald-600 hover:bg-emerald-700">
-              <CheckCircle className="w-4 h-4 mr-2" /> Reaktivieren
-            </Button>
-          )}
-          {isOperational && (
-            <Button data-testid="deactivate-btn" onClick={() => handleStatusChange('deactivate')} disabled={actionLoading}
-              size="sm" variant="outline" className="border-amber-700 text-amber-400 hover:bg-amber-900/30">
-              <Ban className="w-4 h-4 mr-2" /> Deaktivieren
-            </Button>
-          )}
-          {(st !== 'archived') && (
-            <Button data-testid="archive-btn" onClick={() => handleStatusChange('archive')} disabled={actionLoading}
-              size="sm" variant="outline" className="border-zinc-700 text-zinc-400 hover:bg-zinc-800">
-              <Archive className="w-4 h-4 mr-2" /> Archivieren
-            </Button>
-          )}
-        </div>
+        <ProductInlineActions
+          data-testid="license-actions"
+          mode="admin"
+          items={[
+            ...(st === 'deactivated' ? [{ label: 'Reaktivieren', onClick: () => handleStatusChange('activate'), disabled: actionLoading, className: 'bg-emerald-600 hover:bg-emerald-700 text-white' }] : []),
+            ...(isOperational ? [{ label: 'Deaktivieren', onClick: () => handleStatusChange('deactivate'), disabled: actionLoading, className: 'border-amber-700 text-amber-400 hover:bg-amber-900/30' }] : []),
+            ...(st !== 'archived' ? [{ label: 'Archivieren', onClick: () => handleStatusChange('archive'), disabled: actionLoading, className: 'border-zinc-700 text-zinc-400 hover:bg-zinc-800' }] : []),
+          ]}
+        />
       )}
     </div>
   );

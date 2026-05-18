@@ -67,6 +67,10 @@ data/
   - `app/bin/build_support_bundle.bat`
 - paired drill summary wrapper:
   - `app/bin/summarize_paired_drill.bat`
+- board-PC preflight capture wrapper:
+  - `app/bin/capture_board_pc_preflight.bat`
+- board-PC postflight capture wrapper:
+  - `app/bin/capture_board_pc_postflight.bat`
 - final drill handoff wrapper:
   - `app/bin/finalize_drill_handoff.bat`
 - post-attach acknowledgment wrapper:
@@ -86,6 +90,17 @@ data/
   - `data/support/drills/<label>/DRILL_CHECKLIST.md`
   - `data/support/drills/<label>/DRILL_HANDOFF.json`
   - `data/support/drills/<label>/DRILL_HANDOFF.md`
+- board-PC preflight baseline inside each drill folder:
+  - `data/support/drills/<label>/BOARD_PC_PREFLIGHT.json`
+  - `data/support/drills/<label>/BOARD_PC_PREFLIGHT.md`
+- board-PC postflight / result snapshot inside each drill folder:
+  - `data/support/drills/<label>/BOARD_PC_POSTFLIGHT.json`
+  - `data/support/drills/<label>/BOARD_PC_POSTFLIGHT.md`
+- field-certification exports inside each drill folder:
+  - `data/support/drills/<label>/BOARD_PC_CERTIFICATION.json`
+  - `data/support/drills/<label>/BOARD_PC_CERTIFICATION.md`
+  - `data/support/drills/<label>/RC_EVIDENCE_CHECKLIST.json`
+  - `data/support/drills/<label>/RC_EVIDENCE_CHECKLIST.md`
 - ticket-ready comment/export files now emit alongside the handoff docs:
   - `data/support/drills/<label>/DRILL_TICKET_COMMENT.txt`
   - `data/support/drills/<label>/DRILL_TICKET_COMMENT.md`
@@ -136,6 +151,8 @@ For housekeeping:
 - prepare an explicit rollback manifest from an app backup: `app/bin/prepare_runtime_rollback.bat data\app_backups\runtime-app-....zip`
 - prepare a full update+rollback rehearsal lane in one shot: `app/bin/prepare_closed_loop_rehearsal.bat data\downloads\darts-kiosk-vX.Y.Z-windows-runtime.zip X.Y.Z`
 - initialize a dedicated drill folder/checklist: `app/bin/init_drill_workspace.bat board-pc-drill BOARD-17 orri TICKET-2048`
+- capture the machine/runtime preflight baseline before the real pass: `app/bin/capture_board_pc_preflight.bat board-pc-drill BOARD-17 orri TICKET-2048 X.Y.Z`
+- capture the real-machine postflight/result snapshot after the pass: `app/bin/capture_board_pc_postflight.bat board-pc-drill orri pass BOARD-17 orri TICKET-2048 "real board run looked clean"`
 - print the compact current attach/re-attach review for a drill folder: `app/bin/show_attachment_readiness.bat board-pc-drill`
   - this view now includes acknowledgment history change hints when a re-ack changed ticket destination, assignee, or status
 - capture leg-specific evidence without overwriting the shared defaults:
@@ -206,6 +223,16 @@ Wave 12 adds the missing paired closed-loop view:
 That means support can answer the next boring but critical question too: did the board survive the update *and* return cleanly on rollback, without opening multiple JSON files by hand?
 
 Wave 13 reduces the remaining operator footgun: one label now gets its own `data/support/drills/<label>/` workspace with a checklist and dedicated update/rollback filenames. That keeps update-before, update-after, rollback-before, rollback-after, both leg summaries, the paired summary, and their ZIP handoff artifacts together instead of reusing one shared set of generic files.
+
+A dedicated board-PC preflight capture now complements that folder: it records the host/runtime baseline, critical wrapper/file presence, writable-path status, expected-version match, and the remaining manual machine-only checks into `BOARD_PC_PREFLIGHT.json/.md` before the operator starts the real Windows run.
+
+The drill folder now also carries explicit board-PC certification + RC evidence exports so the real-machine pass has a durable signoff trail instead of just raw updater artifacts.
+
+Wave 32 adds the missing finish-line artifact for the actual board-PC pass:
+- `capture-board-pc-postflight` records a real-machine outcome snapshot after the run, not just the repo-side preflight baseline before it
+- the postflight file carries structured machine-check statuses (boot/autostart, admin health, real session flow, update leg, rollback leg, post-rollback reopen sanity) plus operator/signoff fields like tester, venue/machine, Windows build, and Autodarts account
+- when preflight exists, postflight also compares the current runtime boundary back to that preflight snapshot so support can see whether the machine finished in a state consistent with the captured starting baseline
+- certification/RC exports now surface both preflight and postflight evidence, and support bundles include the postflight artifacts automatically when present
 
 Wave 14 makes that folder more support-ready instead of just better organized:
 - the drill checklist now auto-refreshes as expected artifacts appear

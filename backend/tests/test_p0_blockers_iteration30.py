@@ -12,9 +12,11 @@ import requests
 import os
 import time
 
+pytestmark = pytest.mark.integration
+
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
-    raise ValueError("REACT_APP_BACKEND_URL environment variable not set")
+    pytest.skip("REACT_APP_BACKEND_URL environment variable not set", allow_module_level=True)
 
 # Test credentials
 ADMIN_USERNAME = "admin"

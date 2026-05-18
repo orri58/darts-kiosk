@@ -15,6 +15,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 
+def _reset_central_server_modules():
+    for name in list(sys.modules):
+        if name == "central_server" or name.startswith("central_server."):
+            sys.modules.pop(name, None)
+
+
 @pytest.fixture()
 def central_app_env(monkeypatch, tmp_path):
     data_dir = tmp_path / "central-data"
@@ -24,14 +30,7 @@ def central_app_env(monkeypatch, tmp_path):
     monkeypatch.setenv("CENTRAL_ADMIN_TOKEN", "legacy-admin-token")
     monkeypatch.delenv("CENTRAL_ENABLE_LEGACY_ADMIN_TOKEN", raising=False)
 
-    for name in [
-        "central_server.server",
-        "central_server.auth",
-        "central_server.models",
-        "central_server.database",
-        "central_server.ws_hub",
-    ]:
-        sys.modules.pop(name, None)
+    _reset_central_server_modules()
 
     database = importlib.import_module("central_server.database")
     models = importlib.import_module("central_server.models")
@@ -167,14 +166,7 @@ def test_legacy_admin_token_can_be_opted_in(monkeypatch, tmp_path):
     monkeypatch.setenv("CENTRAL_ADMIN_TOKEN", "legacy-admin-token")
     monkeypatch.setenv("CENTRAL_ENABLE_LEGACY_ADMIN_TOKEN", "true")
 
-    for name in [
-        "central_server.server",
-        "central_server.auth",
-        "central_server.models",
-        "central_server.database",
-        "central_server.ws_hub",
-    ]:
-        sys.modules.pop(name, None)
+    _reset_central_server_modules()
 
     server = importlib.import_module("central_server.server")
 
@@ -193,15 +185,7 @@ def test_production_requires_explicit_jwt_secret(monkeypatch, tmp_path):
     monkeypatch.setenv("CENTRAL_ENV", "production")
     monkeypatch.delenv("CENTRAL_JWT_SECRET", raising=False)
 
-    for name in [
-        "central_server.server",
-        "central_server.auth",
-        "central_server.models",
-        "central_server.database",
-        "central_server.ws_hub",
-        "central_server.device_trust",
-    ]:
-        sys.modules.pop(name, None)
+    _reset_central_server_modules()
 
     with pytest.raises(RuntimeError, match="CENTRAL_JWT_SECRET is required in production"):
         importlib.import_module("central_server.server")
@@ -216,15 +200,7 @@ def test_production_blocks_wildcard_cors_without_explicit_unsafe_override(monkey
     monkeypatch.setenv("CENTRAL_CORS_ALLOW_ALL", "true")
     monkeypatch.delenv("CENTRAL_ALLOW_INSECURE_CORS_WILDCARD", raising=False)
 
-    for name in [
-        "central_server.server",
-        "central_server.auth",
-        "central_server.models",
-        "central_server.database",
-        "central_server.ws_hub",
-        "central_server.device_trust",
-    ]:
-        sys.modules.pop(name, None)
+    _reset_central_server_modules()
 
     with pytest.raises(RuntimeError, match="CENTRAL_CORS_ALLOW_ALL is blocked in production"):
         importlib.import_module("central_server.server")
@@ -239,15 +215,7 @@ def test_production_can_explicitly_override_wildcard_cors_guard(monkeypatch, tmp
     monkeypatch.setenv("CENTRAL_CORS_ALLOW_ALL", "true")
     monkeypatch.setenv("CENTRAL_ALLOW_INSECURE_CORS_WILDCARD", "true")
 
-    for name in [
-        "central_server.server",
-        "central_server.auth",
-        "central_server.models",
-        "central_server.database",
-        "central_server.ws_hub",
-        "central_server.device_trust",
-    ]:
-        sys.modules.pop(name, None)
+    _reset_central_server_modules()
 
     server = importlib.import_module("central_server.server")
     assert server._CORS_ALLOWED_ORIGINS == ["*"]
@@ -2061,14 +2029,7 @@ def test_device_websocket_query_transport_is_denied_in_production_by_default(mon
     monkeypatch.setenv("CENTRAL_JWT_SECRET", "test-jwt-secret-which-is-long-enough-for-hs256")
     monkeypatch.setenv("CENTRAL_ENV", "production")
 
-    for name in [
-        "central_server.server",
-        "central_server.auth",
-        "central_server.models",
-        "central_server.database",
-        "central_server.ws_hub",
-    ]:
-        sys.modules.pop(name, None)
+    _reset_central_server_modules()
 
     server = importlib.import_module("central_server.server")
     models = importlib.import_module("central_server.models")
@@ -2114,14 +2075,7 @@ def test_device_websocket_query_transport_can_be_explicitly_allowed_in_productio
     monkeypatch.setenv("CENTRAL_ENV", "production")
     monkeypatch.setenv("CENTRAL_WS_QUERY_AUTH_MODE", "allow")
 
-    for name in [
-        "central_server.server",
-        "central_server.auth",
-        "central_server.models",
-        "central_server.database",
-        "central_server.ws_hub",
-    ]:
-        sys.modules.pop(name, None)
+    _reset_central_server_modules()
 
     server = importlib.import_module("central_server.server")
     models = importlib.import_module("central_server.models")
@@ -3077,14 +3031,7 @@ def test_cors_is_env_scoped(monkeypatch, tmp_path, origin, expected_allow_origin
     monkeypatch.setenv("CENTRAL_CORS_ALLOWED_ORIGINS", "https://portal.example.com")
     monkeypatch.delenv("CENTRAL_CORS_ALLOW_ALL", raising=False)
 
-    for name in [
-        "central_server.server",
-        "central_server.auth",
-        "central_server.models",
-        "central_server.database",
-        "central_server.ws_hub",
-    ]:
-        sys.modules.pop(name, None)
+    _reset_central_server_modules()
 
     server = importlib.import_module("central_server.server")
 

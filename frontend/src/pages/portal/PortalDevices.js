@@ -1,53 +1,11 @@
-import { useEffect, useState, useCallback } from "react";
-import { useCentralAuth } from "../../context/CentralAuthContext";
-import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import {
-  Monitor,
-  Wifi,
-  WifiOff,
-  AlertTriangle,
-  RefreshCw,
-  Activity,
-  Clock,
-  KeyRound,
-} from "lucide-react";
-import { Button } from "../../components/ui/button";
-import { useNavigate, useLocation } from "react-router-dom";
-
-function ConnBadge({ connectivity }) {
-  if (connectivity === "online")
-    return (
-      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">
-        <Wifi size={12} /> Online
-      </span>
-    );
-  if (connectivity === "degraded")
-    return (
-      <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/20">
-        <AlertTriangle size={12} /> Degraded
-      </span>
-    );
-  return (
-    <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-zinc-500/15 text-zinc-400 border border-zinc-500/20">
-      <WifiOff size={12} /> Offline
-    </span>
-  );
-}
-
-function formatDt(isoStr) {
-  if (!isoStr) return "—";
-  try {
-    return new Date(isoStr).toLocaleString("de-DE", {
-      day: "2-digit",
-      month: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  } catch {
-    return isoStr;
-  }
-}
+import { useEffect, useState, useCallback } from 'react';
+import { useCentralAuth } from '../../context/CentralAuthContext';
+import { AlertTriangle, Monitor, RefreshCw, Wifi, Activity } from 'lucide-react';
+import { Button } from '../../components/ui/button';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { ProductPageHeader, ProductSection, ProductStatCard, SurfaceBadge } from '../../components/shell/ProductShell';
+import { ProductFilterSummary, ProductPageState } from '../../components/shell/ProductDataDisplay';
+import { ProductFleetCardGrid, ProductFleetEmptyState } from '../../components/shell/ProductSurfaceSystems';
 
 export default function PortalDevices() {
   const navigate = useNavigate();
@@ -61,7 +19,7 @@ export default function PortalDevices() {
     setLoading(true);
     setError(null);
     try {
-      const res = await centralFetch("licensing/devices");
+      const res = await centralFetch('licensing/devices');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setDevices(await res.json());
     } catch (e) {
@@ -77,107 +35,72 @@ export default function PortalDevices() {
     return () => clearInterval(iv);
   }, [refresh]);
 
-  const onlineCount = devices.filter((d) => d.connectivity === "online" || d.is_online).length;
+  const onlineCount = devices.filter((d) => d.connectivity === 'online' || d.is_online).length;
+  const degradedCount = devices.filter((d) => d.connectivity === 'degraded').length;
+  const licensedCount = devices.filter((d) => Boolean(d.license_id)).length;
   const surfacePrefix = location.pathname.startsWith('/operator') ? '/operator' : '/portal';
+  const currentListPath = `${location.pathname}${location.search || ''}`;
+  const openDevice = (d) => navigate(`${surfacePrefix}/devices/${d.id}?returnTo=${encodeURIComponent(currentListPath)}&returnLabel=${encodeURIComponent('Geräte')}`);
+  const openLicense = (d) => navigate(`${surfacePrefix}/licenses/${d.license_id}?intent=devices&returnTo=${encodeURIComponent(currentListPath)}&returnLabel=${encodeURIComponent('Geräte')}`);
 
   return (
     <div data-testid="portal-devices-page" className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold text-zinc-100">Geraete</h1>
-          <p className="text-sm text-zinc-500 mt-1">
-            {devices.length} registriert, {onlineCount} online
-          </p>
-        </div>
-        <Button
-          data-testid="portal-devices-refresh"
-          variant="outline"
-          size="sm"
-          onClick={refresh}
-          disabled={loading}
-          className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
-        >
-          <RefreshCw size={14} className={loading ? "animate-spin mr-1" : "mr-1"} />
-          Aktualisieren
-        </Button>
+      <ProductPageHeader
+        eyebrow="Fleet"
+        title="Geräte"
+        badge={<SurfaceBadge tone="amber">Read-only</SurfaceBadge>}
+        description={`${devices.length} registriert, ${onlineCount} online${degradedCount ? `, ${degradedCount} degraded` : ''}. Dieselbe Fleet-Anatomie wie Operator, aber ohne Eingriffe.`}
+        actions={
+          <Button
+            data-testid="portal-devices-refresh"
+            variant="outline"
+            size="sm"
+            onClick={refresh}
+            disabled={loading}
+            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+          >
+            <RefreshCw size={14} className={loading ? 'mr-1 animate-spin' : 'mr-1'} />
+            Aktualisieren
+          </Button>
+        }
+      />
+
+      <div className="grid gap-3 md:grid-cols-4">
+        <ProductStatCard icon={Monitor} label="Geräte gesamt" value={devices.length} hint="Registrierte Geräte" data-testid="portal-devices-total" />
+        <ProductStatCard icon={Wifi} label="Online" value={onlineCount} hint="Geräte mit aktiver Verbindung" tone="emerald" data-testid="portal-devices-online" />
+        <ProductStatCard icon={AlertTriangle} label="Degraded" value={degradedCount} hint="Instabiler Runtime-Zustand" tone="amber" data-testid="portal-devices-degraded" />
+        <ProductStatCard icon={Activity} label="Lizenziert" value={licensedCount} hint="Mit Lizenzbezug" tone="blue" data-testid="portal-devices-licensed" />
       </div>
 
-      {error && (
-        <div className="p-3 rounded bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-          Fehler: {error}
-        </div>
-      )}
+      {error && <ProductPageState kind="error" compact title="Geräte konnten nicht geladen werden" description={error} data-testid="portal-devices-error" />}
 
       {loading && devices.length === 0 ? (
-        <div className="text-center py-12 text-zinc-500">Laden...</div>
+        <ProductPageState kind="loading" title="Geräte werden geladen" description="Die read-only Fleet-Sicht wird mit Heartbeats, Bindings und Lizenzbezügen aufgebaut." data-testid="portal-devices-loading" />
       ) : devices.length === 0 ? (
-        <Card className="bg-zinc-900/80 border-zinc-800">
-          <CardContent className="py-12 text-center text-zinc-500">
-            Keine Geraete registriert. Geraete erscheinen hier sobald sie sich beim
-            Central Server registrieren.
-          </CardContent>
-        </Card>
+        <ProductFleetEmptyState scopeLabel="Geräte" readOnly testId="portal-devices-empty" />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {devices.map((d) => (
-            <Card
-              key={d.id}
-              className="bg-zinc-900/80 border-zinc-800 hover:border-zinc-700 transition-colors"
-              data-testid={`portal-device-card-${d.id}`}
-            >
-              <CardHeader className="pb-2">
-                <div className="flex items-start justify-between">
-                  <CardTitle className="text-sm text-zinc-200 flex items-center gap-2">
-                    <Monitor size={15} className="text-zinc-500" />
-                    {d.device_name || d.id?.slice(0, 8)}
-                  </CardTitle>
-                  <ConnBadge connectivity={d.connectivity || (d.is_online ? "online" : "offline")} />
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-2 text-xs text-zinc-400">
-                <div className="flex justify-between">
-                  <span className="flex items-center gap-1">
-                    <Activity size={12} /> Status
-                  </span>
-                  <span className="text-zinc-300">{d.status || "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Version</span>
-                  <span className="text-zinc-300 font-mono text-xs">
-                    {d.reported_version || "—"}
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="flex items-center gap-1">
-                    <Clock size={12} /> Heartbeat
-                  </span>
-                  <span className="text-zinc-300">{formatDt(d.last_heartbeat_at)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Binding</span>
-                  <span className="text-zinc-300">{d.binding_status || "—"}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Syncs</span>
-                  <span className="text-zinc-300">{d.sync_count ?? 0}</span>
-                </div>
-                <div className="flex justify-between items-center gap-3">
-                  <span>Lizenz</span>
-                  {d.license_id ? (
-                    <button
-                      onClick={() => navigate(`${surfacePrefix}/licenses/${d.license_id}?intent=devices`)}
-                      className="inline-flex items-center gap-1 text-zinc-200 hover:text-white"
-                    >
-                      <KeyRound size={12} /> {d.license_id.slice(0, 8)}...
-                    </button>
-                  ) : (
-                    <span className="text-zinc-500">—</span>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <ProductSection eyebrow="Inventory" title="Fleet Cards" description="Shared Karten-Semantik für Heartbeat, Binding, Lizenz und Detail-Drill-in.">
+          <div className="space-y-4 p-4">
+            <ProductFilterSummary
+              label="Scope"
+              items={[
+                { key: 'Geräte', value: String(devices.length) },
+                { key: 'Online', value: String(onlineCount) },
+                { key: 'Instabil', value: String(degradedCount) },
+                { key: 'Lizenziert', value: String(licensedCount) },
+              ]}
+              data-testid="portal-devices-scope-summary"
+            />
+
+            <ProductFleetCardGrid
+              devices={devices}
+              onOpenDevice={openDevice}
+              onOpenLicense={openLicense}
+              surfacePrefix={surfacePrefix}
+              currentListPath={currentListPath}
+            />
+          </div>
+        </ProductSection>
       )}
     </div>
   );

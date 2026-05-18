@@ -4,6 +4,30 @@ All notable changes to Darts Kiosk are documented here.
 
 The project follows semantic versioning for product releases.
 
+## [4.4.21] - 2026-05-18
+
+### Added
+- Added a modular central-server route/service layout for config profiles, effective device config, device detail reads, device remote actions, trust enrollment/detail shaping, licensing token flows, websocket device status, and shared audit/auth helpers so the broader central control-plane work now ships as a coherent codebase instead of lingering only in the local tree.
+- Added shared product-surface shell primitives (`ProductShell`, detail/data display helpers, and surface system components) plus an operator commercial-flow helper/test so operator and portal pages can reuse one cleaner interaction model.
+- Added board-PC certification and RC field-evidence runbooks plus Windows preflight/postflight capture scripts so runtime rehearsal evidence can be collected more consistently on real machines.
+
+### Improved
+- Reworked `central_server/server.py` around the extracted central modules, drastically reducing the monolith and aligning the shipped server with the pending broader central work that was previously not part of `4.4.20`.
+- Refreshed operator and portal surfaces — including dashboards, layouts, customers, locations, devices, users, licenses, audit, reports, and device/license detail flows — onto the newer product-shell design language for a more consistent commercial/operator experience.
+- Tightened runtime maintenance and field-handoff documentation, readiness notes, and closed-loop support artifacts so the repo better distinguishes focused green lanes from historical/non-authoritative test noise.
+
+### Fixed
+- Fixed device pending remote-action delivery to evaluate TTL against the injected release/test clock instead of ambient wall time, preventing false expiry during deterministic validation.
+- Restored manual-unlock session-pricing compatibility for the legacy manual-unlock regression tests by preserving the older sentinel/decision aliases alongside the current pricing model.
+- Updated the repo-level release docs/version pointers so the shipped release line matches the actual cut instead of the earlier partial 4.4.20 note.
+
+### Validation
+- Focused central/runtime regression suite passed (`166 passed`): device-detail/config-profile/effective-config/licensing-token/remote-action/trust/ws-status service+router slices, `backend/tests/test_central_security_hardening.py`, `tests/test_device_trust.py`, `tests/test_runtime_field_evidence.py`, and `tests/test_runtime_maintenance_closed_loop.py`.
+- Legacy manual-unlock compatibility suite passed (`2 passed`): `backend/tests/test_manual_unlock_pricing.py`.
+- Python compile sanity passed for `central_server` and `release/runtime_windows`.
+- Frontend production build passed (`cd frontend && npm run build`).
+- Full historical `pytest -q` was re-checked and remains broadly red outside the focused release lanes; it is not claimed green for this release.
+
 ## [4.4.19] - 2026-04-27
 
 ### Added

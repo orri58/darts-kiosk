@@ -4,10 +4,14 @@ import { useCentralAuth } from '../../context/CentralAuthContext';
 import axios from 'axios';
 import {
   KeyRound, Plus, CheckCircle, AlertTriangle, Ban, Shield, Clock, Archive, Filter, ChevronRight, ExternalLink,
-  Gauge, Sparkles, TriangleAlert, PackageOpen, ArrowRight, BriefcaseBusiness
+  Gauge, Sparkles, TriangleAlert, PackageOpen, ArrowRight
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { toast } from 'sonner';
+import { ProductDataTable, ProductFilterSummary, ProductPageState } from '../../components/shell/ProductDataDisplay';
+import { ProductPageHeader, ProductSection, ProductStatCard, SurfaceBadge } from '../../components/shell/ProductShell';
+import { ProductCallout, ProductFocusList, ProductInlineActions } from '../../components/shell/ProductDetail';
+import { buildLicenseDetailPath, getTokenStatePresentation } from './operatorCommercialFlow';
 
 const STATUS_CONF = {
   active: { cls: 'bg-emerald-500/10 text-emerald-400', label: 'Aktiv', icon: CheckCircle },
@@ -80,6 +84,10 @@ function postureLabel(value) {
   }[value] || value || '—';
 }
 
+function tokenStateLabel(value) {
+  return getTokenStatePresentation({ state: value }, { compact: true }).label;
+}
+
 function actionIntentLabel(action) {
   const type = action?.type;
   return {
@@ -96,36 +104,12 @@ function actionIntentLabel(action) {
   }[type] || action?.label || 'Öffnen';
 }
 
-function tokenStateLabel(value) {
-  return {
-    active: 'Token bereit',
-    consumed: 'Token verbraucht',
-    expired: 'Token abgelaufen',
-    revoked: 'Token widerrufen',
-    missing: 'Kein Token',
-  }[value] || value || '—';
-}
-
-function tokenTone(value) {
-  return {
-    active: 'border-sky-500/20 bg-sky-500/10 text-sky-300',
-    consumed: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300',
-    expired: 'border-amber-500/20 bg-amber-500/10 text-amber-300',
-    revoked: 'border-red-500/20 bg-red-500/10 text-red-300',
-    missing: 'border-zinc-700 bg-zinc-800/80 text-zinc-300',
-  }[value] || 'border-zinc-700 bg-zinc-800/80 text-zinc-300';
-}
-
 function TokenBadge({ summary, compact = false }) {
-  const state = summary?.state;
-  const expiresIn = summary?.active_expires_in_days;
-  const detail = state === 'active' && expiresIn != null
-    ? ` · ${expiresIn}T Restlaufzeit`
-    : compact ? '' : ` · ${summary?.counts?.total || 0} gesamt`;
+  const tokenMeta = getTokenStatePresentation(summary, { compact });
 
   return (
-    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${tokenTone(state)}`}>
-      {tokenStateLabel(state)}{detail}
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs ${tokenMeta.tone}`} title={tokenMeta.detail || tokenMeta.label}>
+      {compact ? tokenMeta.shortLabel : tokenMeta.label}{tokenMeta.detail ? ` · ${tokenMeta.detail}` : ''}
     </span>
   );
 }
@@ -144,90 +128,16 @@ function ReadinessBadge({ readiness }) {
   );
 }
 
-function KpiCard({ icon: Icon, label, value, hint, tone = 'zinc' }) {
-  const toneCls = {
-    emerald: 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300',
-    amber: 'border-amber-500/20 bg-amber-500/10 text-amber-300',
-    red: 'border-red-500/20 bg-red-500/10 text-red-300',
-    blue: 'border-sky-500/20 bg-sky-500/10 text-sky-300',
-    zinc: 'border-zinc-800 bg-zinc-900/60 text-zinc-300',
-  }[tone] || 'border-zinc-800 bg-zinc-900/60 text-zinc-300';
-
+function focusMeta(item) {
   return (
-    <div className={`rounded-2xl border p-4 ${toneCls}`}>
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-current/70">{label}</p>
-          <p className="mt-2 text-2xl font-semibold text-white">{value}</p>
-          {hint && <p className="mt-1 text-xs text-current/75">{hint}</p>}
-        </div>
-        <div className="rounded-xl bg-black/20 p-2.5">
-          <Icon className="w-5 h-5" />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FocusQueue({ title, hint, items, empty, onOpenLicense, onRunAction, accent = 'zinc' }) {
-  const accentCls = {
-    red: 'border-red-500/20 bg-red-500/5',
-    amber: 'border-amber-500/20 bg-amber-500/5',
-    blue: 'border-sky-500/20 bg-sky-500/5',
-    emerald: 'border-emerald-500/20 bg-emerald-500/5',
-    zinc: 'border-zinc-800 bg-zinc-900/60',
-  }[accent] || 'border-zinc-800 bg-zinc-900/60';
-
-  return (
-    <div className={`rounded-2xl border p-4 ${accentCls}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-semibold text-white">{title}</p>
-          <p className="mt-1 text-xs text-zinc-500">{hint}</p>
-        </div>
-        <span className="rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-zinc-400">{items.length}</span>
-      </div>
-      <div className="mt-4 space-y-2">
-        {items.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-zinc-800 px-3 py-4 text-sm text-zinc-500">{empty}</div>
-        ) : items.map((item) => (
-          <div
-            key={item.license_id}
-            className="rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-3 text-left"
-          >
-            <button
-              onClick={() => onOpenLicense(item.license_id)}
-              className="w-full text-left hover:opacity-95 transition-opacity"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-sm font-medium text-white">{item.plan_type || 'Lizenz'} <span className="text-zinc-500 font-mono text-xs">{item.license_id.slice(0, 8)}</span></p>
-                  <p className="mt-1 text-xs text-zinc-400">{item.primary_message}</p>
-                </div>
-                <ReadinessBadge readiness={item} />
-              </div>
-            </button>
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500">
-              <span>Status: {statusLabel(item.computed_status)}</span>
-              <span>Geräte: {item.device_count}/{item.max_devices || '—'}</span>
-              {item.renewal_days != null && <span>Renewal: {item.renewal_days} Tage</span>}
-              <span className={POSTURE_TONE[item.posture_status] || 'text-zinc-400'}>Posture: {postureLabel(item.posture_status)}</span>
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <TokenBadge summary={item.token_summary} compact />
-              {item.suggested_actions?.[0] && onRunAction && (
-                <button
-                  onClick={() => onRunAction(item.license_id, item.suggested_actions[0])}
-                  className="inline-flex items-center gap-1 rounded-lg border border-zinc-700 px-2.5 py-1 text-xs text-zinc-200 hover:border-zinc-600 hover:bg-zinc-800"
-                >
-                  {actionIntentLabel(item.suggested_actions[0])} <ArrowRight className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+    <>
+      <ReadinessBadge readiness={item} />
+      <TokenBadge summary={item.token_summary} compact />
+      <span className="text-[11px] text-zinc-500">{statusLabel(item.computed_status)}</span>
+      <span className="text-[11px] text-zinc-500">{item.device_count ?? 0}/{item.max_devices || '—'} Geräte</span>
+      {item.renewal_days != null ? <span className="text-[11px] text-zinc-500">{item.renewal_days} Tage</span> : null}
+      <span className={`text-[11px] ${POSTURE_TONE[item.posture_status] || 'text-zinc-400'}`}>Posture: {postureLabel(item.posture_status)}</span>
+    </>
   );
 }
 
@@ -241,6 +151,7 @@ export default function OperatorLicenses() {
   const [statusFilter, setStatusFilter] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [createdLicenseId, setCreatedLicenseId] = useState(null);
+  const [actionLoadingId, setActionLoadingId] = useState(null);
 
   const fetchLicenses = useCallback(async () => {
     setLoading(true);
@@ -309,10 +220,18 @@ export default function OperatorLicenses() {
     return 'Portfolio wirkt aktuell sauber';
   }, [portfolio, counts.urgent, counts.attention]);
 
-  const openLicense = (licenseId, state) => navigate(`${surfacePrefix}/licenses/${licenseId}`, state ? { state } : undefined);
+  const currentListPath = `${location.pathname}${location.search || ''}`;
+  const listLabel = statusFilter ? `Lizenzen · ${STATUS_OPTIONS.find((item) => item.value === statusFilter)?.label || 'Filter'}` : 'Lizenzen';
+  const openLicense = (licenseId, state, options = {}) => navigate(
+    buildLicenseDetailPath(surfacePrefix, licenseId, {
+      intent: options.intent || '',
+      returnTo: currentListPath,
+      returnLabel: listLabel,
+    }),
+    state ? { state: { ...state, fromListPath: currentListPath, fromListLabel: listLabel } } : undefined,
+  );
   const openLicenseIntent = (licenseId, intent, state) => {
-    const search = intent ? `?intent=${encodeURIComponent(intent)}` : '';
-    navigate(`${surfacePrefix}/licenses/${licenseId}${search}`, state ? { state } : undefined);
+    openLicense(licenseId, state, { intent });
   };
   const runSuggestedAction = async (licenseId, action) => {
     if (!action) {
@@ -321,30 +240,29 @@ export default function OperatorLicenses() {
     }
 
     const execution = action.execution || {};
+    setActionLoadingId(licenseId);
+
+    try {
 
     if (execution.mode === 'direct' && execution.action === 'ensure_activation_token') {
       if (!canReviewRemoteActions) {
         openLicenseIntent(licenseId, action.intent);
         return;
       }
-      try {
-        const res = await axios.get(`${apiBase}/licensing/licenses/${licenseId}/token`, { headers: authHeaders });
-        const rawToken = res.data.raw_token || null;
-        toast.success(res.data.exists ? 'Aktiver Token bereit' : 'Token erstellt');
-        openLicenseIntent(licenseId, action.intent, {
-          rawToken,
-          actionFeedback: {
-            tone: 'success',
-            title: res.data.exists ? 'Aktiver Token bereit' : 'Neuer Token erstellt',
-            message: res.data.exists
-              ? 'Den bestehenden Token jetzt am Gerät verwenden oder bei Unsicherheit im Detail einen frischen Token ausstellen.'
-              : 'Nächster Schritt: Token direkt am Gerät eingeben und die erste Registrierung abschließen.',
-          },
-        });
-        fetchLicenses();
-      } catch (err) {
-        toast.error(err.response?.data?.detail || 'Fehler');
-      }
+      const res = await axios.get(`${apiBase}/licensing/licenses/${licenseId}/token`, { headers: authHeaders });
+      const rawToken = res.data.raw_token || null;
+      toast.success(res.data.exists ? 'Aktiver Token bereit' : 'Token erstellt');
+      openLicenseIntent(licenseId, action.intent, {
+        rawToken,
+        actionFeedback: {
+          tone: 'success',
+          title: res.data.exists ? 'Aktiver Token bereit' : 'Neuer Token erstellt',
+          message: res.data.exists
+            ? 'Direkt am Gerät eingeben oder im Detail einen frischen Token ausstellen.'
+            : 'Nächster Schritt: Token direkt am Gerät eingeben und die Registrierung abschließen.',
+        },
+      });
+      fetchLicenses();
       return;
     }
 
@@ -353,24 +271,20 @@ export default function OperatorLicenses() {
         openLicenseIntent(licenseId, action.intent);
         return;
       }
-      try {
-        const res = await axios.post(`${apiBase}/licensing/licenses/${licenseId}/regenerate-token`, {}, { headers: authHeaders });
-        const rawToken = res.data.raw_token || null;
-        toast.success('Token erneuert');
-        openLicenseIntent(licenseId, action.intent, {
-          rawToken,
-          actionFeedback: {
-            tone: 'success',
-            title: 'Frischer Token erstellt',
-            message: res.data.revoked_count > 0
-              ? `${res.data.revoked_count} alte(r) Token widerrufen. Jetzt nur noch den neuen Token am Gerät verwenden.`
-              : 'Jetzt nur noch den neuen Token am Gerät verwenden.',
-          },
-        });
-        fetchLicenses();
-      } catch (err) {
-        toast.error(err.response?.data?.detail || 'Fehler');
-      }
+      const res = await axios.post(`${apiBase}/licensing/licenses/${licenseId}/regenerate-token`, {}, { headers: authHeaders });
+      const rawToken = res.data.raw_token || null;
+      toast.success('Token erneuert');
+      openLicenseIntent(licenseId, action.intent, {
+        rawToken,
+        actionFeedback: {
+          tone: 'success',
+          title: 'Frischer Token erstellt',
+          message: res.data.revoked_count > 0
+            ? `${res.data.revoked_count} alte(r) Token widerrufen. Jetzt nur noch den neuen Token am Gerät verwenden.`
+            : 'Jetzt nur noch den neuen Token am Gerät verwenden.',
+        },
+      });
+      fetchLicenses();
       return;
     }
 
@@ -379,20 +293,16 @@ export default function OperatorLicenses() {
         openLicenseIntent(licenseId, action.intent);
         return;
       }
-      try {
-        await axios.put(`${apiBase}/licensing/licenses/${licenseId}`, { status: 'active' }, { headers: authHeaders });
-        toast.success('Lizenz reaktiviert');
-        openLicenseIntent(licenseId, action.intent, {
-          actionFeedback: {
-            tone: 'success',
-            title: 'Lizenz wieder aktiv',
-            message: 'Wenn der Standort noch kein Gerät hat, als Nächstes direkt den Aktivierungstoken prüfen.',
-          },
-        });
-        fetchLicenses();
-      } catch (err) {
-        toast.error(err.response?.data?.detail || 'Fehler');
-      }
+      await axios.put(`${apiBase}/licensing/licenses/${licenseId}`, { status: 'active' }, { headers: authHeaders });
+      toast.success('Lizenz reaktiviert');
+      openLicenseIntent(licenseId, action.intent, {
+        actionFeedback: {
+          tone: 'success',
+          title: 'Lizenz wieder aktiv',
+          message: 'Wenn der Standort noch kein Gerät hat, als Nächstes direkt den Aktivierungstoken prüfen.',
+        },
+      });
+      fetchLicenses();
       return;
     }
 
@@ -402,44 +312,70 @@ export default function OperatorLicenses() {
     }
 
     openLicenseIntent(licenseId, action.intent);
+  } catch (err) {
+    toast.error(err.response?.data?.detail || 'Fehler');
+  } finally {
+    setActionLoadingId(null);
+  }
   };
 
   return (
-    <div data-testid="licenses-page" className="p-6 space-y-6">
-      <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-xl font-semibold text-zinc-100 flex items-center gap-2">
-            <KeyRound className="w-5 h-5 text-zinc-500" /> Lizenzen
-            <span className="text-zinc-600 text-sm ml-2">({licenses.length})</span>
-          </h1>
-          <p className="mt-1 text-sm text-zinc-500">Commercial Readiness, Renewal-Druck und Aktivierungslücken in einer Operator-Surface.</p>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-md px-2">
-            <Filter className="w-3.5 h-3.5 text-zinc-500" />
-            <select data-testid="status-filter" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-              className="bg-transparent text-zinc-300 text-sm py-1.5 outline-none cursor-pointer">
-              {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+    <div data-testid="licenses-page" className="space-y-6">
+      <ProductPageHeader
+        eyebrow="Commercial"
+        title={`Lizenzen (${licenses.length})`}
+        badge={<SurfaceBadge tone={(counts.urgent || 0) > 0 ? 'amber' : 'blue'}>Operator control surface</SurfaceBadge>}
+        description="Commercial Readiness, Renewal-Druck und Aktivierungslücken in einer Operator-Surface."
+        actions={
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 bg-zinc-900 border border-zinc-800 rounded-md px-2">
+              <Filter className="w-3.5 h-3.5 text-zinc-500" />
+              <select data-testid="status-filter" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+                className="bg-transparent text-zinc-300 text-sm py-1.5 outline-none cursor-pointer">
+                {STATUS_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            {canManage && (
+              <Button data-testid="create-license-btn" onClick={() => setShowCreate(true)} size="sm" className="bg-emerald-600 hover:bg-emerald-700">
+                <Plus className="w-4 h-4 mr-1.5" /> Neue Lizenz
+              </Button>
+            )}
           </div>
-          {canManage && (
-            <Button data-testid="create-license-btn" onClick={() => setShowCreate(true)} size="sm" className="bg-emerald-600 hover:bg-emerald-700">
-              <Plus className="w-4 h-4 mr-1.5" /> Neue Lizenz
-            </Button>
-          )}
-        </div>
-      </div>
+        }
+      />
+
+      <ProductFilterSummary
+        label="Scope"
+        items={[
+          { key: 'Status', value: STATUS_OPTIONS.find((item) => item.value === statusFilter)?.label || 'Alle Status' },
+          { key: 'Aktiv', value: String(activeLicenses.length) },
+          { key: 'Historisch', value: String(inactiveLicenses.length) },
+          ...(portfolio?.counts?.urgent ? [{ key: 'Dringend', value: String(portfolio.counts.urgent) }] : []),
+        ]}
+        data-testid="operator-licenses-scope-summary"
+      />
 
       {createdLicenseId && (
-        <div data-testid="onboarding-cta" className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg p-4 flex items-center justify-between gap-4 flex-wrap">
-          <div>
-            <p className="text-emerald-400 font-medium text-sm">Lizenz erstellt!</p>
-            <p className="text-zinc-400 text-xs mt-1">Nächster Schritt: Aktivierungstoken erstellen und Gerät verbinden.</p>
-          </div>
-          <Button data-testid="goto-license-detail-btn" onClick={() => navigate(`${surfacePrefix}/licenses/${createdLicenseId}`)} size="sm" className="bg-emerald-600 hover:bg-emerald-700">
-            Gerät jetzt verbinden <ChevronRight className="w-4 h-4 ml-1" />
-          </Button>
-        </div>
+        <ProductCallout
+          tone="emerald"
+          eyebrow="Activation handoff"
+          title="Lizenz erstellt"
+          description="Nächster Schritt: Aktivierungstoken erzeugen und das erste Gerät sauber anbinden."
+          actions={(
+            <ProductInlineActions
+              mode="operator"
+              items={[
+                {
+                  label: 'Gerät jetzt verbinden',
+                  onClick: () => navigate(buildLicenseDetailPath(surfacePrefix, createdLicenseId, { returnTo: currentListPath, returnLabel: listLabel })),
+                  trailingIcon: ChevronRight,
+                  className: 'bg-emerald-600 hover:bg-emerald-700 text-white',
+                },
+              ]}
+            />
+          )}
+          data-testid="onboarding-cta"
+        />
       )}
 
       {showCreate && (
@@ -495,114 +431,120 @@ export default function OperatorLicenses() {
       )}
 
       {loading ? (
-        <div className="text-zinc-500 py-8 text-center">Laden...</div>
+        <ProductPageState kind="loading" title="Lizenzportfolio wird geladen" description="Commercial Readiness, Renewals und Tokenlage werden zusammengeführt." data-testid="operator-licenses-loading" />
       ) : licenses.length === 0 ? (
-        <div data-testid="licenses-empty-state" className="text-center py-16">
-          <KeyRound className="w-10 h-10 text-zinc-700 mx-auto mb-3" />
-          <p className="text-zinc-400">{statusFilter ? `Keine ${STATUS_OPTIONS.find(o => o.value === statusFilter)?.label || ''} Lizenzen` : 'Noch keine Lizenzen vorhanden'}</p>
-          {canManage && !statusFilter && <p className="text-zinc-600 text-sm mt-1">Erstellen Sie eine erste Lizenz, um Geräte zu verbinden.</p>}
-        </div>
+        <ProductPageState
+          kind={statusFilter ? 'filtered' : 'empty'}
+          title={statusFilter ? `Keine ${STATUS_OPTIONS.find(o => o.value === statusFilter)?.label || ''} Lizenzen` : 'Noch keine Lizenzen vorhanden'}
+          description={canManage && !statusFilter ? 'Erstellen Sie eine erste Lizenz, um Geräte zu verbinden.' : 'Im aktuellen Filter gibt es gerade keine passenden Lizenzen.'}
+          data-testid="licenses-empty-state"
+        />
       ) : (
         <>
-          <section className="rounded-3xl border border-zinc-800 bg-gradient-to-br from-zinc-950 via-zinc-900 to-zinc-950 p-5">
-            <div className="flex items-start justify-between gap-4 flex-wrap">
-              <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-indigo-500/20 bg-indigo-500/10 px-3 py-1 text-xs text-indigo-300">
-                  <BriefcaseBusiness className="w-3.5 h-3.5" /> License command surface
-                </div>
-                <h2 className="mt-3 text-lg font-semibold text-white">Portfolio-Druck sofort sichtbar</h2>
-                <p className="mt-1 text-sm text-zinc-400 max-w-2xl">{pressureHint}</p>
+          <ProductSection
+            eyebrow="Commercial readiness"
+            title="Portfolio-Druck sofort sichtbar"
+            description="Dieselbe Commercial-Lage wie im Detail-Drill-in, aber als gemeinsame Command Surface für Queue, Scope und direkte Eingriffe."
+            actions={<SurfaceBadge tone={(counts.urgent || 0) > 0 ? 'amber' : 'emerald'}>{pressureHint}</SurfaceBadge>}
+          >
+            <div className="space-y-4 p-4">
+              <ProductCallout
+                tone={(counts.urgent || 0) > 0 ? 'red' : (counts.attention || 0) > 0 ? 'amber' : 'blue'}
+                eyebrow="Advisory"
+                title={(counts.urgent || 0) > 0 ? `${counts.urgent} Lizenz(en) brauchen jetzt Eskalation` : 'Commercial Surface im Takt'}
+                description={pressureHint}
+                actions={(
+                  <ProductInlineActions
+                    mode="operator"
+                    items={[
+                      ...(canReviewRemoteActions ? [{ label: 'Remote Actions', onClick: () => navigate('/operator/remote-actions'), trailingIcon: ExternalLink, className: 'border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/10' }] : []),
+                      ...(canManage ? [{ label: 'Neue Lizenz', onClick: () => setShowCreate(true), className: 'bg-emerald-600 hover:bg-emerald-700 text-white' }] : []),
+                    ]}
+                  />
+                )}
+              />
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+                <ProductStatCard icon={TriangleAlert} label="Dringende Lizenzen" value={counts.urgent || 0} hint="Inaktiv, blockiert oder über Kapazität" tone={(counts.urgent || 0) > 0 ? 'red' : 'default'} />
+                <ProductStatCard icon={Clock} label="Renewals / Grace" value={(counts.renewal_due || 0) + (counts.in_grace || 0)} hint={`${counts.renewal_due || 0} bald fällig · ${counts.in_grace || 0} in Grace`} tone={((counts.renewal_due || 0) + (counts.in_grace || 0)) > 0 ? 'amber' : 'default'} />
+                <ProductStatCard icon={PackageOpen} label="Aktivierungslücken" value={counts.activation_gap || 0} hint="Aktive Lizenzen ohne gebundenes Gerät" tone={(counts.activation_gap || 0) > 0 ? 'blue' : 'default'} />
+                <ProductStatCard icon={Sparkles} label="Token bereit" value={counts.token_ready || 0} hint={`${counts.token_attention || 0} brauchen Token-Follow-up`} tone={((counts.token_ready || 0) + (counts.token_attention || 0)) > 0 ? 'blue' : 'default'} />
+                <ProductStatCard icon={Gauge} label="Kapazitätsdruck" value={counts.full_or_over_capacity || 0} hint={`${counts.near_capacity || 0} fast/voll · ${counts.blocked_devices || 0} posture-blocked`} tone={((counts.full_or_over_capacity || 0) + (counts.blocked_devices || 0)) > 0 ? 'amber' : 'default'} />
               </div>
-              <div className="rounded-2xl border border-zinc-800 bg-black/20 px-4 py-3">
-                <p className="text-xs uppercase tracking-[0.18em] text-zinc-500">Portfolio-Split</p>
-                <div className="mt-2 flex items-center gap-3 text-sm">
-                  <span className="text-red-300">{counts.urgent || 0} dringend</span>
-                  <span className="text-amber-300">{counts.attention || 0} aktiv</span>
-                  <span className="text-sky-300">{counts.watch || 0} beobachten</span>
-                  <span className="text-emerald-300">{counts.healthy || 0} gesund</span>
-                </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-5 gap-4">
+                <ProductFocusList
+                  title="Jetzt eskalieren"
+                  hint="Die problematischsten kommerziellen Fälle zuerst."
+                  items={focusQueues.urgent || []}
+                  empty="Keine akuten Lizenzblocker im aktuellen Scope."
+                  onOpen={(item) => openLicense(item.license_id)}
+                  accent="red"
+                  getMeta={focusMeta}
+                  onAction={(item) => item.suggested_actions?.[0] ? runSuggestedAction(item.license_id, item.suggested_actions[0]) : openLicense(item.license_id)}
+                  getActionLabel={(item) => actionIntentLabel(item.suggested_actions?.[0])}
+                />
+                <ProductFocusList
+                  title="Renewal-Funnel"
+                  hint="Laufzeiten, Grace und Kundenansprache im Blick."
+                  items={focusQueues.renewals || []}
+                  empty="Gerade kein Renewal-Druck sichtbar."
+                  onOpen={(item) => openLicense(item.license_id)}
+                  accent="amber"
+                  getMeta={focusMeta}
+                  onAction={(item) => item.suggested_actions?.[0] ? runSuggestedAction(item.license_id, item.suggested_actions[0]) : openLicense(item.license_id)}
+                  getActionLabel={(item) => actionIntentLabel(item.suggested_actions?.[0])}
+                />
+                <ProductFocusList
+                  title="Aktivierungslücken"
+                  hint="Verkauft, aber noch nicht live auf einem Gerät."
+                  items={focusQueues.activation_gaps || []}
+                  empty="Keine aktiven Lizenzen ohne Gerätebindung."
+                  onOpen={(item) => openLicense(item.license_id)}
+                  accent="blue"
+                  getMeta={focusMeta}
+                  onAction={(item) => item.suggested_actions?.[0] ? runSuggestedAction(item.license_id, item.suggested_actions[0]) : openLicense(item.license_id)}
+                  getActionLabel={(item) => actionIntentLabel(item.suggested_actions?.[0])}
+                />
+                <ProductFocusList
+                  title="Token-Follow-up"
+                  hint="Welche Aktivierung offen, stale oder sofort versandbereit ist."
+                  items={focusQueues.token_follow_up || []}
+                  empty="Keine offenen Token-Nachfassfälle im aktuellen Scope."
+                  onOpen={(item) => openLicense(item.license_id)}
+                  accent="blue"
+                  getMeta={focusMeta}
+                  onAction={(item) => item.suggested_actions?.[0] ? runSuggestedAction(item.license_id, item.suggested_actions[0]) : openLicense(item.license_id)}
+                  getActionLabel={(item) => actionIntentLabel(item.suggested_actions?.[0])}
+                />
+                <ProductFocusList
+                  title="Geräte-Review"
+                  hint="Gebundene Geräte mit Advisory-Blockern oder Review-Signalen."
+                  items={focusQueues.device_review || []}
+                  empty="Keine gebundenen Geräte mit kritischer Posture."
+                  onOpen={(item) => openLicense(item.license_id)}
+                  accent="emerald"
+                  getMeta={focusMeta}
+                  onAction={(item) => item.suggested_actions?.[0] ? runSuggestedAction(item.license_id, item.suggested_actions[0]) : openLicense(item.license_id)}
+                  getActionLabel={(item) => actionIntentLabel(item.suggested_actions?.[0])}
+                />
               </div>
             </div>
-
-            <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
-              <KpiCard icon={TriangleAlert} label="Dringende Lizenzen" value={counts.urgent || 0} hint="Inaktiv, blockiert oder über Kapazität" tone={(counts.urgent || 0) > 0 ? 'red' : 'zinc'} />
-              <KpiCard icon={Clock} label="Renewals / Grace" value={(counts.renewal_due || 0) + (counts.in_grace || 0)} hint={`${counts.renewal_due || 0} bald fällig · ${counts.in_grace || 0} in Grace`} tone={((counts.renewal_due || 0) + (counts.in_grace || 0)) > 0 ? 'amber' : 'zinc'} />
-              <KpiCard icon={PackageOpen} label="Aktivierungslücken" value={counts.activation_gap || 0} hint="Aktive Lizenzen ohne gebundenes Gerät" tone={(counts.activation_gap || 0) > 0 ? 'blue' : 'zinc'} />
-              <KpiCard icon={Sparkles} label="Token bereit" value={counts.token_ready || 0} hint={`${counts.token_attention || 0} brauchen Token-Follow-up`} tone={((counts.token_ready || 0) + (counts.token_attention || 0)) > 0 ? 'blue' : 'zinc'} />
-              <KpiCard icon={Gauge} label="Kapazitätsdruck" value={counts.full_or_over_capacity || 0} hint={`${counts.near_capacity || 0} fast/voll · ${counts.blocked_devices || 0} posture-blocked`} tone={((counts.full_or_over_capacity || 0) + (counts.blocked_devices || 0)) > 0 ? 'amber' : 'zinc'} />
-            </div>
-          </section>
-
-          <section className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-5 gap-4">
-            <FocusQueue
-              title="Jetzt eskalieren"
-              hint="Die problematischsten kommerziellen Fälle zuerst."
-              items={focusQueues.urgent || []}
-              empty="Keine akuten Lizenzblocker im aktuellen Scope."
-              onOpenLicense={openLicense}
-              onRunAction={runSuggestedAction}
-              accent="red"
-            />
-            <FocusQueue
-              title="Renewal-Funnel"
-              hint="Laufzeiten, Grace und Kundenansprache im Blick."
-              items={focusQueues.renewals || []}
-              empty="Gerade kein Renewal-Druck sichtbar."
-              onOpenLicense={openLicense}
-              onRunAction={runSuggestedAction}
-              accent="amber"
-            />
-            <FocusQueue
-              title="Aktivierungslücken"
-              hint="Verkauft, aber noch nicht live auf einem Gerät."
-              items={focusQueues.activation_gaps || []}
-              empty="Keine aktiven Lizenzen ohne Gerätebindung."
-              onOpenLicense={openLicense}
-              onRunAction={runSuggestedAction}
-              accent="blue"
-            />
-            <FocusQueue
-              title="Token-Follow-up"
-              hint="Welche Aktivierung offen, stale oder sofort versandbereit ist."
-              items={focusQueues.token_follow_up || []}
-              empty="Keine offenen Token-Nachfassfälle im aktuellen Scope."
-              onOpenLicense={openLicense}
-              onRunAction={runSuggestedAction}
-              accent="blue"
-            />
-            <FocusQueue
-              title="Geräte-Review"
-              hint="Gebundene Geräte mit Advisory-Blockern oder Review-Signalen."
-              items={focusQueues.device_review || []}
-              empty="Keine gebundenen Geräte mit kritischer Posture."
-              onOpenLicense={openLicense}
-              onRunAction={runSuggestedAction}
-              accent="emerald"
-            />
-          </section>
+          </ProductSection>
 
           <div className="space-y-4">
             {activeLicenses.length > 0 && (
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
-                <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-                  <p className="text-sm font-medium text-white">Aktive Commercial Surface</p>
-                  <p className="text-xs text-zinc-500">Aktive, Test- und Grace-Lizenzen mit Readiness-Signal</p>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-zinc-800 text-zinc-500 text-xs">
-                        <th className="text-left px-4 py-2">Plan / Kunde</th>
-                        <th className="text-left px-4 py-2">Commercial Readiness</th>
-                        <th className="text-left px-4 py-2">Aktivierung</th>
-                        <th className="text-left px-4 py-2">Geräte / Kapazität</th>
-                        <th className="text-left px-4 py-2">Advisory</th>
-                        <th className="text-left px-4 py-2">Status / Laufzeit</th>
-                        <th className="text-left px-4 py-2">Aktion</th>
-                        <th className="px-4 py-2"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
+              <ProductSection title="Aktive Commercial Surface" description="Aktive, Test- und Grace-Lizenzen mit Readiness-Signal">
+                <ProductDataTable columns={[
+                  { key: 'plan', label: 'Plan / Kunde' },
+                  { key: 'readiness', label: 'Commercial Readiness' },
+                  { key: 'activation', label: 'Aktivierung' },
+                  { key: 'capacity', label: 'Geräte / Kapazität' },
+                  { key: 'advisory', label: 'Advisory' },
+                  { key: 'status', label: 'Status / Laufzeit' },
+                  { key: 'action', label: 'Aktion' },
+                  { key: 'chevron', label: '' },
+                ]}>
                       {activeLicenses.map(lic => {
                         const readiness = lic.commercial_readiness || {};
                         const primaryAction = readiness.suggested_actions?.[0];
@@ -654,14 +596,16 @@ export default function OperatorLicenses() {
                               <div className="flex flex-col items-start gap-2">
                                 <button
                                   onClick={(e) => { e.stopPropagation(); runSuggestedAction(lic.id, primaryAction); }}
-                                  className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs font-medium text-zinc-900 hover:bg-white"
+                                  disabled={actionLoadingId === lic.id}
+                                  className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2.5 py-1.5 text-xs font-medium text-zinc-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
                                 >
-                                  {actionIntentLabel(primaryAction)} <ArrowRight className="w-3.5 h-3.5" />
+                                  {actionLoadingId === lic.id ? 'Läuft…' : actionIntentLabel(primaryAction)} <ArrowRight className="w-3.5 h-3.5" />
                                 </button>
                                 {secondaryAction && (
                                   <button
                                     onClick={(e) => { e.stopPropagation(); runSuggestedAction(lic.id, secondaryAction); }}
-                                    className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800"
+                                    disabled={actionLoadingId === lic.id}
+                                    className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
                                   >
                                     {actionIntentLabel(secondaryAction)} <ArrowRight className="w-3.5 h-3.5" />
                                   </button>
@@ -686,21 +630,22 @@ export default function OperatorLicenses() {
                           </tr>
                         );
                       })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                </ProductDataTable>
+              </ProductSection>
             )}
 
             {inactiveLicenses.length > 0 && (
-              <div className="rounded-2xl border border-zinc-800 bg-zinc-900/30 overflow-hidden">
-                <div className="px-4 py-3 border-b border-zinc-800 flex items-center justify-between">
-                  <p className="text-sm font-medium text-white">Inaktive / historische Lizenzen</p>
-                  <p className="text-xs text-zinc-500">Zur Klärung, Reaktivierung oder Archivpflege</p>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm opacity-80">
-                    <tbody>
+              <ProductSection title="Inaktive / historische Lizenzen" description="Zur Klärung, Reaktivierung oder Archivpflege">
+                <ProductDataTable className="opacity-80" columns={[
+                  { key: 'plan', label: 'Plan' },
+                  { key: 'customer', label: 'Kunde' },
+                  { key: 'status', label: 'Status' },
+                  { key: 'note', label: 'Hinweis' },
+                  { key: 'token', label: 'Token / Geräte' },
+                  { key: 'ends', label: 'Laufzeit' },
+                  { key: 'action', label: 'Aktion' },
+                  { key: 'chevron', label: '' },
+                ]}>
                       {inactiveLicenses.map(lic => (
                         (() => {
                           const readiness = lic.commercial_readiness || {};
@@ -723,7 +668,8 @@ export default function OperatorLicenses() {
                             {primaryAction && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); runSuggestedAction(lic.id, primaryAction); }}
-                                className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-900 hover:bg-white"
+                                disabled={actionLoadingId === lic.id}
+                                className="inline-flex items-center gap-1 rounded-lg bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
                               >
                                 {actionIntentLabel(primaryAction)} <ArrowRight className="w-3.5 h-3.5" />
                               </button>
@@ -750,10 +696,8 @@ export default function OperatorLicenses() {
                           );
                         })()
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                </ProductDataTable>
+              </ProductSection>
             )}
           </div>
         </>

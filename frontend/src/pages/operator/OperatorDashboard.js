@@ -4,8 +4,11 @@ import { useCentralAuth } from '../../context/CentralAuthContext';
 import {
   WifiOff, Activity, DollarSign, Zap, AlertTriangle,
   Monitor, Clock, RefreshCw, Gamepad2, Workflow, ExternalLink, ShieldAlert, Send,
-  KeyRound, Sparkles, TriangleAlert, Gauge, ArrowRight
+  KeyRound, Sparkles, TriangleAlert, Gauge
 } from 'lucide-react';
+import { Button } from '../../components/ui/button';
+import { ProductPageHeader, ProductSection, ProductStatCard, SurfaceBadge } from '../../components/shell/ProductShell';
+import { ProductCallout, ProductFocusList, ProductInlineActions } from '../../components/shell/ProductDetail';
 
 function formatCurrency(cents) {
   return new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(cents / 100);
@@ -150,63 +153,55 @@ export default function OperatorDashboard() {
   const openLicense = (licenseId) => navigate(`/operator/licenses/${licenseId}`);
   const openLicenses = () => navigate('/operator/licenses');
 
-  return (
-    <div className="space-y-5" data-testid="operator-dashboard">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-white">Betriebsübersicht</h1>
-          <p className="text-sm text-zinc-500 mt-0.5">
-            {scope.customerId ? 'Gefilterter Scope' : 'Alle Standorte'} — Live-Daten
-          </p>
-        </div>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-700 transition-colors text-sm"
-          data-testid="refresh-dashboard-btn"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-          Aktualisieren
-        </button>
-      </div>
+  const scopeLabel = scope.deviceId ? 'Gerätefokus' : scope.locationId ? 'Standortfokus' : scope.customerId ? 'Kundenfokus' : 'Alle Standorte';
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard
-          icon={Monitor}
-          label="Geräte online"
-          value={`${data.devices_online} / ${data.devices_total}`}
-          sub={data.ws_connected_count != null ? `${data.ws_connected_count} via WebSocket` : `${onlinePct}% erreichbar`}
-          color={data.devices_online > 0 ? 'emerald' : 'zinc'}
-          tid="kpi-online"
-        />
-        <KpiCard
-          icon={DollarSign}
-          label="Umsatz heute"
-          value={formatCurrency(data.revenue_today_cents)}
-          sub={`7 Tage: ${formatCurrency(data.revenue_7d_cents)}`}
-          color="amber"
-          tid="kpi-revenue-today"
-        />
-        <KpiCard
-          icon={Gamepad2}
-          label="Sessions heute"
-          value={data.sessions_today}
-          sub={`7 Tage: ${data.sessions_7d}`}
-          color="blue"
-          tid="kpi-sessions"
-        />
-        <KpiCard
-          icon={Zap}
-          label="Spiele heute"
-          value={data.games_today}
-          sub={`7 Tage: ${data.games_7d}`}
-          color="purple"
-          tid="kpi-games"
-        />
+  return (
+    <div className="space-y-6" data-testid="operator-dashboard">
+      <ProductPageHeader
+        eyebrow="Operator Surface"
+        title="Betriebsübersicht"
+        badge={<SurfaceBadge tone="blue">Operator</SurfaceBadge>}
+        description={`${scopeLabel} — Live-Telemetrie, Commercial-Druck und Remote-Action-Queue in einer gemeinsamen Dashboard-Anatomie.`}
+        actions={
+          <Button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            variant="outline"
+            size="sm"
+            className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+            data-testid="refresh-dashboard-btn"
+          >
+            <RefreshCw className={`mr-1 h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+            Aktualisieren
+          </Button>
+        }
+      />
+
+      <ProductCallout
+        tone={needsAttention > 0 ? 'amber' : 'blue'}
+        eyebrow="Command advisory"
+        title={needsAttention > 0 ? `${needsAttention} Signal(e) brauchen Operator-Aufmerksamkeit` : 'Dashboard wirkt aktuell stabil'}
+        description={needsAttention > 0 ? 'Commercial-Fälle, Gerätewarnungen und Remote-Action-Stau sind hier bewusst in einer Führungsspur zusammengezogen.' : 'Keine offensichtliche Queue- oder Warnungslast im aktuellen Scope.'}
+        actions={
+          <ProductInlineActions
+            mode="operator"
+            items={[
+              { label: 'Lizenzportfolio', onClick: openLicenses, className: 'border-zinc-700 text-zinc-300 hover:bg-zinc-800' },
+              { label: 'Remote Actions', onClick: () => openRemoteActions(), className: 'border-indigo-500/20 text-indigo-300 hover:bg-indigo-500/10' },
+            ]}
+          />
+        }
+      />
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <ProductStatCard icon={Monitor} label="Geräte online" value={`${data.devices_online} / ${data.devices_total}`} hint={data.ws_connected_count != null ? `${data.ws_connected_count} via WebSocket` : `${onlinePct}% erreichbar`} tone={data.devices_online > 0 ? 'emerald' : 'default'} data-testid="kpi-online" />
+        <ProductStatCard icon={DollarSign} label="Umsatz heute" value={formatCurrency(data.revenue_today_cents)} hint={`7 Tage: ${formatCurrency(data.revenue_7d_cents)}`} tone="amber" data-testid="kpi-revenue-today" />
+        <ProductStatCard icon={Gamepad2} label="Sessions heute" value={data.sessions_today} hint={`7 Tage: ${data.sessions_7d}`} tone="blue" data-testid="kpi-sessions" />
+        <ProductStatCard icon={Zap} label="Spiele heute" value={data.games_today} hint={`7 Tage: ${data.games_7d}`} tone="purple" data-testid="kpi-games" />
       </div>
 
       {licensePortfolio && (
-        <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden" data-testid="dashboard-license-summary">
+        <ProductSection eyebrow="Commercial" title="Lizenzportfolio" description="Gleiche Commercial-Readiness-Logik wie in der Lizenzsurface, nur näher an Betrieb und Queue." data-testid="dashboard-license-summary">
           <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/40 flex items-start justify-between gap-3 flex-wrap">
             <div>
               <div className="flex items-center gap-2">
@@ -234,28 +229,28 @@ export default function OperatorDashboard() {
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              <LicenseFocusList
+              <ProductFocusList
                 title="Jetzt eskalieren"
                 hint="Die kritischsten Lizenzen zuerst."
                 items={licenseFocus.urgent || []}
                 empty="Keine akuten Lizenzblocker im Scope."
-                onOpenLicense={openLicense}
+                onOpen={(item) => openLicense(item.license_id)}
                 accent="red"
               />
-              <LicenseFocusList
+              <ProductFocusList
                 title="Renewal & Aktivierung"
                 hint="Die naechsten kommerziellen Hebel."
                 items={[...(licenseFocus.renewals || []), ...(licenseFocus.activation_gaps || [])].slice(0, 6)}
                 empty="Kein unmittelbarer Renewal- oder Aktivierungsdruck."
-                onOpenLicense={openLicense}
+                onOpen={(item) => openLicense(item.license_id)}
                 accent="amber"
               />
             </div>
           </div>
-        </div>
+        </ProductSection>
       )}
 
-      <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 overflow-hidden" data-testid="dashboard-remote-actions-summary">
+      <ProductSection eyebrow="Remote delivery" title="Remote Action Queue" description="Review-, Delivery- und Incident-Druck in derselben Dashboard-Rhythmik." data-testid="dashboard-remote-actions-summary">
         <div className="px-4 py-3 border-b border-zinc-800 bg-zinc-950/40 flex items-start justify-between gap-3 flex-wrap">
           <div>
             <div className="flex items-center gap-2">
@@ -388,7 +383,7 @@ export default function OperatorDashboard() {
             )}
           </div>
         </div>
-      </div>
+      </ProductSection>
 
       {data.warnings?.length > 0 && (
         <div data-testid="warnings-section">
@@ -485,40 +480,6 @@ export default function OperatorDashboard() {
           <p className="text-zinc-600 text-xs mt-1">Wähle einen Kunden / Standort oder registriere neue Geräte</p>
         </div>
       )}
-    </div>
-  );
-}
-
-function LicenseFocusList({ title, hint, items, empty, onOpenLicense, accent = 'zinc' }) {
-  const tones = {
-    red: 'border-red-500/20 bg-red-500/5',
-    amber: 'border-amber-500/20 bg-amber-500/5',
-    zinc: 'border-zinc-800 bg-zinc-950/30',
-  };
-  return (
-    <div className={`rounded-xl border p-4 ${tones[accent] || tones.zinc}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium text-white">{title}</p>
-          <p className="mt-1 text-xs text-zinc-500">{hint}</p>
-        </div>
-        <span className="rounded-full border border-white/10 px-2 py-0.5 text-[11px] text-zinc-400">{items.length}</span>
-      </div>
-      <div className="mt-3 space-y-2">
-        {items.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-zinc-800 px-3 py-4 text-sm text-zinc-500">{empty}</div>
-        ) : items.map((item) => (
-          <button key={item.license_id} onClick={() => onOpenLicense(item.license_id)} className="w-full rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-3 text-left hover:border-zinc-700 transition-colors">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-white">{item.plan_type || 'Lizenz'} <span className="text-zinc-500 font-mono text-xs">{item.license_id.slice(0, 8)}</span></p>
-                <p className="mt-1 text-xs text-zinc-400">{item.primary_message}</p>
-              </div>
-              <ArrowRight className="w-4 h-4 text-zinc-600" />
-            </div>
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

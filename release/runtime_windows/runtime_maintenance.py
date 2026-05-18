@@ -16,6 +16,8 @@ import json
 import os
 import shutil
 import hashlib
+import platform
+import socket
 import sys
 import time
 import zipfile
@@ -553,6 +555,14 @@ def get_drill_workspace(root: Path, label: str) -> dict[str, Path]:
         "base": base,
         "checklist_json": base / "drill-checklist.json",
         "checklist_md": base / "DRILL_CHECKLIST.md",
+        "preflight_json": base / "BOARD_PC_PREFLIGHT.json",
+        "preflight_md": base / "BOARD_PC_PREFLIGHT.md",
+        "postflight_json": base / "BOARD_PC_POSTFLIGHT.json",
+        "postflight_md": base / "BOARD_PC_POSTFLIGHT.md",
+        "certification_json": base / "BOARD_PC_CERTIFICATION.json",
+        "certification_md": base / "BOARD_PC_CERTIFICATION.md",
+        "rc_checklist_json": base / "RC_EVIDENCE_CHECKLIST.json",
+        "rc_checklist_md": base / "RC_EVIDENCE_CHECKLIST.md",
         "update_before": base / "field_state_update_before.json",
         "update_after": base / "field_state_update_after.json",
         "update_report": base / "field_report_update.md",
@@ -569,6 +579,209 @@ def get_drill_workspace(root: Path, label: str) -> dict[str, Path]:
         "attachment_review_json": base / "ATTACHMENT_READINESS_REVIEW.json",
         "attachment_review_txt": base / "ATTACHMENT_READINESS_REVIEW.txt",
     }
+
+
+def normalize_check_status(value: str | None) -> str:
+    cleaned = str(value or "").strip().lower().replace("_", "-")
+    mapping = {
+        "": "unknown",
+        "ok": "pass",
+        "passed": "pass",
+        "green": "pass",
+        "true": "pass",
+        "yes": "pass",
+        "fail": "fail",
+        "failed": "fail",
+        "red": "fail",
+        "false": "fail",
+        "no": "fail",
+        "pending": "pending",
+        "todo": "pending",
+        "blocked": "blocked",
+        "skip": "not-run",
+        "skipped": "not-run",
+        "not-run": "not-run",
+        "unknown": "unknown",
+    }
+    return mapping.get(cleaned, cleaned or "unknown")
+
+
+def build_board_pc_machine_checks(
+    *,
+    boot_status: str | None = None,
+    admin_health_status: str | None = None,
+    session_status: str | None = None,
+    update_leg_status: str | None = None,
+    rollback_leg_status: str | None = None,
+    reopen_status: str | None = None,
+) -> list[dict[str, str]]:
+    return [
+        {
+            "name": "windows_boot_and_autostart",
+            "status": normalize_check_status(boot_status),
+            "details": "Real reboot/power-cycle launched the kiosk stack without operator rescue.",
+        },
+        {
+            "name": "admin_health_green_on_machine",
+            "status": normalize_check_status(admin_health_status),
+            "details": "Admin -> Health -> Board-PC readiness looked acceptable on the target machine.",
+        },
+        {
+            "name": "autodarts_login_observer_unlock_flow",
+            "status": normalize_check_status(session_status),
+            "details": "Real Autodarts login / observer handoff / unlock-play flow worked on hardware.",
+        },
+        {
+            "name": "update_leg_executed_on_machine",
+            "status": normalize_check_status(update_leg_status),
+            "details": "The update leg was executed on the same real board PC.",
+        },
+        {
+            "name": "rollback_leg_executed_on_machine",
+            "status": normalize_check_status(rollback_leg_status),
+            "details": "The rollback leg was executed on the same real board PC.",
+        },
+        {
+            "name": "post_rollback_reopen_sanity",
+            "status": normalize_check_status(reopen_status),
+            "details": "After rollback, the launcher/app reopened cleanly enough for board-side sanity.",
+        },
+    ]
+
+
+def summarize_machine_checks(machine_checks: list[dict[str, str]]) -> dict[str, object]:
+    pass_count = sum(1 for item in machine_checks if item.get("status") == "pass")
+    fail_count = sum(1 for item in machine_checks if item.get("status") == "fail")
+    blocked_count = sum(1 for item in machine_checks if item.get("status") == "blocked")
+    pending_count = sum(1 for item in machine_checks if item.get("status") == "pending")
+    not_run_count = sum(1 for item in machine_checks if item.get("status") == "not-run")
+    unknown_count = sum(1 for item in machine_checks if item.get("status") == "unknown")
+    all_passed = bool(machine_checks) and pass_count == len(machine_checks)
+    return {
+        "pass_count": pass_count,
+        "fail_count": fail_count,
+        "blocked_count": blocked_count,
+        "pending_count": pending_count,
+        "not_run_count": not_run_count,
+        "unknown_count": unknown_count,
+        "all_passed": all_passed,
+        "ready_for_signoff": all_passed,
+    }
+
+
+def collect_board_pc_postflight(
+    root: Path,
+    *,
+    label: str,
+    operator: str | None = None,
+    device_id: str | None = None,
+    service_ticket: str | None = None,
+    tested_by: str | None = None,
+    venue_or_machine: str | None = None,
+    windows_build: str | None = None,
+    autodarts_account: str | None = None,
+    overall_status: str | None = None,
+    boot_status: str | None = None,
+    admin_health_status: str | None = None,
+    session_status: str | None = None,
+    update_leg_status: str | None = None,
+    rollback_leg_status: str | None = None,
+    reopen_status: str | None = None,
+    notes: str | None = None,
+    dry_run: bool = False,
+) -> dict:
+    paths = get_drill_workspace(root, label)
+    drill_context = build_drill_context(
+        label=label,
+        operator=operator,
+        device_id=device_id,
+        service_ticket=service_ticket,
+        notes=notes,
+    )
+    state = collect_runtime_boundary_state(
+        root,
+        drill_context=build_drill_context(
+            label=label,
+            operator=operator,
+            device_id=device_id,
+            service_ticket=service_ticket,
+        ),
+    )
+    preflight_artifact = describe_artifact(paths["preflight_json"])
+    preflight_json = preflight_artifact.get("json") if isinstance(preflight_artifact.get("json"), dict) else {}
+    before_state = preflight_json.get("boundary_state_snapshot") if isinstance(preflight_json.get("boundary_state_snapshot"), dict) else None
+    comparison = compare_runtime_boundary_state(before_state, state) if before_state else None
+    machine_checks = build_board_pc_machine_checks(
+        boot_status=boot_status,
+        admin_health_status=admin_health_status,
+        session_status=session_status,
+        update_leg_status=update_leg_status,
+        rollback_leg_status=rollback_leg_status,
+        reopen_status=reopen_status,
+    )
+    machine_summary = summarize_machine_checks(machine_checks)
+    normalized_overall = normalize_check_status(overall_status)
+    if normalized_overall == "unknown":
+        normalized_overall = "pass" if machine_summary["all_passed"] else "pending"
+
+    payload = {
+        "label": label,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(root.resolve()),
+        "drill_context": drill_context,
+        "tested_by": (tested_by or "").strip() or None,
+        "venue_or_machine": (venue_or_machine or "").strip() or None,
+        "windows_build": (windows_build or "").strip() or None,
+        "autodarts_account": (autodarts_account or "").strip() or None,
+        "overall_status": normalized_overall,
+        "machine_checks": machine_checks,
+        "machine_summary": machine_summary,
+        "notes": (notes or "").strip() or None,
+        "preflight_present": bool(preflight_artifact.get("exists")),
+        "preflight_path": str(paths["preflight_json"].resolve()),
+        "boundary_state_snapshot": state,
+        "preflight_comparison": comparison,
+        "boundary_matches_preflight": bool(comparison and comparison.get("config_boundary_stable") and comparison.get("drill_context_matches")),
+        "artifact_paths": {
+            "postflight_json": str(paths["postflight_json"].resolve()),
+            "postflight_md": str(paths["postflight_md"].resolve()),
+        },
+    }
+    if not dry_run:
+        write_json(paths["postflight_json"], payload)
+        lines = [
+            f"# Board-PC Postflight — {label}",
+            "",
+            f"- Created: `{payload['created_at']}`",
+            f"- Runtime root: `{payload['runtime_root']}`",
+            f"- Tested by: `{payload['tested_by'] or '-'}`",
+            f"- Venue or machine: `{payload['venue_or_machine'] or '-'}`",
+            f"- Windows build: `{payload['windows_build'] or '-'}`",
+            f"- Autodarts account: `{payload['autodarts_account'] or '-'}`",
+            f"- Overall status: `{payload['overall_status']}`",
+            f"- Preflight present: `{'yes' if payload['preflight_present'] else 'no'}`",
+            f"- Boundary matches preflight: `{'yes' if payload['boundary_matches_preflight'] else 'no'}`",
+            f"- Machine checks passed: `{machine_summary['pass_count']}/{len(machine_checks)}`",
+            "",
+            "## Machine checks",
+            "",
+        ]
+        for item in machine_checks:
+            lines.append(f"- `{item['name']}` = `{item['status']}` — {item['details']}")
+        lines.extend(["", "## Notes", "", payload["notes"] or "-", ""])
+        if comparison:
+            lines.extend([
+                "## Preflight comparison",
+                "",
+                f"- Version before → after: `{comparison.get('before_version')}` → `{comparison.get('after_version')}`",
+                f"- app/bin VERSION before → after: `{comparison.get('before_app_bin_version')}` → `{comparison.get('after_app_bin_version')}`",
+                f"- Config boundary stable: `{'yes' if comparison.get('config_boundary_stable') else 'no'}`",
+                f"- Drill context matches: `{'yes' if comparison.get('drill_context_matches') else 'no'}`",
+                "",
+            ])
+        paths["postflight_md"].write_text("\n".join(lines), encoding="utf-8")
+        refresh_drill_workspace_status(root, label=label, dry_run=False)
+    return payload
 
 
 def describe_artifact(path: Path) -> dict[str, object]:
@@ -619,8 +832,9 @@ def build_acknowledgment_history_entry(
     current_url = str(acknowledgment.get("ticket_url") or "").strip() or None
     previous_destination = " | ".join(item for item in [previous_reference, previous_url] if item) or None
     current_destination = " | ".join(item for item in [current_reference, current_url] if item) or None
+    destination_changed = event != "acknowledge" and previous_destination != current_destination
     change_bits: list[str] = []
-    if previous_destination != current_destination:
+    if destination_changed:
         change_bits.append(
             f"destination {previous_destination or '-'} -> {current_destination or '-'}"
         )
@@ -648,7 +862,7 @@ def build_acknowledgment_history_entry(
         "previous_ticket_reference": previous_reference,
         "previous_ticket_url": previous_url,
         "previous_ticket_destination_display": previous_destination,
-        "destination_changed": previous_destination != current_destination,
+        "destination_changed": destination_changed,
         "change_summary": "; ".join(change_bits) if change_bits else "no operator-visible destination/status/assignee change",
     }
 
@@ -751,6 +965,463 @@ def build_drill_workspace_checklist_payload(root: Path, paths: dict[str, Path], 
             {"name": "paired_bundle", "artifact": str(paths["paired_bundle"]), "done": False},
         ],
     }
+
+
+def build_board_pc_certification_payload(
+    *,
+    root: Path,
+    paths: dict[str, Path],
+    label: str,
+    drill_context: dict[str, str],
+    recommendation: dict[str, object] | None = None,
+    freshness: dict[str, object] | None = None,
+    attachment_readiness: dict[str, object] | None = None,
+) -> dict:
+    paired_json = describe_artifact(paths["paired_summary_json"]).get("json")
+    paired = paired_json if isinstance(paired_json, dict) else {}
+    preflight_json = describe_artifact(paths["preflight_json"]).get("json")
+    preflight = preflight_json if isinstance(preflight_json, dict) else {}
+    postflight_json = describe_artifact(paths["postflight_json"]).get("json")
+    postflight = postflight_json if isinstance(postflight_json, dict) else {}
+    postflight_machine_summary = postflight.get("machine_summary") if isinstance(postflight.get("machine_summary"), dict) else {}
+    recommendation = recommendation or {}
+    freshness = freshness or {}
+    attachment_readiness = attachment_readiness or {}
+    checks = [
+        {
+            "name": "board_pc_preflight_captured",
+            "type": "repo_evidence",
+            "status": "pass" if paths["preflight_json"].exists() else "pending",
+            "details": "Board-PC preflight artifact exists in the drill workspace and captures the machine/runtime baseline before the real pass.",
+        },
+        {
+            "name": "board_pc_preflight_repo_checks_ok",
+            "type": "repo_evidence",
+            "status": "pass" if preflight.get("repo_preflight_ok") is True else "pending",
+            "details": "Preflight repo/runtime checks passed: required layout exists, writable paths were verified, and critical runtime files were present.",
+        },
+        {
+            "name": "runtime_validation_passed",
+            "type": "repo_evidence",
+            "status": "pass" if paths["paired_summary_json"].exists() and paths["paired_bundle"].exists() else "pending",
+            "details": "Closed-loop paired summary and paired bundle exist in the drill workspace.",
+        },
+        {
+            "name": "board_pc_postflight_captured",
+            "type": "repo_evidence",
+            "status": "pass" if paths["postflight_json"].exists() else "pending",
+            "details": "Board-PC postflight artifact exists and captures the real-machine outcome/signoff snapshot after the pass.",
+        },
+        {
+            "name": "closed_loop_passed",
+            "type": "repo_evidence",
+            "status": "pass" if paired.get("closed_loop_passed") is True else "pending",
+            "details": "Update leg passed, rollback leg passed, and rollback restored the starting version.",
+        },
+        {
+            "name": "machine_outcome_recorded",
+            "type": "repo_evidence",
+            "status": "pass" if postflight.get("overall_status") == "pass" else "pending",
+            "details": "Postflight overall status is recorded as pass, not just inferred from repo-side evidence.",
+        },
+        {
+            "name": "machine_checks_all_passed",
+            "type": "repo_evidence",
+            "status": "pass" if postflight_machine_summary.get("all_passed") is True else "pending",
+            "details": "All structured machine-only postflight checks were explicitly marked pass by the field operator.",
+        },
+        {
+            "name": "freshness_clean",
+            "type": "repo_evidence",
+            "status": "pass" if freshness.get("ok") else "pending",
+            "details": "Paired artifacts are fresh and timestamp-aligned.",
+        },
+        {
+            "name": "ticket_handoff_current",
+            "type": "repo_evidence",
+            "status": "pass" if attachment_readiness.get("acknowledgment_current") else "pending",
+            "details": "If ticket upload has been acknowledged, it still matches the current paired artifacts.",
+        },
+        {
+            "name": "windows_boot_and_autostart",
+            "type": "manual_machine",
+            "status": "required",
+            "details": "Power-cycle the real board PC and confirm Windows login/autostart launches the kiosk stack without operator rescue.",
+        },
+        {
+            "name": "admin_health_green_on_machine",
+            "type": "manual_machine",
+            "status": "required",
+            "details": "Open Admin -> Health -> Board-PC readiness on the actual machine and confirm no red blockers remain.",
+        },
+        {
+            "name": "autodarts_login_and_observer_handoff",
+            "type": "manual_machine",
+            "status": "required",
+            "details": "Verify real Autodarts login/session, observer launch, and correct kiosk handoff/fallback behavior on Windows.",
+        },
+        {
+            "name": "unlock_match_and_credit_flow",
+            "type": "manual_machine",
+            "status": "required",
+            "details": "Run one real unlock -> play -> credit deduction path on hardware, not just browser smoke.",
+        },
+        {
+            "name": "update_then_rollback_executed_on_machine",
+            "type": "manual_machine",
+            "status": "required",
+            "details": "Execute the documented update leg and rollback leg on the same board PC using the generated drill workspace.",
+        },
+    ]
+    return {
+        "label": label,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(root.resolve()),
+        "drill_context": copy.deepcopy(drill_context),
+        "recommendation_status": recommendation.get("status"),
+        "recommendation_summary": recommendation.get("summary"),
+        "checks": checks,
+        "evidence_paths": {
+            "checklist_md": str(paths["checklist_md"].resolve()),
+            "preflight_json": str(paths["preflight_json"].resolve()),
+            "preflight_md": str(paths["preflight_md"].resolve()),
+            "postflight_json": str(paths["postflight_json"].resolve()),
+            "postflight_md": str(paths["postflight_md"].resolve()),
+            "update_report": str(paths["update_report"].resolve()),
+            "rollback_report": str(paths["rollback_report"].resolve()),
+            "paired_summary_json": str(paths["paired_summary_json"].resolve()),
+            "paired_summary_md": str(paths["paired_summary_md"].resolve()),
+            "paired_bundle": str(paths["paired_bundle"].resolve()),
+            "handoff_md": str((paths["base"] / "DRILL_HANDOFF.md").resolve()),
+            "ticket_comment_txt": str((paths["base"] / "DRILL_TICKET_COMMENT.txt").resolve()),
+        },
+        "operator_signoff": {
+            "tested_by": postflight.get("tested_by"),
+            "tested_at": postflight.get("created_at"),
+            "venue_or_machine": postflight.get("venue_or_machine"),
+            "windows_build": postflight.get("windows_build"),
+            "autodarts_account": postflight.get("autodarts_account"),
+            "notes": postflight.get("notes"),
+        },
+    }
+
+
+def render_board_pc_certification_markdown(payload: dict) -> str:
+    lines = [
+        f"# Board-PC Certification — {payload['label']}",
+        "",
+        "This file is the human-side certification sheet for the real Windows board-PC pass.",
+        "Repo evidence can mark some items as present, but machine-only checks must still be executed and signed off on the target board.",
+        "",
+        f"- Created: `{payload['created_at']}`",
+        f"- Runtime root: `{payload['runtime_root']}`",
+        f"- Current handoff recommendation: `{payload.get('recommendation_status') or '-'}`",
+        f"- Recommendation summary: {payload.get('recommendation_summary') or '-'}",
+        "",
+        "## Certification checks",
+        "",
+    ]
+    for item in payload.get("checks") or []:
+        marker = "[x]" if item.get("status") == "pass" else "[ ]"
+        lines.append(f"- {marker} `{item.get('name')}` ({item.get('type')}) — {item.get('details')}")
+    lines.extend([
+        "",
+        "## Required evidence paths",
+        "",
+    ])
+    for key, value in (payload.get("evidence_paths") or {}).items():
+        lines.append(f"- `{key}` — `{value}`")
+    lines.extend([
+        "",
+        "## Operator signoff",
+        "",
+        "Fill this on the real machine after the field pass:",
+        "",
+    ])
+    for key, value in (payload.get("operator_signoff") or {}).items():
+        lines.append(f"- {key.replace('_', ' ').title()}: `{value or '-'}`")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def build_rc_evidence_checklist_payload(
+    *,
+    root: Path,
+    paths: dict[str, Path],
+    label: str,
+    drill_context: dict[str, str],
+    recommendation: dict[str, object] | None = None,
+    freshness: dict[str, object] | None = None,
+    attachment_readiness: dict[str, object] | None = None,
+) -> dict:
+    recommendation = recommendation or {}
+    freshness = freshness or {}
+    attachment_readiness = attachment_readiness or {}
+    items = [
+        {
+            "name": "board_pc_preflight_present",
+            "status": "pass" if paths["preflight_json"].exists() and paths["preflight_md"].exists() else "pending",
+            "evidence": str(paths["preflight_json"].resolve()),
+        },
+        {
+            "name": "board_pc_postflight_present",
+            "status": "pass" if paths["postflight_json"].exists() and paths["postflight_md"].exists() else "pending",
+            "evidence": str(paths["postflight_json"].resolve()),
+        },
+        {
+            "name": "paired_summary_present",
+            "status": "pass" if paths["paired_summary_json"].exists() and paths["paired_summary_md"].exists() else "pending",
+            "evidence": str(paths["paired_summary_json"].resolve()),
+        },
+        {
+            "name": "paired_bundle_present",
+            "status": "pass" if paths["paired_bundle"].exists() else "pending",
+            "evidence": str(paths["paired_bundle"].resolve()),
+        },
+        {
+            "name": "handoff_manifest_present",
+            "status": "pass" if (paths["base"] / "DRILL_HANDOFF.md").exists() else "pending",
+            "evidence": str((paths["base"] / "DRILL_HANDOFF.md").resolve()),
+        },
+        {
+            "name": "freshness_ok",
+            "status": "pass" if freshness.get("ok") else "pending",
+            "evidence": str((paths["base"] / "DRILL_HANDOFF.json").resolve()),
+        },
+        {
+            "name": "ticket_comment_export_present",
+            "status": "pass" if (paths["base"] / "DRILL_TICKET_COMMENT.txt").exists() else "pending",
+            "evidence": str((paths["base"] / "DRILL_TICKET_COMMENT.txt").resolve()),
+        },
+        {
+            "name": "attachment_ready_or_acknowledged",
+            "status": "pass" if attachment_readiness.get("ready_to_attach") or attachment_readiness.get("acknowledged") else "pending",
+            "evidence": str(paths["attachment_review_txt"].resolve()),
+        },
+        {
+            "name": "real_windows_execution_required",
+            "status": "required",
+            "evidence": "Run on the real Windows board PC; cannot be satisfied from this repo environment.",
+        },
+    ]
+    return {
+        "label": label,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(root.resolve()),
+        "drill_context": copy.deepcopy(drill_context),
+        "recommendation_status": recommendation.get("status"),
+        "items": items,
+        "release_manager_signoff": {
+            "approved_by": None,
+            "approved_at": None,
+            "rc_version": None,
+            "notes": None,
+        },
+    }
+
+
+def render_rc_evidence_checklist_markdown(payload: dict) -> str:
+    lines = [
+        f"# RC Evidence Checklist — {payload['label']}",
+        "",
+        "Use this as the release-candidate gate for one real board-PC certification run.",
+        "",
+        f"- Created: `{payload['created_at']}`",
+        f"- Current handoff recommendation: `{payload.get('recommendation_status') or '-'}`",
+        "",
+        "## Evidence items",
+        "",
+    ]
+    for item in payload.get("items") or []:
+        marker = "[x]" if item.get("status") == "pass" else "[ ]"
+        lines.append(f"- {marker} `{item.get('name')}` — {item.get('evidence')}")
+    lines.extend([
+        "",
+        "## Release-manager signoff",
+        "",
+    ])
+    for key, value in (payload.get("release_manager_signoff") or {}).items():
+        lines.append(f"- {key.replace('_', ' ').title()}: `{value or '-'}`")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def refresh_field_readiness_exports(
+    root: Path,
+    *,
+    paths: dict[str, Path],
+    label: str,
+    drill_context: dict[str, str],
+    recommendation: dict[str, object] | None = None,
+    freshness: dict[str, object] | None = None,
+    attachment_readiness: dict[str, object] | None = None,
+    dry_run: bool = False,
+) -> dict:
+    certification = build_board_pc_certification_payload(
+        root=root,
+        paths=paths,
+        label=label,
+        drill_context=drill_context,
+        recommendation=recommendation,
+        freshness=freshness,
+        attachment_readiness=attachment_readiness,
+    )
+    rc_checklist = build_rc_evidence_checklist_payload(
+        root=root,
+        paths=paths,
+        label=label,
+        drill_context=drill_context,
+        recommendation=recommendation,
+        freshness=freshness,
+        attachment_readiness=attachment_readiness,
+    )
+    if not dry_run:
+        write_json(paths["certification_json"], certification)
+        paths["certification_md"].write_text(render_board_pc_certification_markdown(certification) + "\n", encoding="utf-8")
+        write_json(paths["rc_checklist_json"], rc_checklist)
+        paths["rc_checklist_md"].write_text(render_rc_evidence_checklist_markdown(rc_checklist) + "\n", encoding="utf-8")
+    return {
+        "preflight_json": str(paths["preflight_json"].resolve()),
+        "preflight_md": str(paths["preflight_md"].resolve()),
+        "certification_json": str(paths["certification_json"].resolve()),
+        "certification_md": str(paths["certification_md"].resolve()),
+        "rc_checklist_json": str(paths["rc_checklist_json"].resolve()),
+        "rc_checklist_md": str(paths["rc_checklist_md"].resolve()),
+    }
+
+
+def collect_board_pc_preflight(
+    root: Path,
+    *,
+    label: str,
+    operator: str | None = None,
+    device_id: str | None = None,
+    service_ticket: str | None = None,
+    notes: str | None = None,
+    expected_version: str | None = None,
+    dry_run: bool = False,
+) -> dict:
+    paths = get_drill_workspace(root, label)
+    drill_context = build_drill_context(
+        label=label,
+        operator=operator,
+        device_id=device_id,
+        service_ticket=service_ticket,
+        notes=notes,
+    )
+    missing = validate_layout(root)
+    writable = check_writable_paths(root, dry_run=False)
+    state = collect_runtime_boundary_state(root, drill_context=drill_context)
+    marker_files = {
+        "setup_runtime_bat": root / "app" / "bin" / "setup_runtime.bat",
+        "start_runtime_bat": root / "app" / "bin" / "start_runtime.bat",
+        "smoke_test_runtime_bat": root / "app" / "bin" / "smoke_test_runtime.bat",
+        "update_runtime_bat": root / "app" / "bin" / "update_runtime.bat",
+        "capture_field_evidence_bat": root / "app" / "bin" / "capture_field_evidence.bat",
+        "capture_board_pc_postflight_bat": root / "app" / "bin" / "capture_board_pc_postflight.bat",
+        "finalize_drill_handoff_bat": root / "app" / "bin" / "finalize_drill_handoff.bat",
+        "backend_env": root / "app" / "backend" / ".env",
+        "venv_activate": root / "app" / ".venv" / "Scripts" / "activate.bat",
+    }
+    file_markers = {
+        key: {
+            "path": str(path.resolve()),
+            "exists": path.exists(),
+        }
+        for key, path in marker_files.items()
+    }
+    machine = {
+        "hostname": socket.gethostname(),
+        "platform": platform.platform(),
+        "system": platform.system(),
+        "release": platform.release(),
+        "version": platform.version(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "python_version": platform.python_version(),
+        "user": os.environ.get("USERNAME") or os.environ.get("USER"),
+    }
+    urls = {
+        "health": "http://localhost:8001/api/health",
+        "version": "http://localhost:8001/api/system/version",
+        "admin_health_hint": "Admin -> Health -> Board-PC readiness",
+    }
+    repo_checks = [
+        {"name": "runtime_layout_complete", "ok": not missing, "details": missing or ["required runtime layout present"]},
+        {"name": "writable_paths_ok", "ok": not writable["failed"], "details": writable["failed"] or writable["ok"]},
+        {"name": "backend_env_present", "ok": file_markers["backend_env"]["exists"], "details": file_markers["backend_env"]["path"]},
+        {"name": "runtime_entrypoints_present", "ok": all(file_markers[key]["exists"] for key in ["setup_runtime_bat", "start_runtime_bat", "smoke_test_runtime_bat", "update_runtime_bat", "capture_field_evidence_bat", "capture_board_pc_postflight_bat", "finalize_drill_handoff_bat"]), "details": [key for key in ["setup_runtime_bat", "start_runtime_bat", "smoke_test_runtime_bat", "update_runtime_bat", "capture_field_evidence_bat", "capture_board_pc_postflight_bat", "finalize_drill_handoff_bat"] if not file_markers[key]["exists"]] or ["all required wrappers present"]},
+    ]
+    current_version = state.get("config_version")
+    payload = {
+        "label": label,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "runtime_root": str(root.resolve()),
+        "drill_context": drill_context,
+        "machine": machine,
+        "expected_version": expected_version,
+        "current_version": current_version,
+        "version_matches_expected": (expected_version is None or current_version == expected_version),
+        "windows_host": machine["system"].lower().startswith("win"),
+        "repo_layout_missing": missing,
+        "writable": writable,
+        "file_markers": file_markers,
+        "boundary_state_snapshot": state,
+        "urls": urls,
+        "repo_checks": repo_checks,
+        "repo_preflight_ok": (not missing) and (not writable["failed"]) and all(item["ok"] for item in repo_checks),
+        "manual_machine_checks": [
+            "Reboot/power-cycle the real board PC and confirm autostart relaunches the kiosk stack.",
+            "Open Admin -> Health -> Board-PC readiness on the board PC and verify blockers are gone.",
+            "Run one real Autodarts login/session + observer handoff on hardware.",
+            "Execute update and rollback on the same machine using this drill folder.",
+        ],
+        "artifact_paths": {
+            "preflight_json": str(paths["preflight_json"].resolve()),
+            "preflight_md": str(paths["preflight_md"].resolve()),
+        },
+    }
+    if not dry_run:
+        write_json(paths["preflight_json"], payload)
+        md_lines = [
+            f"# Board-PC Preflight — {label}",
+            "",
+            f"- Created: `{payload['created_at']}`",
+            f"- Runtime root: `{payload['runtime_root']}`",
+            f"- Host platform: `{machine['platform']}`",
+            f"- Hostname: `{machine['hostname']}`",
+            f"- User: `{machine['user'] or '-'}`",
+            f"- Current version: `{current_version or '-'}`",
+            f"- Expected version: `{expected_version or '-'}`",
+            f"- Version matches expected: `{'yes' if payload['version_matches_expected'] else 'no'}`",
+            f"- Windows host: `{'yes' if payload['windows_host'] else 'no'}`",
+            f"- Repo preflight OK: `{'yes' if payload['repo_preflight_ok'] else 'no'}`",
+            "",
+            "## Repo/runtime checks",
+            "",
+        ]
+        for item in repo_checks:
+            md_lines.append(f"- [{'OK' if item['ok'] else 'FAIL'}] {item['name']} — {item['details']}")
+        md_lines.extend([
+            "",
+            "## Manual machine-only checks still required",
+            "",
+        ])
+        for item in payload["manual_machine_checks"]:
+            md_lines.append(f"- [ ] {item}")
+        md_lines.extend([
+            "",
+            "## Key local URLs",
+            "",
+            f"- Health: `{urls['health']}`",
+            f"- Version: `{urls['version']}`",
+            f"- Admin health hint: `{urls['admin_health_hint']}`",
+            "",
+            f"Full JSON: `{paths['preflight_json']}`",
+        ])
+        paths["preflight_md"].write_text("\n".join(md_lines) + "\n", encoding="utf-8")
+        refresh_drill_workspace_status(root, label=label, dry_run=False)
+    return payload
 
 
 def render_drill_checklist_markdown(root: Path, paths: dict[str, Path], label: str, drill_context: dict[str, str], steps: list[dict[str, object]], next_step: str) -> str:
@@ -1330,7 +2001,10 @@ def summarize_acknowledgment_history(ticket_acknowledgment_history: list[dict[st
     initial = copy.deepcopy(history[0]) if history else None
     reacknowledge_count = sum(1 for item in history if str(item.get("event") or "") == "reacknowledge")
     destination_change_count = sum(1 for item in history if item.get("destination_changed") is True)
+    latest_event = str(latest.get("event") or "").strip() if latest else ""
     latest_change_summary = str(latest.get("change_summary") or "").strip() if latest else None
+    if latest_event == "acknowledge":
+        latest_change_summary = None
 
     destination_relation_counts = {
         "initial_acknowledgment": 0,
@@ -1347,7 +2021,7 @@ def summarize_acknowledgment_history(ticket_acknowledgment_history: list[dict[st
     latest_destination_display = str(latest.get("ticket_destination_display") or "").strip() if latest else None
     previous_destination_display = str(latest.get("previous_ticket_destination_display") or "").strip() if latest else None
     if latest:
-        latest_event = str(latest.get("event") or "").strip() or None
+        latest_event = latest_event or None
         destination_changed = latest.get("destination_changed") is True
         if latest_event == "acknowledge":
             latest_destination_relation = "initial_acknowledgment"
@@ -2143,6 +2817,17 @@ def refresh_drill_workspace_status(root: Path, *, label: str, dry_run: bool = Fa
     handoff_manifest["ticket_acknowledgment_history"] = attachment_review.get("acknowledgment_history") or summarize_acknowledgment_history(ticket_acknowledgment_history)
     handoff_manifest["attachment_readiness"] = ticket_comment["attachment_readiness"]
     handoff_manifest["attachment_review"] = attachment_review
+    readiness_exports = refresh_field_readiness_exports(
+        root,
+        paths=paths,
+        label=label,
+        drill_context=drill_context,
+        recommendation=recommendation,
+        freshness=freshness,
+        attachment_readiness=ticket_comment["attachment_readiness"],
+        dry_run=dry_run,
+    )
+    handoff_manifest["field_readiness_exports"] = readiness_exports
     handoff_md = [
         f"# Runtime Drill Handoff Manifest — {label}",
         "",
@@ -2309,7 +2994,8 @@ def refresh_drill_workspace_status(root: Path, *, label: str, dry_run: bool = Fa
         "next_step": next_step,
         "complete": handoff_manifest["complete"],
         "ticket_acknowledgment": handoff_manifest["ticket_acknowledgment"],
-        "ticket_acknowledgment_history": handoff_manifest["ticket_acknowledgment_history"],
+        "ticket_acknowledgment_history": ticket_acknowledgment_history,
+        "ticket_acknowledgment_history_summary": handoff_manifest["ticket_acknowledgment_history"],
     }
     if not dry_run:
         paths["base"].mkdir(parents=True, exist_ok=True)
@@ -2351,6 +3037,13 @@ def initialize_drill_workspace(
     if not dry_run:
         paths["base"].mkdir(parents=True, exist_ok=True)
         write_json(paths["checklist_json"], checklist)
+        refresh_field_readiness_exports(
+            root,
+            paths=paths,
+            label=label,
+            drill_context=drill_context,
+            dry_run=False,
+        )
         refresh_drill_workspace_status(root, label=label, dry_run=False)
     return result
 
@@ -2740,6 +3433,14 @@ def collect_support_bundle_candidates(
         (root / "data" / "support" / f"drill-leg-rollback-{safe_label}.json", f"support/drill-leg-rollback-{safe_label}.json"),
         (drill_workspace["checklist_json"], f"support/drills/{safe_label}/drill-checklist.json"),
         (drill_workspace["checklist_md"], f"support/drills/{safe_label}/DRILL_CHECKLIST.md"),
+        (drill_workspace["preflight_json"], f"support/drills/{safe_label}/BOARD_PC_PREFLIGHT.json"),
+        (drill_workspace["preflight_md"], f"support/drills/{safe_label}/BOARD_PC_PREFLIGHT.md"),
+        (drill_workspace["postflight_json"], f"support/drills/{safe_label}/BOARD_PC_POSTFLIGHT.json"),
+        (drill_workspace["postflight_md"], f"support/drills/{safe_label}/BOARD_PC_POSTFLIGHT.md"),
+        (drill_workspace["certification_json"], f"support/drills/{safe_label}/BOARD_PC_CERTIFICATION.json"),
+        (drill_workspace["certification_md"], f"support/drills/{safe_label}/BOARD_PC_CERTIFICATION.md"),
+        (drill_workspace["rc_checklist_json"], f"support/drills/{safe_label}/RC_EVIDENCE_CHECKLIST.json"),
+        (drill_workspace["rc_checklist_md"], f"support/drills/{safe_label}/RC_EVIDENCE_CHECKLIST.md"),
         (drill_workspace["base"] / "DRILL_HANDOFF.json", f"support/drills/{safe_label}/DRILL_HANDOFF.json"),
         (drill_workspace["base"] / "DRILL_HANDOFF.md", f"support/drills/{safe_label}/DRILL_HANDOFF.md"),
         (drill_workspace["base"] / "DRILL_TICKET_COMMENT.json", f"support/drills/{safe_label}/DRILL_TICKET_COMMENT.json"),
@@ -3344,6 +4045,8 @@ def main() -> int:
             "create-app-backup",
             "prepare-runtime-update",
             "prepare-closed-loop-rehearsal",
+            "capture-board-pc-preflight",
+            "capture-board-pc-postflight",
             "capture-field-state",
             "compare-field-state",
             "build-drill-leg-summary",
@@ -3396,6 +4099,18 @@ def main() -> int:
     parser.add_argument("--exit-code", type=int)
     parser.add_argument("--log-path", type=Path)
     parser.add_argument("--update-result", type=Path)
+    parser.add_argument("--expected-version")
+    parser.add_argument("--tested-by")
+    parser.add_argument("--venue-or-machine")
+    parser.add_argument("--windows-build")
+    parser.add_argument("--autodarts-account")
+    parser.add_argument("--overall-status")
+    parser.add_argument("--boot-status")
+    parser.add_argument("--admin-health-status")
+    parser.add_argument("--session-status")
+    parser.add_argument("--update-leg-status")
+    parser.add_argument("--rollback-leg-status")
+    parser.add_argument("--reopen-status")
     args = parser.parse_args()
 
     root = args.root.resolve()
@@ -3754,6 +4469,70 @@ def main() -> int:
         )
         print(json.dumps(payload, indent=2))
         return 0
+
+    if args.command == "capture-board-pc-preflight":
+        payload = collect_board_pc_preflight(
+            root,
+            label=args.label,
+            operator=args.operator,
+            device_id=args.device_id,
+            service_ticket=args.service_ticket,
+            notes=args.notes,
+            expected_version=args.expected_version,
+            dry_run=args.dry_run,
+        )
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(f"Board-PC preflight written for: {args.label}")
+            print(f"Host platform: {payload['machine']['platform']}")
+            print(f"Current version: {payload.get('current_version') or '-'}")
+            print(f"Expected version: {payload.get('expected_version') or '-'}")
+            print(f"Version matches expected: {'yes' if payload.get('version_matches_expected') else 'no'}")
+            print(f"Repo preflight OK: {'yes' if payload.get('repo_preflight_ok') else 'no'}")
+            print(f"Preflight JSON: {payload['artifact_paths']['preflight_json']}")
+            print(f"Preflight MD: {payload['artifact_paths']['preflight_md']}")
+        bad = (not payload.get('repo_preflight_ok')) or (args.expected_version is not None and not payload.get('version_matches_expected'))
+        return 1 if bad else 0
+
+    if args.command == "capture-board-pc-postflight":
+        payload = collect_board_pc_postflight(
+            root,
+            label=args.label,
+            operator=args.operator,
+            device_id=args.device_id,
+            service_ticket=args.service_ticket,
+            tested_by=args.tested_by,
+            venue_or_machine=args.venue_or_machine,
+            windows_build=args.windows_build,
+            autodarts_account=args.autodarts_account,
+            overall_status=args.overall_status,
+            boot_status=args.boot_status,
+            admin_health_status=args.admin_health_status,
+            session_status=args.session_status,
+            update_leg_status=args.update_leg_status,
+            rollback_leg_status=args.rollback_leg_status,
+            reopen_status=args.reopen_status,
+            notes=args.notes,
+            dry_run=args.dry_run,
+        )
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(f"Board-PC postflight written for: {args.label}")
+            print(f"Overall status: {payload['overall_status']}")
+            print(f"Machine checks passed: {payload['machine_summary']['pass_count']}/{len(payload['machine_checks'])}")
+            print(f"Preflight present: {'yes' if payload['preflight_present'] else 'no'}")
+            print(f"Boundary matches preflight: {'yes' if payload['boundary_matches_preflight'] else 'no'}")
+            print(f"Postflight JSON: {payload['artifact_paths']['postflight_json']}")
+            print(f"Postflight MD: {payload['artifact_paths']['postflight_md']}")
+        bad = (
+            not payload.get('preflight_present')
+            or payload.get('overall_status') in {'fail', 'blocked'}
+            or payload.get('machine_summary', {}).get('fail_count', 0) > 0
+            or payload.get('machine_summary', {}).get('blocked_count', 0) > 0
+        )
+        return 1 if bad else 0
 
     if args.command == "capture-field-state":
         state_path = (args.state or (root / "data" / "field_state.json")).resolve()

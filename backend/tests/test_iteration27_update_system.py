@@ -17,9 +17,11 @@ import os
 import pytest
 import requests
 
+pytestmark = pytest.mark.integration
+
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
-    raise ValueError("REACT_APP_BACKEND_URL environment variable must be set")
+    pytest.skip("REACT_APP_BACKEND_URL environment variable must be set", allow_module_level=True)
 
 
 class TestPublicEndpoints:

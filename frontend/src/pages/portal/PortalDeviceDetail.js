@@ -3,16 +3,18 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import { toast } from 'sonner';
 import {
-  Monitor, ArrowLeft, RefreshCw, RotateCcw,
+  ArrowLeft, Monitor, RefreshCw, RotateCcw,
   Globe, Clock, Activity, AlertTriangle, CheckCircle,
-  XCircle, Wifi, WifiOff, Zap, ScrollText, BarChart3,
-  HeartPulse, Database, Terminal, Filter, Shield, ShieldOff, ShieldAlert,
-  Settings2, Save, ChevronDown, ChevronUp, Unlock, Lock, Play, Square, Hash
+  XCircle, WifiOff, Shield, ShieldOff, ShieldAlert,
+  Settings2, Save, ChevronDown, ChevronUp, Unlock, Lock, Play, Square, Hash, Sparkles
 } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
+import { ProductBackLink, ProductCallout, ProductDetailCard, ProductHero, ProductInlineActions, ProductKeyValueList, ProductMetricGrid } from '../../components/shell/ProductDetail';
+import { ProductStatusBadge } from '../../components/shell/ProductDataDisplay';
+import { ProductLogPanel, ProductOpsRail, ProductTimelinePanel } from '../../components/shell/ProductSurfaceSystems';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 
 const ACTION_META = {
@@ -308,125 +310,134 @@ export default function PortalDeviceDetail() {
     logFilter === 'all' || l.level === logFilter
   );
   const surfacePrefix = location.pathname.startsWith('/operator') ? '/operator' : '/portal';
-  const deviceListPath = `${surfacePrefix}/devices`;
-  const licenseDetailPath = device.license_id ? `${surfacePrefix}/licenses/${device.license_id}?intent=devices` : null;
+  const isOperatorSurface = surfacePrefix === '/operator';
+  const searchParams = new URLSearchParams(location.search || '');
+  const returnTo = searchParams.get('returnTo') || `${surfacePrefix}/devices`;
+  const returnLabel = searchParams.get('returnLabel') || 'Geräte';
+  const deviceListPath = returnTo;
+  const licenseDetailPath = device.license_id ? `${surfacePrefix}/licenses/${device.license_id}?intent=devices&returnTo=${encodeURIComponent(`${location.pathname}${location.search || ''}`)}&returnLabel=${encodeURIComponent(device.device_name || device.id.slice(0, 8))}` : null;
+  const actionTone = healthKey === 'offline' ? 'red' : healthKey === 'degraded' ? 'amber' : 'blue';
+  const heroActions = [
+    ...(licenseDetailPath ? [{ label: 'Lizenz öffnen', onClick: () => navigate(licenseDetailPath), trailingIcon: Hash, className: 'border-zinc-700 text-zinc-200 hover:bg-zinc-800' }] : []),
+    { label: 'Neu laden', onClick: fetchDevice, trailingIcon: RefreshCw, className: 'border-zinc-700 text-zinc-200 hover:bg-zinc-800' },
+    { label: returnLabel, onClick: () => navigate(deviceListPath), className: 'border-zinc-700 text-zinc-200 hover:bg-zinc-800' },
+  ];
+  const summaryItems = [
+    { label: 'Version', value: device.reported_version || '—', tid: 'device-summary-version' },
+    { label: 'Letzter Heartbeat', value: device.last_heartbeat_at ? timeAgo(device.last_heartbeat_at) : 'nie', tid: 'device-summary-heartbeat' },
+    { label: 'Install-ID', value: device.install_id ? `${device.install_id.slice(0, 12)}...` : '—', tid: 'device-install-id' },
+    { label: 'Lizenz', value: device.license_id ? `${device.license_id.slice(0, 12)}...` : 'Keine', tid: 'device-summary-license' },
+    { label: 'Config-Version', value: hs?.config_applied_version ?? '—', tid: 'device-summary-config' },
+    { label: 'Binding', value: device.binding_status || 'Unbekannt', tid: 'device-binding-status' },
+    { label: 'WS Push', value: hs?.ws_push?.connected ? 'Verbunden' : (hs?.ws_push?.configured ? 'Getrennt' : 'Nicht konfiguriert'), tid: 'device-summary-ws' },
+    { label: 'Offline Queue', value: hs?.offline_queue?.pending > 0 ? `${hs.offline_queue.pending} ausstehend` : 'Leer', tid: 'device-summary-queue' },
+  ];
+  const syncRows = [
+    { label: 'Config-Version', value: hs?.config_sync?.config_version != null ? `v${hs.config_sync.config_version}` : '—', detail: 'Zentral gemeldete Version', meta: hs?.config_applied_version != null ? `Applied: ${hs.config_applied_version}` : null },
+    { label: 'Letzter Sync', value: hs?.config_sync?.last_sync_at ? timeAgo(hs.config_sync.last_sync_at) : 'nie', detail: 'Zuletzt bestätigte Konfigurationsabholung', meta: `${hs?.config_sync?.sync_count ?? 0} Syncs gesamt` },
+    { label: 'Fehlerlage', value: `${hs?.config_sync?.consecutive_errors ?? 0} laufend`, detail: 'Konsekutive Sync-Fehler', meta: hs?.config_sync?.last_error || null },
+  ];
+  const actionPollerRows = [
+    { label: 'Letzter Poll', value: hs?.action_poller?.last_poll_at ? timeAgo(hs.action_poller.last_poll_at) : 'nie', detail: 'Abholung offener Remote-Aktionen', meta: hs?.action_poller?.last_action_at ? `Letzte Aktion ${timeAgo(hs.action_poller.last_action_at)}` : null },
+    { label: 'Ausgeführt', value: String(hs?.action_poller?.actions_executed ?? 0), detail: 'Erfolgreich bestätigte Aktionen', meta: `${hs?.action_poller?.actions_failed ?? 0} fehlgeschlagen` },
+    { label: 'Poll-Fehler', value: String(hs?.action_poller?.consecutive_poll_errors ?? 0), detail: 'Aktuelle Fehlerkette des Pollers', meta: hs?.action_poller?.last_error || null },
+  ];
+  const queueRows = [
+    { label: 'Pending', value: hs?.offline_queue?.pending > 0 ? `${hs.offline_queue.pending} ausstehend` : 'Leer', detail: 'Noch nicht drainte Offline-Operationen', meta: hs?.offline_queue?.last_drain_at ? `Letzter Drain ${timeAgo(hs.offline_queue.last_drain_at)}` : null },
+    { label: 'Drain total', value: String(hs?.offline_queue?.drained_total ?? 0), detail: 'Erfolgreich gesendete Queue-Einträge', meta: `${hs?.offline_queue?.dropped_total ?? 0} verworfen` },
+    { label: 'Queue-Fehler', value: hs?.offline_queue?.last_drain_error ? 'Fehler vorhanden' : 'Keine', detail: 'Letzter Drain-/Queue-Fehler', meta: hs?.offline_queue?.last_drain_error || null },
+  ];
+  const wsRows = [
+    { label: 'Push-Verbindung', value: hs?.ws_push?.connected ? 'Verbunden' : (hs?.ws_push?.configured ? 'Getrennt' : 'Nicht konfiguriert'), detail: 'Websocket-Anbindung zum Central Server', meta: hs?.ws_push?.connected ? `${hs?.ws_push?.events_received ?? 0} Events empfangen` : null },
+    { label: 'Reconnects', value: String(hs?.ws_push?.reconnect_count ?? 0), detail: 'Neuaufbau der WS-Verbindung', meta: hs?.ws_push?.last_error || null },
+  ];
 
   return (
-    <div data-testid="device-detail-page" className="space-y-4">
-      {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button onClick={() => navigate(deviceListPath)} variant="ghost" className="text-zinc-400 hover:text-white p-2" data-testid="device-back-btn">
-          <ArrowLeft className="w-5 h-5" />
-        </Button>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold text-white truncate" data-testid="device-name">{device.device_name || device.id.slice(0, 8)}</h1>
-            <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${healthMeta.cls}`} data-testid="device-health-badge">
+    <div data-testid="device-detail-page" className="mx-auto max-w-7xl space-y-6 p-6">
+      <ProductHero
+        eyebrow={isOperatorSurface ? 'Operator device detail' : 'Portal device detail'}
+        title={device.device_name || device.id.slice(0, 8)}
+        description={device.customer?.name ? `${device.customer.name}${device.location?.name ? ` → ${device.location.name}` : ''}` : device.id}
+        tone={actionTone}
+        backAction={<ProductBackLink data-testid="device-back-btn" label={returnLabel} onClick={() => navigate(deviceListPath)} />}
+        badge={(
+          <div className="flex flex-wrap items-center gap-2">
+            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${healthMeta.cls}`} data-testid="device-health-badge">
               <HealthIcon className="w-3 h-3" />
               {healthMeta.label}
             </span>
+            <ProductStatusBadge kind="device" value={device.status === 'inactive' ? 'disabled' : device.status} className="capitalize" />
+            <ProductStatusBadge kind="binding" value={device.binding_status || 'unbound'} />
           </div>
-          <p className="text-sm text-zinc-500 truncate">
-            {device.customer?.name} {device.location?.name ? `→ ${device.location.name}` : ''}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {licenseDetailPath && (
-            <Button onClick={() => navigate(licenseDetailPath)} variant="outline" className="border-zinc-700 text-zinc-300 hover:text-white" data-testid="device-license-btn">
-              <Hash className="w-4 h-4 mr-2" /> Lizenz öffnen
-            </Button>
-          )}
-          <Button onClick={fetchDevice} variant="outline" className="border-zinc-700 text-zinc-400 hover:text-white" data-testid="device-refresh-btn">
-            <RefreshCw className="w-4 h-4" />
-          </Button>
-        </div>
-      </div>
+        )}
+        actions={<ProductInlineActions mode={isOperatorSurface ? 'operator' : 'read-only'} items={heroActions} />}
+        data-testid="device-detail-hero"
+      >
+        <ProductCallout
+          tone={healthReason && healthKey !== 'healthy' ? actionTone : 'blue'}
+          eyebrow="Operational posture"
+          title={healthReason && healthKey !== 'healthy' ? (healthKey === 'offline' ? 'Gerät nicht erreichbar' : 'Eingeschränkte Funktion') : 'Gerät wirkt stabil'}
+          description={healthReason || 'Heartbeat, Sync und Action-Poller wirken aktuell konsistent.'}
+          icon={healthReason && healthKey !== 'healthy' ? AlertTriangle : Sparkles}
+          data-testid="device-health-reason"
+        />
 
-      {/* Health Reason Banner */}
-      {healthReason && healthKey !== 'healthy' && (
-        <div className={`flex items-start gap-2.5 p-3 rounded-lg border ${
-          healthKey === 'offline' ? 'bg-red-500/5 border-red-500/20' : 'bg-amber-500/5 border-amber-500/20'
-        }`} data-testid="device-health-reason">
-          <AlertTriangle className={`w-4 h-4 mt-0.5 flex-shrink-0 ${healthKey === 'offline' ? 'text-red-400' : 'text-amber-400'}`} />
-          <div>
-            <p className={`text-sm font-medium ${healthKey === 'offline' ? 'text-red-400' : 'text-amber-400'}`}>
-              {healthKey === 'offline' ? 'Geraet nicht erreichbar' : 'Eingeschraenkte Funktion'}
-            </p>
-            <p className="text-xs text-zinc-400 font-mono mt-0.5">{healthReason}</p>
-          </div>
-        </div>
-      )}
+        <ProductMetricGrid columns="xl:grid-cols-4" data-testid="device-status-grid">
+          <StatusCell label="Version" value={device.reported_version} />
+          <StatusCell label="Letzter Heartbeat" value={device.last_heartbeat_at ? timeAgo(device.last_heartbeat_at) : null} sub={device.last_heartbeat_at ? new Date(device.last_heartbeat_at).toLocaleString('de-DE') : null} />
+          <StatusCell label="Letzter Sync" value={hs?.config_sync?.last_sync_at ? timeAgo(hs.config_sync.last_sync_at) : null} sub={`${hs?.config_sync?.sync_count ?? 0} Syncs, ${hs?.config_sync?.consecutive_errors ?? 0} Fehler`} />
+          <StatusCell label="Letzte Aktion" value={hs?.action_poller?.last_action_at ? timeAgo(hs.action_poller.last_action_at) : null} sub={`${hs?.action_poller?.actions_executed ?? 0} OK, ${hs?.action_poller?.actions_failed ?? 0} Fehler`} />
+          <StatusCell label="Offline Queue" value={hs?.offline_queue?.pending > 0 ? `${hs.offline_queue.pending} ausstehend` : 'Leer'} sub={hs?.offline_queue?.last_drain_at ? `Letzter Drain: ${timeAgo(hs.offline_queue.last_drain_at)}` : `${hs?.offline_queue?.drained_total ?? 0} gesendet, ${hs?.offline_queue?.dropped_total ?? 0} verworfen`} />
+          <StatusCell label="WS Push" value={hs?.ws_push?.connected ? 'Verbunden' : (hs?.ws_push?.configured ? 'Getrennt' : 'Nicht konfiguriert')} sub={hs?.ws_push?.connected ? `${hs.ws_push.events_received ?? 0} Events` : (hs?.ws_push?.last_error ? `Fehler: ${hs.ws_push.last_error}` : (hs?.ws_push?.reconnect_count > 0 ? `${hs.ws_push.reconnect_count} Reconnects` : null))} />
+          <StatusCell label="Config Version" value={hs?.config_applied_version ?? '\u2014'} sub={hs?.config_sync?.config_version ? `Zentral: v${hs.config_sync.config_version}` : null} />
+          <StatusCell label="Lizenz" value={device.license_id ? 'Gebunden' : 'Keine'} sub={device.license_id ? device.license_id.slice(0, 12) + '...' : null} />
+        </ProductMetricGrid>
+      </ProductHero>
 
-      {/* Status Grid */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-2" data-testid="device-status-grid">
-        <StatusCell label="Version" value={device.reported_version} />
-        <StatusCell label="Letzter Heartbeat" value={device.last_heartbeat_at ? timeAgo(device.last_heartbeat_at) : null} sub={device.last_heartbeat_at ? new Date(device.last_heartbeat_at).toLocaleString('de-DE') : null} />
-        <StatusCell label="Config Version" value={hs?.config_applied_version ?? '\u2014'} sub={hs?.config_sync?.config_version ? `Zentral: v${hs.config_sync.config_version}` : null} />
-        <StatusCell label="Letzter Sync" value={hs?.config_sync?.last_sync_at ? timeAgo(hs.config_sync.last_sync_at) : null} sub={`${hs?.config_sync?.sync_count ?? 0} Syncs, ${hs?.config_sync?.consecutive_errors ?? 0} Fehler`} />
-        <StatusCell label="Letzte Aktion" value={hs?.action_poller?.last_action_at ? timeAgo(hs.action_poller.last_action_at) : null} sub={`${hs?.action_poller?.actions_executed ?? 0} OK, ${hs?.action_poller?.actions_failed ?? 0} Fehler`} />
-        <StatusCell label="Offline Queue" value={hs?.offline_queue?.pending > 0 ? `${hs.offline_queue.pending} ausstehend` : 'Leer'} sub={hs?.offline_queue?.last_drain_at ? `Letzter Drain: ${timeAgo(hs.offline_queue.last_drain_at)}` : `${hs?.offline_queue?.drained_total ?? 0} gesendet, ${hs?.offline_queue?.dropped_total ?? 0} verworfen`} />
-        <StatusCell label="WS Push" value={hs?.ws_push?.connected ? 'Verbunden' : (hs?.ws_push?.configured ? 'Getrennt' : 'Nicht konfiguriert')} sub={hs?.ws_push?.connected ? `${hs.ws_push.events_received ?? 0} Events` : (hs?.ws_push?.last_error ? `Fehler: ${hs.ws_push.last_error}` : (hs?.ws_push?.reconnect_count > 0 ? `${hs.ws_push.reconnect_count} Reconnects` : null))} />
-        <StatusCell label="Lizenz" value={device.license_id ? 'Gebunden' : 'Keine'} sub={device.license_id ? device.license_id.slice(0, 12) + '...' : null} />
-      </div>
-
-      {/* Device Trust / Binding Control — v3.12.0 */}
-      <Card className="bg-zinc-900 border-zinc-800" data-testid="device-trust-card">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
-            <Shield className="w-4 h-4" /> Geraete-Vertrauen / Binding
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-4 flex-wrap">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-500">Status:</span>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border ${
-                device.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                device.status === 'blocked' ? 'bg-red-500/10 text-red-400 border-red-500/20' :
-                'bg-amber-500/10 text-amber-400 border-amber-500/20'
-              }`} data-testid="device-trust-status">
-                {device.status === 'active' ? <CheckCircle className="w-3 h-3" /> :
-                 device.status === 'blocked' ? <ShieldAlert className="w-3 h-3" /> :
-                 <ShieldOff className="w-3 h-3" />}
-                {device.status === 'active' ? 'Aktiv' : device.status === 'blocked' ? 'Gesperrt' : 'Deaktiviert'}
-              </span>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(340px,0.9fr)]">
+        <div className="space-y-6">
+          <ProductDetailCard
+            title="Geräte-Anatomie"
+            eyebrow="Identity & continuity"
+            description="Shared Detail-Anatomie für Portal- und Operator-Drill-ins."
+            data-testid="device-trust-card"
+            actions={(
+              <div className="flex flex-wrap items-center gap-2">
+                {device.status !== 'active' && (
+                  <Button size="sm" variant="outline" disabled={statusLoading}
+                    className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 text-xs h-8"
+                    onClick={() => changeDeviceStatus('active')} data-testid="device-activate-btn">
+                    <CheckCircle className="w-3 h-3 mr-1" /> Aktivieren
+                  </Button>
+                )}
+                {device.status === 'active' && (
+                  <Button size="sm" variant="outline" disabled={statusLoading}
+                    className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-xs h-8"
+                    onClick={() => changeDeviceStatus('inactive')} data-testid="device-deactivate-btn">
+                    <ShieldOff className="w-3 h-3 mr-1" /> Deaktivieren
+                  </Button>
+                )}
+                {device.status !== 'blocked' && (
+                  <Button size="sm" variant="outline" disabled={statusLoading}
+                    className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs h-8"
+                    onClick={() => changeDeviceStatus('blocked')} data-testid="device-block-btn">
+                    <ShieldAlert className="w-3 h-3 mr-1" /> Sperren
+                  </Button>
+                )}
+              </div>
+            )}
+          >
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <span data-testid="device-name" className="text-lg font-semibold text-white">{device.device_name || device.id.slice(0, 8)}</span>
+                <ProductStatusBadge kind="connectivity" value={connectivity} />
+                <ProductStatusBadge kind="binding" value={device.binding_status || 'unbound'} />
+                <ProductStatusBadge kind="device" value={device.status === 'inactive' ? 'disabled' : device.status} />
+                {licenseDetailPath ? <ProductStatusBadge kind="license" value="active" label="Lizenz verknüpft" /> : null}
+              </div>
+              <ProductKeyValueList items={summaryItems} columns={2} />
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-500">Binding:</span>
-              <span className={`text-xs font-mono ${device.binding_status === 'bound' ? 'text-emerald-400' : 'text-amber-400'}`} data-testid="device-binding-status">
-                {device.binding_status === 'bound' ? 'Gebunden' : device.binding_status || 'Unbekannt'}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-500">Install-ID:</span>
-              <span className="text-xs font-mono text-zinc-400" data-testid="device-install-id">{device.install_id?.slice(0, 12) || '\u2014'}...</span>
-            </div>
-            <div className="flex items-center gap-1 ml-auto">
-              {device.status !== 'active' && (
-                <Button size="sm" variant="outline" disabled={statusLoading}
-                  className="border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 text-xs h-7"
-                  onClick={() => changeDeviceStatus('active')} data-testid="device-activate-btn">
-                  <CheckCircle className="w-3 h-3 mr-1" /> Aktivieren
-                </Button>
-              )}
-              {device.status === 'active' && (
-                <Button size="sm" variant="outline" disabled={statusLoading}
-                  className="border-amber-500/30 text-amber-400 hover:bg-amber-500/10 text-xs h-7"
-                  onClick={() => changeDeviceStatus('inactive')} data-testid="device-deactivate-btn">
-                  <ShieldOff className="w-3 h-3 mr-1" /> Deaktivieren
-                </Button>
-              )}
-              {device.status !== 'blocked' && (
-                <Button size="sm" variant="outline" disabled={statusLoading}
-                  className="border-red-500/30 text-red-400 hover:bg-red-500/10 text-xs h-7"
-                  onClick={() => changeDeviceStatus('blocked')} data-testid="device-block-btn">
-                  <ShieldAlert className="w-3 h-3 mr-1" /> Sperren
-                </Button>
-              )}
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+          </ProductDetailCard>
 
       {/* Device Config — v3.15.0: Full tabbed config matching local admin */}
       <Card className="bg-zinc-900 border-zinc-800" data-testid="device-quick-config">
@@ -783,48 +794,45 @@ export default function PortalDeviceDetail() {
         )}
       </Card>
 
-      {/* Last Error */}
       {device.last_error && (
-        <div className="flex items-start gap-2.5 p-3 rounded-lg bg-red-500/5 border border-red-500/20" data-testid="device-last-error">
-          <XCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-red-400">Letzter Fehler</p>
-            <p className="text-xs text-red-300/70 font-mono mt-0.5">{device.last_error}</p>
-          </div>
-        </div>
+        <ProductCallout
+          tone="red"
+          eyebrow="Last error"
+          title="Zuletzt gemeldeter Runtime-Fehler"
+          description={device.last_error}
+          icon={XCircle}
+          data-testid="device-last-error"
+        />
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Left Column: Actions + Action Log + Logs */}
-        <div className="lg:col-span-2 space-y-4">
-          {/* Quick Actions */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
-                <Zap className="w-4 h-4" /> Remote-Aktionen
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {/* v3.14.0: Primary board controls prominently displayed */}
-              <div className="mb-3">
-                <p className="text-[10px] text-zinc-500 uppercase font-mono mb-2">Board-Kontrolle</p>
-                <div className="grid grid-cols-4 gap-2" data-testid="board-control-grid">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(320px,0.85fr)]">
+        <div className="space-y-6">
+          <ProductDetailCard
+            title="Remote-Aktionen"
+            eyebrow="Control surface"
+            description="Board-Steuerung und Systemeingriffe im selben Produktmuster wie der Rest des Drill-ins."
+          >
+            <div className="space-y-4">
+              <div>
+                <p className="mb-2 text-[10px] uppercase tracking-[0.18em] text-zinc-500">Board-Kontrolle</p>
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4" data-testid="board-control-grid">
                   {Object.entries(ACTION_META).filter(([, m]) => m.primary).map(([key, meta]) => {
                     const Icon = meta.icon;
                     const isUnlock = key === 'unlock_board' || key === 'start_session';
                     return (
-                      <button key={key} onClick={() => handleBoardAction(key)} disabled={!!actionLoading} data-testid={`action-${key}`}
-                        className={`flex items-center gap-2 p-3 rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                          isUnlock ? 'border-emerald-500/30 hover:bg-emerald-500/10' : 'border-amber-500/30 hover:bg-amber-500/10'
-                        }`}>
-                        {actionLoading === key ? (
-                          <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <Icon className={`w-4 h-4 ${isUnlock ? 'text-emerald-400' : 'text-amber-400'}`} />
-                        )}
-                        <div className="text-left min-w-0">
-                          <span className="text-sm text-white block">{meta.label}</span>
-                          <span className="text-[10px] text-zinc-600 block truncate">{meta.desc}</span>
+                      <button
+                        key={key}
+                        onClick={() => handleBoardAction(key)}
+                        disabled={!!actionLoading}
+                        data-testid={`action-${key}`}
+                        className={`rounded-2xl border px-4 py-3 text-left transition-all disabled:cursor-not-allowed disabled:opacity-50 ${isUnlock ? 'border-emerald-500/25 bg-emerald-500/5 hover:bg-emerald-500/10' : 'border-amber-500/25 bg-amber-500/5 hover:bg-amber-500/10'}`}
+                      >
+                        <div className="flex items-start gap-3">
+                          {actionLoading === key ? <div className="mt-0.5 h-4 w-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" /> : <Icon className={`mt-0.5 h-4 w-4 ${isUnlock ? 'text-emerald-400' : 'text-amber-400'}`} />}
+                          <div>
+                            <p className="text-sm font-medium text-white">{meta.label}</p>
+                            <p className="mt-1 text-xs text-zinc-500">{meta.desc}</p>
+                          </div>
                         </div>
                       </button>
                     );
@@ -832,234 +840,111 @@ export default function PortalDeviceDetail() {
                 </div>
               </div>
               <div>
-                <p className="text-[10px] text-zinc-500 uppercase font-mono mb-2">System</p>
-                <div className="grid grid-cols-3 gap-2" data-testid="remote-actions-grid">
+                <p className="mb-2 text-[10px] uppercase tracking-[0.18em] text-zinc-500">System</p>
+                <div className="grid gap-2 md:grid-cols-3" data-testid="remote-actions-grid">
                   {Object.entries(ACTION_META).filter(([, m]) => !m.primary).map(([key, meta]) => {
                     const Icon = meta.icon;
                     return (
-                      <button key={key} onClick={() => issueAction(key)} disabled={!!actionLoading} data-testid={`action-${key}`}
-                        className="flex items-center gap-2 p-3 rounded-lg border border-zinc-700/50 hover:border-zinc-600 hover:bg-zinc-800/50 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
-                        {actionLoading === key ? (
-                          <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                        ) : (
-                          <Icon className="w-4 h-4 text-zinc-400" />
-                        )}
-                        <div className="text-left min-w-0">
-                          <span className="text-sm text-white block">{meta.label}</span>
-                          <span className="text-[10px] text-zinc-600 block truncate">{meta.desc}</span>
+                      <button
+                        key={key}
+                        onClick={() => issueAction(key)}
+                        disabled={!!actionLoading}
+                        data-testid={`action-${key}`}
+                        className="rounded-2xl border border-zinc-800 bg-zinc-950/30 px-4 py-3 text-left transition-all hover:border-zinc-700 hover:bg-zinc-900/50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <div className="flex items-start gap-3">
+                          {actionLoading === key ? <div className="mt-0.5 h-4 w-4 rounded-full border-2 border-indigo-400 border-t-transparent animate-spin" /> : <Icon className="mt-0.5 h-4 w-4 text-zinc-400" />}
+                          <div>
+                            <p className="text-sm font-medium text-white">{meta.label}</p>
+                            <p className="mt-1 text-xs text-zinc-500">{meta.desc}</p>
+                          </div>
                         </div>
                       </button>
                     );
                   })}
                 </div>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </ProductDetailCard>
 
-          {/* Action History */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
-                <ScrollText className="w-4 h-4" /> Aktions-Verlauf
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {device.recent_actions?.length ? (
-                <div className="space-y-1" data-testid="actions-log">
-                  {device.recent_actions.map(a => {
-                    const badge = STATUS_BADGE[a.status] || STATUS_BADGE.pending;
-                    const duration = a.acked_at && a.issued_at
-                      ? `${Math.round((new Date(a.acked_at) - new Date(a.issued_at)) / 1000)}s`
-                      : null;
-                    return (
-                      <div key={a.id} className="flex items-center gap-2 py-2 border-b border-zinc-800/40 last:border-0" data-testid={`action-entry-${a.id}`}>
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-medium border ${badge.cls}`}>{badge.label}</span>
-                        <span className="text-sm text-zinc-300 font-mono">{a.action_type}</span>
-                        {duration && <span className="text-[10px] text-zinc-600 font-mono">{duration}</span>}
-                        {a.result_message && (
-                          <span className="text-[10px] text-zinc-500 truncate max-w-[200px]" title={a.result_message}>{a.result_message}</span>
-                        )}
-                        <span className="text-[10px] text-zinc-600 ml-auto flex-shrink-0">{a.issued_by} {a.issued_at ? timeAgo(a.issued_at) : ''}</span>
-                      </div>
-                    );
-                  })}
+          <ProductTimelinePanel
+            title="Aktions-Verlauf"
+            eyebrow="Execution history"
+            description="Ausgabe, Latenz und Ergebnis der zuletzt angestoßenen Remote-Aktionen."
+            items={device.recent_actions || []}
+            empty="Keine Aktionen vorhanden"
+            testId="actions-log"
+            renderTitle={(a) => ACTION_META[a.action_type]?.label || a.action_type}
+            renderMeta={(a) => {
+              const badge = STATUS_BADGE[a.status] || STATUS_BADGE.pending;
+              return <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-medium ${badge.cls}`}>{badge.label}</span>;
+            }}
+            renderBody={(a) => {
+              const duration = a.acked_at && a.issued_at ? `${Math.round((new Date(a.acked_at) - new Date(a.issued_at)) / 1000)}s` : null;
+              return (
+                <div className="space-y-1">
+                  <p className="text-zinc-500">{a.result_message || ACTION_META[a.action_type]?.desc || 'Ohne Rückmeldung.'}</p>
+                  <p className="font-mono text-[11px] text-zinc-600">{a.issued_by || 'system'} · {a.issued_at ? timeAgo(a.issued_at) : 'ohne Zeit'}{duration ? ` · ${duration}` : ''}</p>
                 </div>
-              ) : (
-                <p className="text-xs text-zinc-600">Keine Aktionen vorhanden</p>
-              )}
-            </CardContent>
-          </Card>
+              );
+            }}
+          />
 
-          {/* Device Logs */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
-                  <Terminal className="w-4 h-4" /> Geraete-Logs
-                </CardTitle>
-                <div className="flex items-center gap-1" data-testid="log-filter">
-                  {['all', 'info', 'warn', 'error'].map(f => (
-                    <button key={f} onClick={() => setLogFilter(f)}
-                      className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                        logFilter === f ? 'bg-zinc-700 text-white' : 'text-zinc-600 hover:text-zinc-400'
-                      }`}>
-                      {f === 'all' ? 'Alle' : f.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {logs.length ? (
-                <div className="space-y-0.5 max-h-[400px] overflow-y-auto font-mono text-xs" data-testid="device-logs">
-                  {logs.slice().reverse().map((l, i) => (
-                    <div key={i} className="flex gap-2 py-1 border-b border-zinc-800/30 last:border-0 items-start" data-testid={`log-entry-${i}`}>
-                      <span className="text-zinc-600 flex-shrink-0 w-[52px]">{l.ts ? l.ts.slice(11, 19) : ''}</span>
-                      <span className={`flex-shrink-0 w-[38px] ${LOG_LEVEL_CLS[l.level] || 'text-zinc-500'}`}>{(l.level || '').toUpperCase()}</span>
-                      <span className="text-indigo-400/70 flex-shrink-0 w-[90px] truncate">{l.src || ''}</span>
-                      <span className="text-zinc-300 flex-1 break-all">{l.msg || ''}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-zinc-600">Keine Logs verfuegbar {logFilter !== 'all' ? `(Filter: ${logFilter})` : ''}</p>
-              )}
-            </CardContent>
-          </Card>
+          <ProductLogPanel logs={device.device_logs || []} logFilter={logFilter} onChangeFilter={setLogFilter} levelClasses={LOG_LEVEL_CLS} />
         </div>
 
-        {/* Right Column: Config Status + Daily Stats + Events */}
-        <div className="space-y-4">
-          {/* Config Sync Status */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
-                <Database className="w-4 h-4" /> Config-Sync
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2" data-testid="config-sync-card">
-              {hs?.config_sync ? (
-                <>
-                  <div className="flex justify-between items-center py-1">
-                    <span className="text-xs text-zinc-500">Config-Version</span>
-                    <span className="text-xs text-white font-mono">v{hs.config_sync.config_version || 0}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-t border-zinc-800/40">
-                    <span className="text-xs text-zinc-500">Applied Version</span>
-                    <span className="text-xs text-white font-mono">{hs.config_applied_version ?? '?'}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-t border-zinc-800/40">
-                    <span className="text-xs text-zinc-500">Letzter Sync</span>
-                    <span className="text-xs text-white">{hs.config_sync.last_sync_at ? timeAgo(hs.config_sync.last_sync_at) : 'nie'}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-t border-zinc-800/40">
-                    <span className="text-xs text-zinc-500">Syncs gesamt</span>
-                    <span className="text-xs text-white font-mono">{hs.config_sync.sync_count || 0}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-t border-zinc-800/40">
-                    <span className="text-xs text-zinc-500">Sync-Fehler</span>
-                    <span className={`text-xs font-mono ${hs.config_sync.consecutive_errors > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                      {hs.config_sync.consecutive_errors || 0} laufend
-                    </span>
-                  </div>
-                  {hs.config_sync.last_error && (
-                    <div className="p-2 mt-1 rounded bg-red-500/5 border border-red-500/10">
-                      <p className="text-[10px] text-red-400 font-mono break-all">{hs.config_sync.last_error}</p>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-zinc-600">Kein Sync-Status verfuegbar</p>
-              )}
-            </CardContent>
-          </Card>
+        <div className="space-y-6">
+          <ProductOpsRail
+            title="Config-Sync"
+            eyebrow="Operational rail"
+            description="Version, Fehlerkette und letzte Abholung der zentralen Konfiguration."
+            rows={syncRows}
+            testId="config-sync-card"
+          />
 
-          {/* Action Poller Status */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
-                <HeartPulse className="w-4 h-4" /> Action-Poller
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2" data-testid="action-poller-card">
-              {hs?.action_poller ? (
-                <>
-                  <div className="flex justify-between items-center py-1">
-                    <span className="text-xs text-zinc-500">Letzter Poll</span>
-                    <span className="text-xs text-white">{hs.action_poller.last_poll_at ? timeAgo(hs.action_poller.last_poll_at) : 'nie'}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-t border-zinc-800/40">
-                    <span className="text-xs text-zinc-500">Ausgefuehrt</span>
-                    <span className="text-xs text-emerald-400 font-mono">{hs.action_poller.actions_executed || 0}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-t border-zinc-800/40">
-                    <span className="text-xs text-zinc-500">Fehlgeschlagen</span>
-                    <span className={`text-xs font-mono ${hs.action_poller.actions_failed > 0 ? 'text-red-400' : 'text-zinc-400'}`}>{hs.action_poller.actions_failed || 0}</span>
-                  </div>
-                  <div className="flex justify-between items-center py-1 border-t border-zinc-800/40">
-                    <span className="text-xs text-zinc-500">Poll-Fehler</span>
-                    <span className={`text-xs font-mono ${hs.action_poller.consecutive_poll_errors > 0 ? 'text-amber-400' : 'text-zinc-400'}`}>{hs.action_poller.consecutive_poll_errors || 0}</span>
-                  </div>
-                  {hs.action_poller.last_error && (
-                    <div className="p-2 mt-1 rounded bg-red-500/5 border border-red-500/10">
-                      <p className="text-[10px] text-red-400 font-mono break-all">{hs.action_poller.last_error}</p>
-                    </div>
-                  )}
-                </>
-              ) : (
-                <p className="text-xs text-zinc-600">Kein Poller-Status verfuegbar</p>
-              )}
-            </CardContent>
-          </Card>
+          <ProductOpsRail
+            title="Action-Poller"
+            eyebrow="Operational rail"
+            description="Zustand des Pollers, der Remote-Aktionen bestätigt und ausführt."
+            rows={actionPollerRows}
+            testId="action-poller-card"
+          />
 
-          {/* Daily Stats */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
-                <BarChart3 className="w-4 h-4" /> Letzte 7 Tage
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {device.daily_stats?.length ? (
-                <div className="space-y-1" data-testid="daily-stats">
-                  {device.daily_stats.map(s => (
-                    <div key={s.date} className="flex items-center gap-2 py-1.5 border-b border-zinc-800/30 last:border-0">
-                      <span className="text-xs text-zinc-500 font-mono w-20">{s.date}</span>
-                      <span className="text-xs text-emerald-400">{((s.revenue_cents || 0) / 100).toFixed(2)} EUR</span>
-                      <span className="text-xs text-zinc-500 ml-auto">{s.sessions}S / {s.games}G</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-zinc-600">Keine Daten</p>
-              )}
-            </CardContent>
-          </Card>
+          <ProductOpsRail
+            title="Queue & WS"
+            eyebrow="Transport layer"
+            description="Offline-Queue und Websocket-Push im selben Runtime-Block statt verstreuter Statuskarten."
+            rows={[...queueRows, ...wsRows]}
+            testId="transport-rail-card"
+          />
 
-          {/* Recent Events */}
-          <Card className="bg-zinc-900 border-zinc-800">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm text-zinc-400 flex items-center gap-2">
-                <Activity className="w-4 h-4" /> Letzte Events
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {device.recent_events?.length ? (
-                <div className="space-y-1" data-testid="recent-events">
-                  {device.recent_events.map((e, i) => (
-                    <div key={i} className="flex items-center gap-2 py-1 border-b border-zinc-800/30 last:border-0">
-                      <span className="text-xs text-indigo-400 font-mono">{e.event_type}</span>
-                      <span className="text-[10px] text-zinc-600 ml-auto">{e.timestamp ? timeAgo(e.timestamp) : ''}</span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-zinc-600">Keine Events</p>
-              )}
-            </CardContent>
-          </Card>
+          <ProductTimelinePanel
+            title="Letzte 7 Tage"
+            eyebrow="Commercial pulse"
+            description="Kompakter Verlauf von Umsatz, Sessions und Games pro Tag."
+            items={device.daily_stats || []}
+            empty="Keine Daten"
+            testId="daily-stats"
+            renderTitle={(s) => s.date}
+            renderMeta={(s) => <span className="text-sm font-medium text-emerald-300">{((s.revenue_cents || 0) / 100).toFixed(2)} EUR</span>}
+            renderBody={(s) => <p className="font-mono text-[11px] text-zinc-600">{s.sessions} Sessions · {s.games} Games</p>}
+          />
+
+          <ProductTimelinePanel
+            title="Letzte Events"
+            eyebrow="Runtime stream"
+            description="Event-Typen aus der jüngsten Telemetrie in derselben Timeline-Semantik wie Logs und Aktionen."
+            items={device.recent_events || []}
+            empty="Keine Events"
+            testId="recent-events"
+            renderTitle={(e) => e.event_type || 'Event'}
+            renderMeta={(e) => <span className="text-[11px] text-zinc-500">{e.timestamp ? timeAgo(e.timestamp) : '—'}</span>}
+            renderBody={(e) => e.message ? <p>{e.message}</p> : null}
+          />
         </div>
       </div>
+    </div>
+  </div>
 
       {/* Unlock Board Dialog */}
       <Dialog open={unlockOpen} onOpenChange={setUnlockOpen}>

@@ -2,7 +2,7 @@
 
 Local-first darts board control and kiosk software for venue operation.
 
-Current product release line: **v4.3.0**
+Current product release line: **v4.4.21**
 
 ## Start here if you are new
 

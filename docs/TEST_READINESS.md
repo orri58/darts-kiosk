@@ -1,6 +1,6 @@
 # Test Readiness
 
-_Last updated: 2026-04-14 (repo-doc consolidation pass)_
+_Last updated: 2026-05-15 (integration gating + runtime handoff history repair pass)_
 
 ## Mode
 
@@ -13,11 +13,12 @@ That means:
 
 ## Current verdict
 
-**Mixed readiness.**
+**Mixed but more coherent readiness.**
 
 Short version:
 - the **full suite should still not be described as generally green**
 - the previously red **central / trust slice has now been reconciled and is green in its focused form**
+- the previously confusing **env-dependent collection failures are now isolated as integration tests instead of exploding default pytest collection**
 - the **runtime lane is comparatively healthy** and still the closest thing to a practical field-ready path, but it is **not perfectly green either** in the current repo snapshot
 - the **live kiosk/UI state is materially better than before**: loading state exists, unlock path still exists, and observer behavior is now explicit for real UI handoff vs headless/browser-smoke fallback
 
@@ -69,6 +70,32 @@ Current result:
 - **0 failed**
 - **2 warnings**
 
+#### Current runtime handoff / closed-loop result
+Command:
+
+```bash
+.venv/bin/python -m pytest -q tests/test_runtime_maintenance_closed_loop.py
+```
+
+Current result after repair:
+- **17 passed**
+- **0 failed**
+
+What was fixed in this pass:
+- drill handoff acknowledgment history now persists the raw event list in the checklist instead of overwriting it with a summary object
+- initial acknowledgment no longer gets misclassified as a destination-change event
+- acknowledgment summaries now keep the initial event phrasing honest (`latest change=n/a` for first acknowledgment)
+
+#### Default repo pytest collection behavior
+
+The repo default now behaves more honestly for env-dependent suites:
+
+- request-driven tests that require `REACT_APP_BACKEND_URL` are marked `integration`
+- default `pytest` keeps excluding them via `-m "not integration"`
+- if the URL is missing, those suites skip cleanly at module level instead of hard-failing collection
+
+This does **not** mean those suites are green; it means local/default validation no longer reports a fake repo failure just because an external environment was never provisioned.
+
 ## What is actually healthy vs not
 
 ### 1) Full-suite / broad repo health
@@ -77,6 +104,7 @@ Not ready to call green.
 The current repo state still shows broad red/drift outside a narrow “one lane is usable” narrative. The right summary is:
 - there is real progress
 - a lot of targeted tests pass
+- the default non-integration path is cleaner and less misleading than before
 - but the suite is **not** in a presentable all-green state
 
 ### 2) Central / trust lane
@@ -99,18 +127,18 @@ Important caveat:
 - trust still remains an evolving central-side capability, not a finished production PKI/enforcement story
 
 ### 3) Runtime lane
-**Comparatively healthiest lane**, but not clean.
+**Comparatively healthiest lane**, and materially cleaner than before.
 
 The runtime package/handoff lane still looks materially better than the trust/full-suite picture:
 - Waves 34–38 are all additive reviewer/handoff ergonomics work
 - they stay confined to runtime drill artifacts and do not destabilize updater/install/rollback semantics
 - the board-PC/service handoff story is substantially more mature and more operator-safe than before
 
-But in the current repo snapshot, the runtime sample is **not 100% green** either.
-The same combined pytest run still shows runtime-lane failures in:
-- `tests/test_runtime_maintenance_closed_loop.py::test_acknowledge_drill_handoff_persists_post_attach_metadata`
-- `tests/test_runtime_maintenance_closed_loop.py::test_reacknowledge_drill_handoff_reuses_stored_ticket_destination`
-- `tests/test_runtime_maintenance_closed_loop.py::test_acknowledgment_history_pattern_marks_latest_as_one_of_multiple_destination_changes`
+The previously failing runtime handoff/history slice has been repaired in this pass and is now green in focused form.
+
+Remaining caution:
+- this improves operator/support handoff correctness and reduces false negatives in the runtime lane
+- it does **not** replace the still-missing real Windows and live Autodarts validation evidence
 
 So the correct readiness phrasing is:
 - runtime lane = **closest to usable / healthiest**
@@ -154,11 +182,21 @@ That is the key “live UI state achieved” point worth preserving in docs:
 
 ## Practical next steps
 
+### What now exists for the real-machine lane
+The repo now has a more formal field-certification surface on top of the existing drill/handoff machinery:
+- `docs/BOARD_PC_CERTIFICATION_RUNBOOK.md`
+- `docs/RC_FIELD_EVIDENCE_CHECKLIST.md`
+- auto-generated per-drill `BOARD_PC_CERTIFICATION.md/.json`
+- auto-generated per-drill `RC_EVIDENCE_CHECKLIST.md/.json`
+
+That means the missing work is less "invent a process" and more "execute the process on a real Windows/Autodarts machine and attach the evidence honestly".
+
+
 ### Do next
 1. **Do not resume random wave work just because one slice is green.**
 2. Keep the next step practical:
    - validate / finish the board-PC closed-loop drill path
-   - reconcile remaining runtime-lane failures and real operator flow gaps
+   - spend effort on remaining real operator/runtime gaps, not on collection-noise cleanup that is already handled
 3. Treat the green central/trust slice as a maintained contract:
    - keep it green while changing adjacent central surfaces
    - update tests/docs together when contracts intentionally move
@@ -166,8 +204,9 @@ That is the key “live UI state achieved” point worth preserving in docs:
 
 ### Suggested immediate commands
 ```bash
-.venv/bin/python -m pytest tests/test_runtime_maintenance_closed_loop.py -q -vv
 .venv/bin/python -m pytest tests/test_device_trust.py backend/tests/test_central_security_hardening.py -q -vv
+.venv/bin/python -m pytest tests/test_runtime_maintenance_closed_loop.py -q -vv
+.venv/bin/python -m pytest -q
 ```
 
 ## Bottom line
@@ -176,6 +215,7 @@ Use this wording in future handoffs unless the repo state changes materially:
 - **Wave mode should remain disciplined, not opportunistic.**
 - **The focused central/trust slice is green.**
 - **The full repo should still not be described as broadly green without qualification.**
-- **Runtime lane is comparatively healthy, but not clean.**
+- **Runtime lane is comparatively healthy and the handoff/history slice is now green, but real-machine evidence is still missing.**
+- **Integration/env-dependent request suites are now clearly gated instead of failing default collection.**
 - **Live kiosk/UI state is materially improved and explicit.**
 - **Next work is practical validation + broader cluster reconciliation, not decorative progress narration.**

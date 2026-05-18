@@ -7,6 +7,7 @@ local runtime auth path.
 """
 
 from __future__ import annotations
+from .signing_helpers import _load_signing_registry_overrides, get_signing_key_registry
 
 import base64
 import binascii

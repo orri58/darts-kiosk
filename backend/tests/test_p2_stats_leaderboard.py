@@ -13,10 +13,12 @@ import requests
 import os
 from datetime import datetime
 
+pytestmark = pytest.mark.integration
+
 # Get BASE_URL from environment - must be set
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL')
 if not BASE_URL:
-    raise ValueError("REACT_APP_BACKEND_URL environment variable is required")
+    pytest.skip("REACT_APP_BACKEND_URL environment variable is required", allow_module_level=True)
 BASE_URL = BASE_URL.rstrip('/')
 API = f"{BASE_URL}/api"
 

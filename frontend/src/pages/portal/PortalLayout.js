@@ -1,91 +1,63 @@
-import { Outlet, NavLink, Navigate } from "react-router-dom";
-import { useCentralAuth } from "../../context/CentralAuthContext";
-import { Button } from "../../components/ui/button";
-import { Monitor, LogOut, LayoutDashboard, KeyRound } from "lucide-react";
+import { useState } from 'react';
+import { Outlet, Navigate } from 'react-router-dom';
+import { useCentralAuth } from '../../context/CentralAuthContext';
+import { Monitor, LayoutDashboard, KeyRound, Building2, MapPin, Users, Shield, LogOut } from 'lucide-react';
+import ProductShell, { SurfaceBadge } from '../../components/shell/ProductShell';
 
 export default function PortalLayout() {
   const { isAuthenticated, user, logout } = useCentralAuth();
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   if (!isAuthenticated) {
     return <Navigate to="/portal/login" replace />;
   }
 
   return (
-    <div className="min-h-screen flex" style={{ background: "#0a0a0f" }} data-testid="portal-layout">
-      {/* Sidebar */}
-      <aside className="w-56 border-r border-zinc-800 flex flex-col bg-zinc-900/50">
-        <div className="p-4 border-b border-zinc-800">
-          <h2 className="text-base font-semibold text-zinc-100">Central Portal</h2>
-          <span className="text-xs text-amber-500/80">Layer A — Read-Only</span>
-        </div>
-
-        <nav className="flex-1 p-3 space-y-1">
-          <NavLink
-            to="/portal"
-            end
-            className={({ isActive }) =>
-              `flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors ${
-                isActive
-                  ? "bg-zinc-800 text-zinc-100"
-                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
-              }`
-            }
-            data-testid="portal-nav-dashboard"
-          >
-            <LayoutDashboard size={16} />
-            Dashboard
-          </NavLink>
-          <NavLink
-            to="/portal/devices"
-            className={({ isActive }) =>
-              `flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors ${
-                isActive
-                  ? "bg-zinc-800 text-zinc-100"
-                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
-              }`
-            }
-            data-testid="portal-nav-devices"
-          >
-            <Monitor size={16} />
-            Geraete
-          </NavLink>
-          <NavLink
-            to="/portal/licenses"
-            className={({ isActive }) =>
-              `flex items-center gap-2 px-3 py-2 rounded text-sm transition-colors ${
-                isActive
-                  ? "bg-zinc-800 text-zinc-100"
-                  : "text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50"
-              }`
-            }
-            data-testid="portal-nav-licenses"
-          >
-            <KeyRound size={16} />
-            Lizenzen
-          </NavLink>
-        </nav>
-
-        <div className="p-3 border-t border-zinc-800">
-          <div className="text-xs text-zinc-500 mb-2 truncate">
-            {user?.display_name || user?.username || "Portal"}
+    <ProductShell
+      testId="portal-layout"
+      sidebarOpen={sidebarOpen}
+      setSidebarOpen={setSidebarOpen}
+      mobileTitle="Partner Portal"
+      mobileSubtitle="Read-only surface"
+      brandEyebrow="Darts Control"
+      brandTitle="Partner Portal"
+      sidebarBadge={<SurfaceBadge tone="amber">Read-only</SurfaceBadge>}
+      sidebarHint="Gleiche Informationsarchitektur wie Operator — aber bewusst ohne Steuerflächen oder riskante Aktionen."
+      navSections={[
+        {
+          label: 'Portal',
+          items: [
+            { path: '/portal', icon: LayoutDashboard, label: 'Übersicht', tid: 'portal-nav-dashboard', exact: true, description: 'Portfolio, Geräte, Status' },
+            { path: '/portal/customers', icon: Building2, label: 'Kunden', tid: 'portal-nav-customers', description: 'Nur Lesesicht' },
+            { path: '/portal/locations', icon: MapPin, label: 'Standorte', tid: 'portal-nav-locations', description: 'Scope ohne Eingriff' },
+            { path: '/portal/devices', icon: Monitor, label: 'Geräte', tid: 'portal-nav-devices', description: 'Heartbeat und Bindings' },
+            { path: '/portal/licenses', icon: KeyRound, label: 'Lizenzen', tid: 'portal-nav-licenses', description: 'Renewal und Capacity' },
+            { path: '/portal/users', icon: Users, label: 'Benutzer', tid: 'portal-nav-users', description: 'Zugänge im Blick' },
+          ],
+        },
+      ]}
+      footer={
+        <div className="rounded-2xl border border-[rgb(var(--color-border-rgb)/0.78)] bg-[rgb(var(--color-surface-rgb)/0.74)] p-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[rgb(var(--color-bg-rgb)/0.5)] text-amber-300">
+              <Shield className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium text-white">{user?.display_name || user?.username || 'Portal'}</p>
+              <p className="truncate text-xs uppercase tracking-[0.2em] text-zinc-500">Read-only access</p>
+            </div>
           </div>
-          <Button
+          <button
             data-testid="portal-logout-btn"
-            variant="ghost"
-            size="sm"
-            className="w-full text-zinc-400 hover:text-zinc-100"
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-[rgb(var(--color-border-rgb)/0.8)] bg-[rgb(var(--color-bg-rgb)/0.5)] px-4 py-2.5 text-sm text-zinc-300 transition hover:border-[rgb(var(--color-accent-rgb)/0.3)] hover:bg-[rgb(var(--color-accent-rgb)/0.12)] hover:text-[var(--color-accent)]"
             onClick={logout}
           >
-            <LogOut size={14} className="mr-2" />
-            Abmelden
-          </Button>
+            <LogOut className="h-4 w-4" /> Abmelden
+          </button>
         </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto p-6">
-        <Outlet />
-      </main>
-    </div>
+      }
+    >
+      <Outlet />
+    </ProductShell>
   );
 }

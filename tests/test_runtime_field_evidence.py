@@ -164,6 +164,8 @@ def test_build_support_bundle_collects_field_artifacts_and_logs(tmp_path: Path) 
         assert "rollback_manifest.json" in archived
         assert "last_updater_run.json" in archived
         assert "logs/update.log" in archived
+        assert any(name.endswith("/BOARD_PC_CERTIFICATION.md") for name in archived)
+        assert any(name.endswith("/RC_EVIDENCE_CHECKLIST.md") for name in archived)
         summary = json.loads(zf.read("bundle_summary.json").decode("utf-8"))
         assert summary["drill_context"]["device_id"] == "BOARD-17"
         assert summary["drill_context"]["service_ticket"] == "TICKET-2048"
@@ -306,12 +308,25 @@ def test_initialize_drill_workspace_creates_checklist_and_leg_paths(tmp_path: Pa
     checklist_md = Path(workspace["checklist_md"])
     handoff_json = checklist_json.parent / "DRILL_HANDOFF.json"
     handoff_md = checklist_json.parent / "DRILL_HANDOFF.md"
+    certification_json = checklist_json.parent / "BOARD_PC_CERTIFICATION.json"
+    certification_md = checklist_json.parent / "BOARD_PC_CERTIFICATION.md"
+    rc_json = checklist_json.parent / "RC_EVIDENCE_CHECKLIST.json"
+    rc_md = checklist_json.parent / "RC_EVIDENCE_CHECKLIST.md"
     assert checklist_json.exists()
     assert checklist_md.exists()
     assert handoff_json.exists()
     assert handoff_md.exists()
+    assert certification_json.exists()
+    assert certification_md.exists()
+    assert rc_json.exists()
+    assert rc_md.exists()
     data = json.loads(checklist_json.read_text(encoding="utf-8"))
     assert data["drill_context"]["device_id"] == "BOARD-17"
+    certification = json.loads(certification_json.read_text(encoding="utf-8"))
+    assert certification["drill_context"]["device_id"] == "BOARD-17"
+    assert any(item["name"] == "windows_boot_and_autostart" for item in certification["checks"])
+    rc_checklist = json.loads(rc_json.read_text(encoding="utf-8"))
+    assert any(item["name"] == "real_windows_execution_required" for item in rc_checklist["items"])
     step_names = {item["name"] for item in data["steps"]}
     assert "update_before_capture" in step_names
     assert "rollback_after_capture" in step_names

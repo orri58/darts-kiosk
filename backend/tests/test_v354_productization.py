@@ -12,8 +12,11 @@ import os
 import pytest
 import requests
 
+pytestmark = pytest.mark.integration
+
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
-assert BASE_URL, "REACT_APP_BACKEND_URL must be set"
+if not BASE_URL:
+    pytest.skip("REACT_APP_BACKEND_URL must be set", allow_module_level=True)
 
 
 @pytest.fixture(scope="module")

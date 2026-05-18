@@ -1,10 +1,13 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useCentralAuth } from '../../context/CentralAuthContext';
 import { useCentralData } from '../../hooks/useCentralData';
-import { MapPin, Plus, Edit2, Ban, CheckCircle, AlertTriangle, X } from 'lucide-react';
+import { MapPin, Plus, Edit2, Ban, CheckCircle, Building2, Archive } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import { toast } from 'sonner';
 import axios from 'axios';
+import { ProductPageHeader, ProductSection, ProductStatCard, SurfaceBadge } from '../../components/shell/ProductShell';
+import { ProductPageState, ProductDataTable } from '../../components/shell/ProductDataDisplay';
+import { ProductDetailCard, ProductInlineActions } from '../../components/shell/ProductDetail';
 
 export default function OperatorLocations() {
   const { apiBase, authHeaders, canManage } = useCentralAuth();
@@ -51,95 +54,126 @@ export default function OperatorLocations() {
   };
 
   const customerMap = Object.fromEntries((customers || []).map(c => [c.id, c.name]));
+  const list = useMemo(() => locations || [], [locations]);
+  const metrics = useMemo(() => ({
+    total: list.length,
+    active: list.filter((loc) => loc.status === 'active').length,
+    archived: list.filter((loc) => loc.status !== 'active').length,
+    linkedCustomers: new Set(list.map((loc) => loc.customer_id).filter(Boolean)).size,
+  }), [list]);
 
-  if (loading) return <div className="flex justify-center py-12"><div className="w-8 h-8 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin" /></div>;
-  if (error) return <div className="text-center py-12 text-red-400"><AlertTriangle className="w-8 h-8 mx-auto mb-2" /><p>{error}</p></div>;
+  if (loading) return <ProductPageState kind="loading" title="Standorte werden geladen" description="Scope, Kundenbezug und Betriebsstatus werden vorbereitet." data-testid="operator-locations-loading" />;
+  if (error) return <ProductPageState kind="error" title="Standorte konnten nicht geladen werden" description={error} data-testid="operator-locations-error" />;
 
   return (
-    <div className="space-y-5" data-testid="operator-locations">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-white">Standorte</h1>
-          <p className="text-sm text-zinc-500 mt-0.5">{locations?.length || 0} Standorte</p>
-        </div>
-        {canManage && (
-          <Button onClick={() => { resetForm(); setShowForm(true); }} className="bg-indigo-600 hover:bg-indigo-500 text-sm" data-testid="create-location-btn">
-            <Plus className="w-4 h-4 mr-1.5" /> Neuer Standort
-          </Button>
-        )}
+    <div className="space-y-6" data-testid="operator-locations">
+      <ProductPageHeader
+        eyebrow="Operator control surface"
+        title="Standorte"
+        badge={<SurfaceBadge tone="emerald">Deployment scope</SurfaceBadge>}
+        description="Standortführung im selben UI-System wie Fleet und Commercial-Flows — mit sauberem Scope-Bezug statt alter Tabelleninsel."
+        actions={
+          canManage ? (
+            <Button onClick={() => { resetForm(); setShowForm(true); }} className="bg-indigo-600 hover:bg-indigo-500 text-sm" data-testid="create-location-btn">
+              <Plus className="w-4 h-4 mr-1.5" /> Neuer Standort
+            </Button>
+          ) : null
+        }
+      />
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <ProductStatCard icon={MapPin} label="Standorte gesamt" value={metrics.total} hint="Im aktuellen Operator-Scope" data-testid="operator-locations-total" />
+        <ProductStatCard icon={CheckCircle} label="Aktiv" value={metrics.active} hint="Aktiv im Portfolio" tone={metrics.active > 0 ? 'emerald' : 'default'} data-testid="operator-locations-active" />
+        <ProductStatCard icon={Archive} label="Archiviert" value={metrics.archived} hint="Nicht aktiv im Betrieb" tone={metrics.archived > 0 ? 'amber' : 'default'} data-testid="operator-locations-archived" />
+        <ProductStatCard icon={Building2} label="Kunden verknüpft" value={metrics.linkedCustomers} hint="Distinct Customer Scope" tone="blue" data-testid="operator-locations-customers" />
       </div>
 
-      <div className="rounded-xl border border-zinc-800 overflow-hidden">
-        <table className="w-full text-sm" data-testid="locations-table">
-          <thead>
-            <tr className="bg-zinc-900/50 text-zinc-400 text-left">
-              <th className="px-4 py-2.5 font-medium">Standort</th>
-              <th className="px-4 py-2.5 font-medium">Kunde</th>
-              <th className="px-4 py-2.5 font-medium">Adresse</th>
-              <th className="px-4 py-2.5 font-medium">Status</th>
-              {canManage && <th className="px-4 py-2.5 font-medium text-right">Aktionen</th>}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-zinc-800/50">
-            {(locations || []).map(loc => (
-              <tr key={loc.id} className="text-zinc-300 hover:bg-zinc-900/30">
-                <td className="px-4 py-2.5 font-medium">{loc.name}</td>
-                <td className="px-4 py-2.5 text-zinc-400">{customerMap[loc.customer_id] || loc.customer_id?.slice(0, 8)}</td>
-                <td className="px-4 py-2.5 text-zinc-400">{loc.address || '—'}</td>
-                <td className="px-4 py-2.5">
-                  <span className={`text-xs px-2 py-0.5 rounded-full ${loc.status === 'active' ? 'bg-emerald-500/10 text-emerald-400' : 'bg-zinc-500/10 text-zinc-400'}`}>
-                    {loc.status === 'active' ? 'Aktiv' : 'Archiviert'}
-                  </span>
-                </td>
-                {canManage && (
-                  <td className="px-4 py-2.5 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <button onClick={() => handleEdit(loc)} className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-white" data-testid={`edit-location-${loc.id}`}>
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => handleToggle(loc)} className="p-1.5 rounded-md hover:bg-zinc-800 text-zinc-400 hover:text-white" data-testid={`toggle-location-${loc.id}`}>
-                        {loc.status === 'active' ? <Ban className="w-3.5 h-3.5" /> : <CheckCircle className="w-3.5 h-3.5" />}
-                      </button>
+      <ProductSection
+        eyebrow="Deployment map"
+        title="Standortliste"
+        description="Kunde, Adresse und Status in einer gemeinsamen Operator-Tabelle."
+        actions={<ProductInlineActions mode="operator" items={[{ label: 'Aktualisieren', onClick: refetch, className: 'border-zinc-700 text-zinc-300 hover:bg-zinc-800' }]} />}
+      >
+        <div className="p-4">
+          {list.length === 0 ? (
+            <ProductPageState kind="empty" compact title="Keine Standorte im Scope" description="Sobald Standorte angelegt oder sichtbar sind, landen sie hier mit Kundenbezug und Status." data-testid="operator-locations-empty" />
+          ) : (
+            <ProductDataTable
+              columns={[
+                { key: 'location', label: 'Standort' },
+                { key: 'customer', label: 'Kunde' },
+                { key: 'address', label: 'Adresse' },
+                { key: 'status', label: 'Status' },
+                ...(canManage ? [{ key: 'actions', label: 'Aktionen', className: 'text-right' }] : []),
+              ]}
+              data-testid="locations-table"
+            >
+              {list.map((loc) => (
+                <tr key={loc.id} className="text-zinc-300 hover:bg-zinc-900/30">
+                  <td className="px-4 py-3">
+                    <div>
+                      <p className="font-medium text-white">{loc.name}</p>
+                      <p className="mt-1 font-mono text-[11px] text-zinc-500">{loc.id}</p>
                     </div>
                   </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+                  <td className="px-4 py-3 text-zinc-400">{customerMap[loc.customer_id] || loc.customer_id?.slice(0, 8) || '—'}</td>
+                  <td className="px-4 py-3 text-zinc-400">{loc.address || '—'}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs ${loc.status === 'active' ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400' : 'border-zinc-500/20 bg-zinc-500/10 text-zinc-400'}`}>
+                      {loc.status === 'active' ? 'Aktiv' : 'Archiviert'}
+                    </span>
+                  </td>
+                  {canManage ? (
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button onClick={() => handleEdit(loc)} className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white" data-testid={`edit-location-${loc.id}`}>
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button onClick={() => handleToggle(loc)} className="rounded-md p-1.5 text-zinc-400 hover:bg-zinc-800 hover:text-white" data-testid={`toggle-location-${loc.id}`}>
+                          {loc.status === 'active' ? <Ban className="w-3.5 h-3.5" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </td>
+                  ) : null}
+                </tr>
+              ))}
+            </ProductDataTable>
+          )}
+        </div>
+      </ProductSection>
 
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60" data-testid="location-form-modal">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-5 w-full max-w-md">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-base font-semibold text-white">{editItem ? 'Standort bearbeiten' : 'Neuer Standort'}</h2>
-              <button onClick={resetForm} className="text-zinc-400 hover:text-white"><X className="w-5 h-5" /></button>
-            </div>
-            <form onSubmit={handleSubmit} className="space-y-3">
-              {!editItem && (
+          <ProductDetailCard title={editItem ? 'Standort bearbeiten' : 'Neuer Standort'} eyebrow="Operator action" description="Scope, Kunde und Stammdaten ohne UI-Sonderweg pflegen.">
+            <div className="w-full max-w-md">
+              <div className="mb-4 flex items-center justify-end">
+                <button onClick={resetForm} className="text-zinc-400 hover:text-white"><span className="sr-only">Schließen</span>×</button>
+              </div>
+              <form onSubmit={handleSubmit} className="space-y-3">
+                {!editItem && (
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-400">Kunde</label>
+                    <select value={form.customer_id} onChange={e => setForm(f => ({ ...f, customer_id: e.target.value }))} className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white" required data-testid="location-form-customer">
+                      <option value="">Bitte wählen</option>
+                      {(customers || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div>
-                  <label className="block text-xs text-zinc-400 mb-1">Kunde</label>
-                  <select value={form.customer_id} onChange={e => setForm(f => ({ ...f, customer_id: e.target.value }))} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white" required data-testid="location-form-customer">
-                    <option value="">Bitte wählen</option>
-                    {(customers || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
+                  <label className="mb-1 block text-xs text-zinc-400">Name</label>
+                  <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white" required data-testid="location-form-name" />
                 </div>
-              )}
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Name</label>
-                <input type="text" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white" required data-testid="location-form-name" />
-              </div>
-              <div>
-                <label className="block text-xs text-zinc-400 mb-1">Adresse</label>
-                <input type="text" value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} className="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white" data-testid="location-form-address" />
-              </div>
-              <div className="flex gap-2 pt-2">
-                <Button type="submit" className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-sm" data-testid="location-form-submit">{editItem ? 'Speichern' : 'Erstellen'}</Button>
-                <Button type="button" variant="outline" onClick={resetForm} className="text-sm border-zinc-700 text-zinc-400">Abbrechen</Button>
-              </div>
-            </form>
-          </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-400">Adresse</label>
+                  <input type="text" value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-white" data-testid="location-form-address" />
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <Button type="submit" className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-sm" data-testid="location-form-submit">{editItem ? 'Speichern' : 'Erstellen'}</Button>
+                  <Button type="button" variant="outline" onClick={resetForm} className="border-zinc-700 text-sm text-zinc-400">Abbrechen</Button>
+                </div>
+              </form>
+            </div>
+          </ProductDetailCard>
         </div>
       )}
     </div>

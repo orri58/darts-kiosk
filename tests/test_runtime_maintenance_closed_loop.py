@@ -27,9 +27,17 @@ def _build_runtime_root(root: Path, version: str = "4.4.3") -> None:
         "app/frontend/build/index.html",
         "app/agent/darts_agent.py",
         "app/bin/runtime_maintenance.py",
+        "app/bin/setup_runtime.bat",
+        "app/bin/start_runtime.bat",
+        "app/bin/smoke_test_runtime.bat",
+        "app/bin/update_runtime.bat",
+        "app/bin/capture_field_evidence.bat",
+        "app/bin/capture_board_pc_postflight.bat",
+        "app/bin/finalize_drill_handoff.bat",
         "config/backend.env.example",
         "config/frontend.env.example",
         "data/.keep",
+        "app/.venv/Scripts/activate.bat",
     ]:
         _write(root / rel)
     _write(root / "config/VERSION", version)
@@ -95,6 +103,18 @@ def test_paired_summary_can_live_inside_wave13_drill_folder(tmp_path: Path) -> N
     root = tmp_path / "runtime"
     _build_runtime_root(root)
     workspace = runtime_maintenance.initialize_drill_workspace(root, label="board-pc-drill")
+    runtime_maintenance.collect_board_pc_preflight(root, label="board-pc-drill", expected_version="4.4.3")
+    runtime_maintenance.collect_board_pc_postflight(
+        root,
+        label="board-pc-drill",
+        overall_status="pass",
+        boot_status="pass",
+        admin_health_status="pass",
+        session_status="pass",
+        update_leg_status="pass",
+        rollback_leg_status="pass",
+        reopen_status="pass",
+    )
 
     update_leg_path = Path(workspace["workspace"]["update_leg_summary"])
     rollback_leg_path = Path(workspace["workspace"]["rollback_leg_summary"])
@@ -138,6 +158,10 @@ def test_paired_summary_can_live_inside_wave13_drill_folder(tmp_path: Path) -> N
     with zipfile.ZipFile(bundle["bundle_path"]) as zf:
         names = set(zf.namelist())
         assert "support/drills/board-pc-drill/DRILL_CHECKLIST.md" in names
+        assert "support/drills/board-pc-drill/BOARD_PC_PREFLIGHT.json" in names
+        assert "support/drills/board-pc-drill/BOARD_PC_PREFLIGHT.md" in names
+        assert "support/drills/board-pc-drill/BOARD_PC_POSTFLIGHT.json" in names
+        assert "support/drills/board-pc-drill/BOARD_PC_POSTFLIGHT.md" in names
         assert "support/drills/board-pc-drill/DRILL_HANDOFF.json" in names
         assert "support/drills/board-pc-drill/DRILL_TICKET_COMMENT.txt" in names
         assert "support/drills/board-pc-drill/DRILL_TICKET_COMMENT.md" in names
@@ -243,6 +267,84 @@ def test_refresh_drill_workspace_emits_ticket_comment_exports(tmp_path: Path) ->
     assert ticket_json["attachment_readiness"]["ready_to_attach"] is True
     assert any(item["key"] == "handoff_manifest_md" for item in ticket_json["attachment_readiness"]["attach_now"])
     assert ticket_json["attachment_readiness"]["missing_required"] == []
+
+
+def test_collect_board_pc_preflight_writes_artifacts_and_repo_status(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    _build_runtime_root(root)
+    runtime_maintenance.initialize_drill_workspace(root, label="board-pc-drill", device_id="BOARD-17", operator="orri")
+
+    payload = runtime_maintenance.collect_board_pc_preflight(
+        root,
+        label="board-pc-drill",
+        device_id="BOARD-17",
+        operator="orri",
+        service_ticket="TICKET-2048",
+        expected_version="4.4.3",
+    )
+
+    preflight_json = root / "data" / "support" / "drills" / "board-pc-drill" / "BOARD_PC_PREFLIGHT.json"
+    preflight_md = root / "data" / "support" / "drills" / "board-pc-drill" / "BOARD_PC_PREFLIGHT.md"
+    assert preflight_json.exists()
+    assert preflight_md.exists()
+    assert payload["repo_preflight_ok"] is True
+    assert payload["version_matches_expected"] is True
+    assert payload["drill_context"]["device_id"] == "BOARD-17"
+    assert any(item["name"] == "runtime_entrypoints_present" and item["ok"] for item in payload["repo_checks"])
+
+    certification = json.loads((root / "data" / "support" / "drills" / "board-pc-drill" / "BOARD_PC_CERTIFICATION.json").read_text(encoding="utf-8"))
+    assert any(item["name"] == "board_pc_preflight_captured" and item["status"] == "pass" for item in certification["checks"])
+    rc_checklist = json.loads((root / "data" / "support" / "drills" / "board-pc-drill" / "RC_EVIDENCE_CHECKLIST.json").read_text(encoding="utf-8"))
+    assert any(item["name"] == "board_pc_preflight_present" and item["status"] == "pass" for item in rc_checklist["items"])
+
+
+def test_collect_board_pc_postflight_writes_outcome_and_refreshes_certification(tmp_path: Path) -> None:
+    root = tmp_path / "runtime"
+    _build_runtime_root(root)
+    runtime_maintenance.initialize_drill_workspace(root, label="board-pc-drill", device_id="BOARD-17", operator="orri")
+    runtime_maintenance.collect_board_pc_preflight(
+        root,
+        label="board-pc-drill",
+        device_id="BOARD-17",
+        operator="orri",
+        service_ticket="TICKET-2048",
+        expected_version="4.4.3",
+    )
+
+    payload = runtime_maintenance.collect_board_pc_postflight(
+        root,
+        label="board-pc-drill",
+        device_id="BOARD-17",
+        operator="orri",
+        service_ticket="TICKET-2048",
+        tested_by="orri",
+        venue_or_machine="board-pc-17",
+        windows_build="win11-23h2",
+        autodarts_account="venue@example.com",
+        overall_status="pass",
+        boot_status="pass",
+        admin_health_status="pass",
+        session_status="pass",
+        update_leg_status="pass",
+        rollback_leg_status="pass",
+        reopen_status="pass",
+        notes="Real board run looked clean.",
+    )
+
+    postflight_json = root / "data" / "support" / "drills" / "board-pc-drill" / "BOARD_PC_POSTFLIGHT.json"
+    postflight_md = root / "data" / "support" / "drills" / "board-pc-drill" / "BOARD_PC_POSTFLIGHT.md"
+    assert postflight_json.exists()
+    assert postflight_md.exists()
+    assert payload["preflight_present"] is True
+    assert payload["overall_status"] == "pass"
+    assert payload["machine_summary"]["all_passed"] is True
+    assert payload["boundary_matches_preflight"] is True
+    certification = json.loads((root / "data" / "support" / "drills" / "board-pc-drill" / "BOARD_PC_CERTIFICATION.json").read_text(encoding="utf-8"))
+    assert any(item["name"] == "board_pc_postflight_captured" and item["status"] == "pass" for item in certification["checks"])
+    assert any(item["name"] == "machine_checks_all_passed" and item["status"] == "pass" for item in certification["checks"])
+    assert certification["operator_signoff"]["tested_by"] == "orri"
+    rc_checklist = json.loads((root / "data" / "support" / "drills" / "board-pc-drill" / "RC_EVIDENCE_CHECKLIST.json").read_text(encoding="utf-8"))
+    assert any(item["name"] == "board_pc_postflight_present" and item["status"] == "pass" for item in rc_checklist["items"])
 
 
 def test_finalize_drill_handoff_refreshes_final_artifacts_and_paths(tmp_path: Path) -> None:

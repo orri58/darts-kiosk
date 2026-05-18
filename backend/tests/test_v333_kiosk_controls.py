@@ -7,9 +7,11 @@ import pytest
 import requests
 import os
 
+pytestmark = pytest.mark.integration
+
 BASE_URL = os.environ.get('REACT_APP_BACKEND_URL', '').rstrip('/')
 if not BASE_URL:
-    raise RuntimeError("REACT_APP_BACKEND_URL not set")
+    pytest.skip("REACT_APP_BACKEND_URL not set", allow_module_level=True)
 
 
 class TestKioskControlsAuth:
