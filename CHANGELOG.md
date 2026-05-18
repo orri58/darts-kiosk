@@ -1,3 +1,18 @@
+## [4.5.0] - 2026-05-18
+
+### Changed
+- Consolidated a large local working set into a real release instead of leaving major central, operator, portal, and field-readiness work unreleased.
+- Refactored the central control plane heavily: remote actions, trust readbacks/enrollment, config profiles/effective config, licensing token flows, admin CRUD, device detail/readback, websocket status/handshake, and related telemetry/helper seams are now split out of the old monolith into dedicated route/service modules.
+- Unified the product shell, page/data system, detail/dashboard system, fleet/device surfaces, and commercial/license drill-in flows across admin, operator, and portal so the product behaves much more like one coherent family.
+- Added board-PC preflight/postflight evidence capture, certification exports, RC evidence artifacts, and support-bundle inclusion to make real Windows/board-PC validation auditable and repeatable.
+- Added the new admin unlock option to free a board without credits/time and keep it manually unlocked until staff lock it again.
+
+### Validation
+- Focused central security, trust, runtime maintenance, field evidence, and manual-unlock backend suites passed locally.
+- Focused operator frontend test passed.
+- Frontend production build passed.
+- Release artifacts rebuilt for `v4.5.0`.
+
 # Changelog
 
 All notable changes to Darts Kiosk are documented here.

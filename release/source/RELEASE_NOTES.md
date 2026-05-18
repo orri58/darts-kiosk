@@ -1,81 +1,36 @@
-# Darts Kiosk — Release Notes v4.4.21
+# Darts Kiosk — Release Notes v4.5.0
 
-## Full follow-up release after the too-narrow 4.4.20 cut
+## A real consolidated release
 
-`v4.4.20` only shipped the manual-unlock slice. This release packages the broader coherent work that was still sitting in the local tree.
+This release rolls up the larger local product, control-plane, and field-readiness work that was still sitting outside the previous narrower cut.
 
-## What is included
+## What changed
 
-### 1. Central server modularization actually ships
-The central server is no longer effectively a giant single-file change waiting in the wings.
+### 1. Central control plane is structurally cleaner
+A large portion of the old `central_server/server.py` monolith has been split into dedicated route and service seams for remote actions, trust, config, licensing token flows, admin CRUD, websocket status/device handshake, device details, and telemetry helpers.
 
-This release includes the extracted route/service layout for:
-- config profiles
-- effective device config
-- device detail reads
-- device remote actions
-- trust enrollment and trust/detail shaping
-- licensing token flows
-- websocket/device status helpers
-- shared audit/auth helpers
+### 2. Admin / Operator / Portal behave more like one product family
+Shared shell, data/page, detail/dashboard, fleet, and device/commercial drill-in primitives now drive much more of the visible product surface, reducing the old generation gaps between admin, operator, and portal.
 
-That means the broader central control-plane work is now part of the release instead of being stranded locally.
+### 3. Field-readiness evidence is stronger
+Board-PC validation now has explicit preflight and postflight capture, certification exports, RC evidence artifacts, and support-bundle inclusion so real machine runs are easier to execute, review, and compare.
 
-### 2. Operator and portal surfaces got the broader product-shell refresh
-A new shared product-shell layer now backs the main operator/portal experience, and the updated release includes the broader pending UI work across:
-- operator dashboard, licenses, devices, customers, locations, users, audit, and layout
-- portal dashboard, devices, layouts, and license/device detail flows
-- shared product data/detail/system display primitives
-
-The result is a more coherent operational/commercial surface instead of the narrower one-feature 4.4.20 cut.
-
-### 3. Runtime field-handoff/certification tooling is included
-This release also includes the pending runtime-support lane work:
-- board-PC certification runbook
-- RC field-evidence checklist
-- Windows preflight/postflight capture scripts
-- runtime maintenance/readiness documentation improvements
-- closed-loop runtime evidence test coverage already present in the tree
-
-## Release-prep fixes folded into this cut
-
-During release validation two real issues were repaired:
-- pending device remote actions now evaluate TTL against the injected validation clock, avoiding false expiry in deterministic runs
-- session pricing restored compatibility with the older manual-unlock regression contract used by the repo’s legacy test lane
+### 4. Manual unlock without credits
+Admins can now unlock a board without credits or time as a dedicated option. The board stays manually unlocked until staff lock it again, and the kiosk surfaces show that mode correctly.
 
 ## Validation performed
 
 Executed successfully:
 
 ```bash
-.venv/bin/python -m pytest -q \
-  tests/test_device_remote_action_service.py \
-  tests/test_device_remote_action_router_structure.py \
-  tests/test_remote_action_service_summary.py \
-  tests/test_remote_action_router_structure.py \
-  backend/tests/test_central_security_hardening.py \
-  tests/test_device_trust.py \
-  tests/test_config_profiles_service.py \
-  tests/test_effective_config_service.py \
-  tests/test_licensing_token_service.py \
-  tests/test_device_detail_service.py \
-  tests/test_device_trust_detail_service.py \
-  tests/test_device_trust_enrollment_service.py \
-  tests/test_ws_status_service.py \
-  tests/test_runtime_field_evidence.py \
-  tests/test_runtime_maintenance_closed_loop.py
-
-.venv/bin/python -m pytest -q backend/tests/test_manual_unlock_pricing.py
-.venv/bin/python -m compileall central_server release/runtime_windows
+.venv/bin/python -m pytest -q backend/tests/test_central_security_hardening.py tests/test_device_trust.py tests/test_runtime_field_evidence.py tests/test_runtime_maintenance_closed_loop.py backend/tests/test_manual_unlock_pricing.py
+cd frontend && CI=true npm test -- --runInBand --watchAll=false --runTestsByPath src/pages/operator/operatorCommercialFlow.test.js
 cd frontend && npm run build
+bash release/build_release.sh
 ```
 
 Observed result:
-- focused central/runtime regression suite passed: **166 passed**
-- manual-unlock compatibility suite passed: **2 passed**
-- compile sanity passed for `central_server` and `release/runtime_windows`
+- focused backend security/trust/runtime/manual-unlock suites passed
+- focused frontend operator flow test passed
 - frontend production build passed
-
-Important honesty note:
-- the repo’s broad historical `pytest -q` sweep is still not generally green
-- this release is validated on the strongest realistic focused lanes for the shipped scope, consistent with the repo’s own readiness/testing docs
+- release artifacts were rebuilt for `v4.5.0`
