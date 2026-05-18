@@ -72,6 +72,7 @@ class UnlockRequest(BaseModel):
     minutes: Optional[int] = None
     players_count: int = 0
     price_total: float = 0.0
+    manual_unlock: bool = False
 
 class ExtendRequest(BaseModel):
     credits: Optional[int] = None

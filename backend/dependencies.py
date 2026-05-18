@@ -17,7 +17,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from backend.database import get_db, DATA_DIR
-from backend.models import User, Session, Settings, AuditLog, UserRole, SessionStatus
+from backend.models import User, Session, SessionCharge, Settings, AuditLog, UserRole, SessionStatus
+from backend.services.session_pricing import MANUAL_UNLOCK_SENTINEL
 
 logger = logging.getLogger(__name__)
 
@@ -136,4 +137,16 @@ async def get_active_session_for_board(db: AsyncSession, board_db_id: str) -> Op
         .where(Session.status == SessionStatus.ACTIVE.value)
         .order_by(Session.started_at.desc())
     )
-    return result.scalar_one_or_none()
+    session = result.scalar_one_or_none()
+    if not session:
+        return None
+
+    charge_result = await db.execute(
+        select(SessionCharge.note)
+        .where(SessionCharge.session_id == session.id)
+        .where(SessionCharge.kind == "unlock")
+        .order_by(SessionCharge.created_at.asc())
+    )
+    unlock_notes = [str(note or "") for note in charge_result.scalars().all()]
+    session.manual_unlock = any(MANUAL_UNLOCK_SENTINEL in note for note in unlock_notes)
+    return session

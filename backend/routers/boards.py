@@ -19,7 +19,7 @@ from backend.dependencies import (
 )
 from backend.runtime_features import AUTODARTS_MODE, observer_mode_requires_target, supports_local_pricing_mode
 from backend.services.ws_manager import board_ws
-from backend.services.session_pricing import initial_credit_seed, apply_authoritative_start_charge
+from backend.services.session_pricing import MANUAL_UNLOCK_SENTINEL, initial_credit_seed, apply_authoritative_start_charge
 from backend.routers.kiosk import start_observer_for_board, stop_observer_for_board
 from backend.services.autodarts_observer import observer_manager
 
@@ -238,11 +238,13 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
             detail="Board is not configured for observer mode. Set an Autodarts target URL before unlocking."
         )
 
-    if data.pricing_mode == PricingMode.PER_PLAYER.value and int(data.credits or 0) <= 0:
+    manual_unlock = bool(data.manual_unlock)
+
+    if not manual_unlock and data.pricing_mode == PricingMode.PER_PLAYER.value and int(data.credits or 0) <= 0:
         raise HTTPException(status_code=400, detail="Credits must be greater than zero")
-    if data.pricing_mode == PricingMode.PER_GAME.value and int(data.credits or 0) <= 0:
+    if not manual_unlock and data.pricing_mode == PricingMode.PER_GAME.value and int(data.credits or 0) <= 0:
         raise HTTPException(status_code=400, detail="Credits must be greater than zero")
-    if data.pricing_mode == PricingMode.PER_TIME.value and int(data.minutes or 0) <= 0:
+    if not manual_unlock and data.pricing_mode == PricingMode.PER_TIME.value and int(data.minutes or 0) <= 0:
         raise HTTPException(status_code=400, detail="Minutes must be greater than zero")
 
     existing = await get_active_session_for_board(db, board.id)
@@ -250,12 +252,14 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
         raise HTTPException(status_code=400, detail="Board already has an active session")
 
     expires_at = None
-    if data.pricing_mode == PricingMode.PER_TIME.value and data.minutes:
+    if data.pricing_mode == PricingMode.PER_TIME.value and data.minutes and not manual_unlock:
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=data.minutes)
 
+    seed_credits = 0 if manual_unlock else data.credits
+    seed_minutes = 0 if manual_unlock else int(data.minutes or 0)
     credits_total, credits_remaining = initial_credit_seed(
         data.pricing_mode,
-        data.credits,
+        seed_credits,
         data.players_count,
     )
     player_count_hint = max(0, int(data.players_count or 0)) if data.pricing_mode == PricingMode.PER_PLAYER.value else max(1, int(data.players_count or 1))
@@ -269,7 +273,7 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
         game_type=data.game_type,
         credits_total=credits_total,
         credits_remaining=credits_remaining,
-        minutes_total=data.minutes or 0,
+        minutes_total=seed_minutes,
         price_per_unit=price_per_unit,
         price_total=0.0,
         players_count=player_count_hint,
@@ -277,6 +281,7 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
         unlocked_by_user_id=user.id,
         status=SessionStatus.ACTIVE.value
     )
+    session.manual_unlock = manual_unlock
     db.add(session)
 
     board.status = BoardStatus.UNLOCKED.value
@@ -287,10 +292,10 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
         session=session,
         user=user,
         kind="unlock",
-        amount=float(data.price_total or 0.0),
-        credits_added=credits_total if data.pricing_mode != PricingMode.PER_TIME.value else 0,
-        minutes_added=int(data.minutes or 0) if data.pricing_mode == PricingMode.PER_TIME.value else 0,
-        note=f"Initial unlock for {board_id}",
+        amount=0.0 if manual_unlock else float(data.price_total or 0.0),
+        credits_added=0 if manual_unlock or data.pricing_mode == PricingMode.PER_TIME.value else credits_total,
+        minutes_added=0 if manual_unlock or data.pricing_mode != PricingMode.PER_TIME.value else int(data.minutes or 0),
+        note=(f"{MANUAL_UNLOCK_SENTINEL} Initial unlock for {board_id}" if manual_unlock else f"Initial unlock for {board_id}"),
     )
 
     await log_audit(db, user, "unlock_board", "session", session.id, {
@@ -299,7 +304,8 @@ async def unlock_board(board_id: str, data: UnlockRequest, user: User = Depends(
         "credits": data.credits,
         "minutes": data.minutes,
         "players_count": player_count_hint,
-        "price_total": data.price_total
+        "price_total": 0.0 if manual_unlock else data.price_total,
+        "manual_unlock": manual_unlock,
     })
 
     await board_ws.broadcast("board_status", {"board_id": board_id, "status": "unlocked"})

@@ -1,3 +1,15 @@
+## [4.5.2] - 2026-05-18
+
+### Fixed
+- Added the missing admin-panel option to unlock a board for free (`Kostenlos freischalten`) instead of only allowing credit-based unlocks.
+- Wired the free unlock path through the backend via `manual_unlock`, so free/manual sessions no longer require credits and do not trigger later credit deductions.
+- Preserved manual-unlock detection on active sessions by deriving the flag from the unlock charge note, keeping older sentinel-based pricing logic compatible without a schema migration.
+
+### Validation
+- Manual-unlock backend regression suite passed (`2 passed`): `backend/tests/test_manual_unlock_pricing.py`.
+- Admin dashboard JSX parse sanity passed.
+- Release artifacts rebuilt for `v4.5.2`.
+
 ## [4.5.1] - 2026-05-18
 
 ### Changed

@@ -28,6 +28,7 @@ import {
   DialogTitle,
 } from '../../components/ui/dialog';
 import { Input } from '../../components/ui/input';
+import { Switch } from '../../components/ui/switch';
 import { useSettings } from '../../context/SettingsContext';
 import { useAuth } from '../../context/AuthContext';
 import { useI18n } from '../../context/I18nContext';
@@ -107,6 +108,7 @@ export default function AdminDashboard() {
 
   const [unlockCredits, setUnlockCredits] = useState(3);
   const [unlockMinutes, setUnlockMinutes] = useState(30);
+  const [manualUnlock, setManualUnlock] = useState(false);
 
   const fetchBoards = useCallback(async () => {
     try {
@@ -221,6 +223,7 @@ export default function AdminDashboard() {
   };
 
   const calculatePrice = () => {
+    if (manualUnlock) return 0;
     return unlockCredits * (pricing?.per_game?.price_per_credit || 2.0);
   };
 
@@ -232,15 +235,17 @@ export default function AdminDashboard() {
         `${API}/boards/${selectedBoard.board_id}/unlock`,
         {
           pricing_mode: 'per_player',
-          credits: unlockCredits,
+          credits: manualUnlock ? 0 : unlockCredits,
           players_count: 0,
           price_total: calculatePrice(),
+          manual_unlock: manualUnlock,
         },
         { headers: { Authorization: `Bearer ${token}` } }
       );
 
-      toast.success(`${selectedBoard.name} freigeschaltet`);
+      toast.success(manualUnlock ? `${selectedBoard.name} kostenlos freigeschaltet` : `${selectedBoard.name} freigeschaltet`);
       setShowUnlockDialog(false);
+      setManualUnlock(false);
       fetchBoards();
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Fehler beim Freischalten');
@@ -307,6 +312,7 @@ export default function AdminDashboard() {
   const openUnlockDialog = (board) => {
     setSelectedBoard(board);
     setUnlockCredits(pricing?.per_game?.default_credits || 3);
+    setManualUnlock(false);
     setShowUnlockDialog(true);
   };
 
@@ -455,7 +461,7 @@ export default function AdminDashboard() {
                         onClick={() => openUnlockDialog(board)}
                         className="h-11 rounded-2xl border-[rgb(var(--color-border-rgb)/0.8)] text-[var(--color-text-secondary)] hover:border-[rgb(var(--color-primary-rgb)/0.3)] hover:text-[var(--color-text)]"
                       >
-                        Anpassen
+                        Anpassen / Gratis
                       </Button>
                     ) : (
                       <Button
@@ -546,47 +552,66 @@ export default function AdminDashboard() {
         </div>
       </AdminSection>
 
-      <Dialog open={showUnlockDialog} onOpenChange={setShowUnlockDialog}>
+      <Dialog open={showUnlockDialog} onOpenChange={(open) => {
+        setShowUnlockDialog(open);
+        if (!open) setManualUnlock(false);
+      }}>
         <DialogContent className="border-[rgb(var(--color-border-rgb)/0.88)] bg-[rgb(var(--color-bg-rgb)/0.98)] p-0 text-[var(--color-text)] sm:max-w-xl overflow-hidden">
           <DialogHeader>
             <div className="border-b border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.6)] px-6 py-5">
               <DialogTitle className="font-heading uppercase tracking-[0.12em] text-[var(--color-text)]">
                 {selectedBoard?.name} freischalten
               </DialogTitle>
-              <p className="mt-2 text-sm text-[var(--color-text-secondary)]">Credits drauf, Board offen. Abbuchung kommt später beim echten Matchstart.</p>
+              <p className="mt-2 text-sm text-[var(--color-text-secondary)]">Credits drauf, Board offen. Abbuchung kommt später beim echten Matchstart – oder gratis per Manual-Unlock.</p>
             </div>
           </DialogHeader>
 
           <div className="space-y-5 px-6 py-5">
-            <div className="grid grid-cols-4 gap-2">
-              {[1, 2, 3, 4].map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setUnlockCredits(value)}
-                  className={`h-12 rounded-2xl border text-sm font-semibold transition ${unlockCredits === value ? 'border-[rgb(var(--color-primary-rgb)/0.3)] bg-[rgb(var(--color-primary-rgb)/0.14)] text-[var(--color-primary)]' : 'border-[rgb(var(--color-border-rgb)/0.8)] bg-[rgb(var(--color-surface-rgb)/0.54)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`}
-                >
-                  {value}C
-                </button>
-              ))}
+            <div className="flex items-center justify-between gap-4 rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] p-4">
+              <div>
+                <p className="text-sm font-semibold text-[var(--color-text)]">Kostenlos freischalten</p>
+                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">Board öffnen ohne Credits und ohne spätere Abbuchung.</p>
+              </div>
+              <Switch checked={manualUnlock} onCheckedChange={setManualUnlock} data-testid="manual-unlock-switch" />
             </div>
+
+            {!manualUnlock && (
+              <div className="grid grid-cols-4 gap-2">
+                {[1, 2, 3, 4].map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setUnlockCredits(value)}
+                    className={`h-12 rounded-2xl border text-sm font-semibold transition ${unlockCredits === value ? 'border-[rgb(var(--color-primary-rgb)/0.3)] bg-[rgb(var(--color-primary-rgb)/0.14)] text-[var(--color-primary)]' : 'border-[rgb(var(--color-border-rgb)/0.8)] bg-[rgb(var(--color-surface-rgb)/0.54)] text-[var(--color-text-secondary)] hover:text-[var(--color-text)]'}`}
+                  >
+                    {value}C
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="grid gap-3 sm:grid-cols-[1fr,1fr]">
               <div className="rounded-3xl border border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.62)] p-4">
-                <label className="text-[11px] uppercase tracking-[0.24em] text-[var(--color-text-muted)]">Credits</label>
-                <Input type="number" min="1" value={unlockCredits} onChange={(e) => setUnlockCredits(parseInt(e.target.value || '1', 10))} data-testid="credits-input" className="mt-3 h-12 rounded-2xl border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.54)] text-center text-xl text-[var(--color-text)]" />
+                <label className="text-[11px] uppercase tracking-[0.24em] text-[var(--color-text-muted)]">{manualUnlock ? 'Modus' : 'Credits'}</label>
+                {manualUnlock ? (
+                  <div className="mt-3 flex h-12 items-center justify-center rounded-2xl border border-[rgb(var(--color-primary-rgb)/0.24)] bg-[rgb(var(--color-primary-rgb)/0.12)] text-center text-base font-semibold text-[var(--color-text)]">
+                    Manual Unlock · ohne Credits
+                  </div>
+                ) : (
+                  <Input type="number" min="1" value={unlockCredits} onChange={(e) => setUnlockCredits(parseInt(e.target.value || '1', 10))} data-testid="credits-input" className="mt-3 h-12 rounded-2xl border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-bg-rgb)/0.54)] text-center text-xl text-[var(--color-text)]" />
+                )}
               </div>
               <div className="rounded-3xl border border-[rgb(var(--color-primary-rgb)/0.24)] bg-[rgb(var(--color-primary-rgb)/0.12)] p-4">
                 <label className="text-[11px] uppercase tracking-[0.24em] text-[var(--color-primary)]">Gesamt</label>
                 <p className="mt-3 text-3xl font-semibold text-[var(--color-text)]" data-testid="total-price">{calculatePrice().toFixed(2)} €</p>
-                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{(pricing?.per_game?.price_per_credit || 2).toFixed(2)} € pro Credit</p>
+                <p className="mt-1 text-sm text-[var(--color-text-secondary)]">{manualUnlock ? 'Keine Credits, keine Abbuchung.' : `${(pricing?.per_game?.price_per_credit || 2).toFixed(2)} € pro Credit`}</p>
               </div>
             </div>
           </div>
 
           <DialogFooter className="gap-2 border-t border-[rgb(var(--color-border-rgb)/0.82)] bg-[rgb(var(--color-surface-rgb)/0.42)] px-6 py-4">
-            <Button variant="outline" onClick={() => setShowUnlockDialog(false)} className="rounded-2xl border-[rgb(var(--color-border-rgb)/0.82)] text-[var(--color-text-secondary)]">Abbrechen</Button>
-            <Button onClick={handleUnlock} data-testid="confirm-unlock-btn" className="rounded-2xl bg-[var(--color-primary)] text-[hsl(var(--primary-foreground))] hover:opacity-90">Freischalten</Button>
+            <Button variant="outline" onClick={() => { setShowUnlockDialog(false); setManualUnlock(false); }} className="rounded-2xl border-[rgb(var(--color-border-rgb)/0.82)] text-[var(--color-text-secondary)]">Abbrechen</Button>
+            <Button onClick={handleUnlock} data-testid="confirm-unlock-btn" className="rounded-2xl bg-[var(--color-primary)] text-[hsl(var(--primary-foreground))] hover:opacity-90">{manualUnlock ? 'Kostenlos freischalten' : 'Freischalten'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

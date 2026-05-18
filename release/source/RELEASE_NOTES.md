@@ -1,31 +1,41 @@
-# Darts Kiosk — Release Notes v4.5.1
+# Darts Kiosk — Release Notes v4.5.2
 
-## Canonical updater release
+## Admin-panel free unlock hotfix
 
-This release exists to make the broader current product state available as a single clean latest version for automatic update discovery and installation.
+This release fixes the missing admin-panel path for unlocking a board without credits.
+
+## What changed
+
+Version `v4.5.2` adds a real panel option for free/manual unlocks:
+
+- locked boards now expose `Anpassen / Gratis`
+- the unlock dialog now includes `Kostenlos freischalten`
+- the backend now accepts `manual_unlock`
+- manual unlocks book `0 € / 0 Credits`
+- manual unlock sessions stay exempt from later credit deductions until staff lock the board again
 
 ## Why this release matters
 
-Recent work had already produced the broader central/control-plane, operator/portal product-system, field-readiness, and manual-unlock changes, but the published release line had become confusing for auto-update purposes.
-
-Version `v4.5.1` is the clean canonical release line that should now be used for update checks.
-
-## Included
-- central/control-plane refactor work already landed in the current tree
-- operator/portal/admin product-system and shell/data/detail unification work already landed in the current tree
-- board-PC preflight/postflight/certification evidence lane
-- manual unlock without credits / manual relock support
+The previous release line already carried the underlying manual-unlock pricing logic, but the actual admin-panel control was missing. This release closes that gap so the feature is usable from the shipped Windows package.
 
 ## Validation performed
 
 Executed successfully:
 
 ```bash
-cd frontend && npm run build
+PYTHONPATH=. .venv/bin/pytest backend/tests/test_manual_unlock_pricing.py -q
+cd frontend && node - <<'JS'
+const fs=require('fs');
+const parser=require('@babel/parser');
+const src=fs.readFileSync('src/pages/admin/Dashboard.js','utf8');
+parser.parse(src,{sourceType:'module',plugins:['jsx']});
+console.log('dashboard-parse-ok');
+JS
 bash release/build_release.sh
 ```
 
 Observed result:
-- frontend production build passed
-- release artifacts were rebuilt for `v4.5.1`
-- release assets were published for automatic system update discovery
+- manual-unlock backend regression suite passed
+- admin dashboard JSX parse sanity passed
+- release artifacts rebuilt for `v4.5.2`
+- release assets published for automatic system update discovery
