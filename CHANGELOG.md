@@ -1,3 +1,13 @@
+## [4.5.3] - 2026-05-18
+
+### Fixed
+- Re-rolled the admin-panel free-unlock fix as a fresh updater version so Windows systems can pull the complete backend + frontend change set again via the built-in update flow.
+- Keeps the same free/manual unlock behavior from `v4.5.2`, but under a newer version number to force a clean updater pass on machines that were left in a mixed UI/backend state.
+
+### Validation
+- Release artifacts rebuilt for `v4.5.3`.
+- GitHub latest release updated so automatic update discovery resolves to `v4.5.3`.
+
 ## [4.5.2] - 2026-05-18
 
 ### Fixed

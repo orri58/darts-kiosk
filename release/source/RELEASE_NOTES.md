@@ -1,41 +1,30 @@
-# Darts Kiosk — Release Notes v4.5.2
+# Darts Kiosk — Release Notes v4.5.3
 
-## Admin-panel free unlock hotfix
+## Updater re-roll for free unlock fix
 
-This release fixes the missing admin-panel path for unlocking a board without credits.
-
-## What changed
-
-Version `v4.5.2` adds a real panel option for free/manual unlocks:
-
-- locked boards now expose `Anpassen / Gratis`
-- the unlock dialog now includes `Kostenlos freischalten`
-- the backend now accepts `manual_unlock`
-- manual unlocks book `0 € / 0 Credits`
-- manual unlock sessions stay exempt from later credit deductions until staff lock the board again
+This release exists to push the free/manual unlock fix through the built-in Windows updater one more time under a newer version number.
 
 ## Why this release matters
 
-The previous release line already carried the underlying manual-unlock pricing logic, but the actual admin-panel control was missing. This release closes that gap so the feature is usable from the shipped Windows package.
+Some machines ended up in a mixed state where the new admin UI was visible, but the old backend validation was still running. That causes the free-unlock button to appear while the API still rejects it with `Credits must be greater than zero`.
+
+Version `v4.5.3` forces a fresh updater pass so the complete backend + frontend fix set is downloaded and applied again.
+
+## Included
+- admin-panel option `Kostenlos freischalten`
+- backend support for `manual_unlock`
+- free/manual unlock sessions book `0 € / 0 Credits`
+- manual unlock sessions stay exempt from later credit deductions until staff lock the board again
 
 ## Validation performed
 
 Executed successfully:
 
 ```bash
-PYTHONPATH=. .venv/bin/pytest backend/tests/test_manual_unlock_pricing.py -q
-cd frontend && node - <<'JS'
-const fs=require('fs');
-const parser=require('@babel/parser');
-const src=fs.readFileSync('src/pages/admin/Dashboard.js','utf8');
-parser.parse(src,{sourceType:'module',plugins:['jsx']});
-console.log('dashboard-parse-ok');
-JS
 bash release/build_release.sh
 ```
 
 Observed result:
-- manual-unlock backend regression suite passed
-- admin dashboard JSX parse sanity passed
-- release artifacts rebuilt for `v4.5.2`
-- release assets published for automatic system update discovery
+- release artifacts were rebuilt for `v4.5.3`
+- release assets were published for automatic system update discovery
+- `releases/latest` now resolves to `v4.5.3`
