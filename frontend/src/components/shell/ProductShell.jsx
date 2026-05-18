@@ -1,5 +1,6 @@
-import { NavLink } from 'react-router-dom';
-import { LogOut, Menu, X } from 'lucide-react';
+import { useEffect } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
+import { Menu, X } from 'lucide-react';
 
 function SurfaceBadge({ children, tone = 'default' }) {
   const tones = {
@@ -94,12 +95,57 @@ export default function ProductShell({
   children,
   testId = 'product-shell',
 }) {
+  const location = useLocation();
+
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [location.pathname, setSidebarOpen]);
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1024px)');
+    const handleChange = (event) => {
+      if (event.matches) {
+        document.body.style.overflow = '';
+        setSidebarOpen(false);
+      }
+    };
+    handleChange(media);
+    media.addEventListener('change', handleChange);
+    return () => media.removeEventListener('change', handleChange);
+  }, [setSidebarOpen]);
+
+  useEffect(() => {
+    if (!sidebarOpen) {
+      document.body.style.overflow = '';
+      return undefined;
+    }
+
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event) => {
+      if (event.key === 'Escape') setSidebarOpen(false);
+    };
+    window.addEventListener('keydown', onKeyDown);
+
+    return () => {
+      document.body.style.overflow = '';
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [sidebarOpen, setSidebarOpen]);
+
   return (
     <div className="product-shell" data-testid={testId}>
       <div className="product-shell__bg" />
 
       <div className="product-shell__mobile-header lg:hidden" data-testid={`${testId}-mobile-header`}>
-        <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 text-zinc-400 hover:text-white" data-testid={`${testId}-mobile-menu-btn`}>
+        <button
+          type="button"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="rounded-xl p-2 text-zinc-400 transition hover:bg-white/5 hover:text-white"
+          data-testid={`${testId}-mobile-menu-btn`}
+          aria-label={sidebarOpen ? 'Menü schließen' : 'Menü öffnen'}
+          aria-expanded={sidebarOpen}
+          aria-controls={`${testId}-sidebar`}
+        >
           {sidebarOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
         </button>
         <div className="text-center">
@@ -109,7 +155,10 @@ export default function ProductShell({
         <div className="w-9" />
       </div>
 
-      <aside className={`product-shell__sidebar ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0`}>
+      <aside
+        id={`${testId}-sidebar`}
+        className={`product-shell__sidebar ${sidebarOpen ? 'translate-x-0 opacity-100 pointer-events-auto' : '-translate-x-full opacity-0 pointer-events-none'} lg:translate-x-0 lg:opacity-100 lg:pointer-events-auto`}
+      >
         <div className="product-shell__sidebar-brand">
           <div className="space-y-3">
             <div className="flex items-start justify-between gap-3">

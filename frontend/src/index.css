@@ -36,7 +36,7 @@
 .product-shell {
   position: relative;
   min-height: 100vh;
-  overflow: hidden;
+  overflow-x: hidden;
   background: var(--color-bg);
   color: var(--color-text);
 }
@@ -67,19 +67,20 @@
 
 .product-shell__sidebar {
   position: fixed;
-  top: 0;
+  top: calc(4.25rem + var(--sat, 0px));
   left: 0;
   z-index: 40;
   display: flex;
-  height: 100%;
-  width: 16rem;
+  height: calc(100dvh - (4.25rem + var(--sat, 0px)));
+  width: min(18rem, calc(100vw - 2.5rem));
+  max-width: 18rem;
   flex-direction: column;
   border-right: 1px solid rgb(var(--color-border-rgb) / 0.82);
-  background: linear-gradient(180deg, rgb(var(--color-bg-rgb) / 0.98), rgb(var(--color-surface-rgb) / 0.96));
+  border-top: 1px solid rgb(var(--color-border-rgb) / 0.72);
+  background: linear-gradient(180deg, rgb(var(--color-bg-rgb) / 0.985), rgb(var(--color-surface-rgb) / 0.97));
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
-  transform: translateX(0);
-  transition: transform 200ms ease;
-  padding-top: var(--sat, 0px);
+  transition: transform 200ms ease, opacity 160ms ease;
+  will-change: transform, opacity;
 }
 
 .product-shell__sidebar-brand,
@@ -156,7 +157,7 @@
   position: relative;
   margin-inline: auto;
   max-width: 1600px;
-  padding: calc(4.75rem + var(--sat, 0px)) 0.75rem 1rem;
+  padding: calc(4.85rem + var(--sat, 0px)) 0.85rem 1.1rem;
 }
 
 .product-page-header,
@@ -193,6 +194,15 @@
 }
 
 @media (min-width: 1024px) {
+  .product-shell__sidebar {
+    top: 0;
+    height: 100%;
+    width: 16rem;
+    max-width: 16rem;
+    border-top: 0;
+    padding-top: var(--sat, 0px);
+  }
+
   .product-shell__main {
     margin-left: 18rem;
   }

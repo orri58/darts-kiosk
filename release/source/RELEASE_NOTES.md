@@ -1,30 +1,33 @@
-# Darts Kiosk — Release Notes v4.5.3
+# Darts Kiosk — Release Notes v4.5.4
 
-## Updater re-roll for free unlock fix
+## Mobile shell / responsive fix
 
-This release exists to push the free/manual unlock fix through the built-in Windows updater one more time under a newer version number.
+This release fixes the mobile admin shell so the sidebar behaves like a real professional app instead of staying visually stuck open on small screens.
+
+## What changed
+
+Version `v4.5.4` improves the shell and responsive behavior:
+
+- fixed the mobile sidebar state so closed really means closed
+- removed the CSS override that kept the menu visually open
+- added proper overlay dismissal and body-scroll locking while the menu is open
+- auto-closes the sidebar on route changes
+- resets the mobile sidebar state when returning to desktop width
+- positions the mobile sidebar below the sticky top header for a cleaner iPhone/mobile layout
 
 ## Why this release matters
 
-Some machines ended up in a mixed state where the new admin UI was visible, but the old backend validation was still running. That causes the free-unlock button to appear while the API still rejects it with `Credits must be greater than zero`.
-
-Version `v4.5.3` forces a fresh updater pass so the complete backend + frontend fix set is downloaded and applied again.
-
-## Included
-- admin-panel option `Kostenlos freischalten`
-- backend support for `manual_unlock`
-- free/manual unlock sessions book `0 € / 0 Credits`
-- manual unlock sessions stay exempt from later credit deductions until staff lock the board again
+The previous build worked functionally, but the shell behavior on mobile looked half-finished. This release closes that gap and makes the navigation behavior feel much more deliberate and production-ready.
 
 ## Validation performed
 
 Executed successfully:
 
 ```bash
-bash release/build_release.sh
+cd frontend && npm run build
 ```
 
 Observed result:
-- release artifacts were rebuilt for `v4.5.3`
+- frontend production build passed
+- release artifacts were rebuilt for `v4.5.4`
 - release assets were published for automatic system update discovery
-- `releases/latest` now resolves to `v4.5.3`

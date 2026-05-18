@@ -1,3 +1,15 @@
+## [4.5.4] - 2026-05-18
+
+### Fixed
+- Fixed the mobile admin/operator shell so the sidebar menu no longer stays visually stuck open on small screens because the base shell CSS overrode the Tailwind translate state.
+- Improved mobile shell behavior with cleaner slide-in/out handling, overlay dismissal, body-scroll locking while the menu is open, route-change auto-close, and desktop resize reset.
+- Tightened the mobile shell layout so the sidebar sits below the sticky mobile header instead of awkwardly covering the whole viewport chrome.
+
+### Validation
+- Frontend production build passed.
+- Shell/admin JSX parse sanity passed.
+- Release artifacts rebuilt for `v4.5.4`.
+
 ## [4.5.3] - 2026-05-18
 
 ### Fixed
