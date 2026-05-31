@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import AsyncSessionLocal
+from backend.dependencies import get_active_session_for_board
 from backend.models import Board, Session, Settings, BoardStatus, SessionStatus
 
 logger = logging.getLogger(__name__)
@@ -135,13 +136,7 @@ class SessionScheduler:
                 unlocked_boards = result.scalars().all()
 
                 for board in unlocked_boards:
-                    session_result = await db.execute(
-                        select(Session)
-                        .where(Session.board_id == board.id)
-                        .where(Session.status == SessionStatus.ACTIVE.value)
-                        .order_by(Session.started_at.desc())
-                    )
-                    session = session_result.scalar_one_or_none()
+                    session = await get_active_session_for_board(db, board.id)
 
                     if session:
                         last_activity = session.updated_at or session.started_at
@@ -192,13 +187,8 @@ class SessionScheduler:
                     return False
                 
                 # Get active session
-                session_result = await db.execute(
-                    select(Session)
-                    .where(Session.board_id == board.id)
-                    .where(Session.status == SessionStatus.ACTIVE.value)
-                )
-                session = session_result.scalar_one_or_none()
-                
+                session = await get_active_session_for_board(db, board.id)
+
                 if not session:
                     board.status = BoardStatus.LOCKED.value
                     await db.commit()

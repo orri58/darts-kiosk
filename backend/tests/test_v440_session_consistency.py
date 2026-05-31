@@ -5,6 +5,7 @@ from sqlalchemy import select, delete
 
 from backend.database import AsyncSessionLocal, init_db
 from backend.models import Board, Session, BoardStatus, SessionStatus
+from backend.dependencies import get_active_session_for_board
 from backend.services.session_consistency_service import session_consistency_service
 
 
@@ -110,6 +111,52 @@ async def test_repair_finalizes_terminal_in_game_session_and_triggers_cleanup():
     assert result["cleanup_triggered"] is True
     assert result["board"]["board_status"] == BoardStatus.LOCKED.value
     assert result["board"]["issues"] == []
+
+
+@pytest.mark.asyncio
+async def test_get_active_session_for_board_auto_repairs_duplicate_active_sessions():
+    await init_db()
+    await _reset("CONSIST-HELPER-1")
+
+    async with AsyncSessionLocal() as db:
+        board = Board(board_id="CONSIST-HELPER-1", name="Consistency Helper 1", status=BoardStatus.UNLOCKED.value)
+        db.add(board)
+        await db.flush()
+        older = Session(
+            board_id=board.id,
+            pricing_mode="per_game",
+            status=SessionStatus.ACTIVE.value,
+            credits_total=3,
+            credits_remaining=2,
+            started_at=datetime.now(timezone.utc) - timedelta(minutes=10),
+        )
+        newer = Session(
+            board_id=board.id,
+            pricing_mode="per_game",
+            status=SessionStatus.ACTIVE.value,
+            credits_total=4,
+            credits_remaining=4,
+            started_at=datetime.now(timezone.utc) - timedelta(minutes=2),
+        )
+        db.add_all([older, newer])
+        await db.commit()
+
+    async with AsyncSessionLocal() as db:
+        board = (await db.execute(select(Board).where(Board.board_id == "CONSIST-HELPER-1"))).scalar_one()
+        session = await get_active_session_for_board(db, board.id)
+        await db.commit()
+        assert session is not None
+        assert session.id == newer.id
+
+    async with AsyncSessionLocal() as db:
+        board = (await db.execute(select(Board).where(Board.board_id == "CONSIST-HELPER-1"))).scalar_one()
+        sessions = (await db.execute(select(Session).where(Session.board_id == board.id).order_by(Session.started_at.desc()))).scalars().all()
+        active = [item for item in sessions if item.status == SessionStatus.ACTIVE.value]
+        cancelled = [item for item in sessions if item.status == SessionStatus.CANCELLED.value]
+        assert len(active) == 1
+        assert active[0].id == newer.id
+        assert len(cancelled) == 1
+        assert cancelled[0].ended_reason == "consistency_auto_repair_duplicate_active_session"
 
 
 @pytest.mark.asyncio

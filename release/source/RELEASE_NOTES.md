@@ -1,33 +1,41 @@
-# Darts Kiosk — Release Notes v4.5.4
+# Darts Kiosk — Release Notes v4.5.5
 
-## Mobile shell / responsive fix
+## Emergency backend recovery fix
 
-This release fixes the mobile admin shell so the sidebar behaves like a real professional app instead of staying visually stuck open on small screens.
+This release fixes a backend crash that can make the system unusable when corrupted session state leaves more than one active session on the same board.
 
 ## What changed
 
-Version `v4.5.4` improves the shell and responsive behavior:
+Version `v4.5.5` hardens the runtime against duplicate active sessions:
 
-- fixed the mobile sidebar state so closed really means closed
-- removed the CSS override that kept the menu visually open
-- added proper overlay dismissal and body-scroll locking while the menu is open
-- auto-closes the sidebar on route changes
-- resets the mobile sidebar state when returning to desktop width
-- positions the mobile sidebar below the sticky top header for a cleaner iPhone/mobile layout
+- board/session reads no longer crash with `500` on duplicate active sessions
+- the backend now keeps the newest active session and auto-cancels older duplicates
+- scheduler flows now use the same hardened lookup path
+- remote lock / stop-session flows also use the hardened path instead of assuming the database is perfectly clean
 
 ## Why this release matters
 
-The previous build worked functionally, but the shell behavior on mobile looked half-finished. This release closes that gap and makes the navigation behavior feel much more deliberate and production-ready.
+A support bundle from a live Windows installation showed the updater had succeeded on `v4.5.4`, but the runtime was still failing because `BOARD-1` had multiple active sessions in the database. That produced `sqlalchemy.exc.MultipleResultsFound` and broke endpoints like:
+
+- `GET /api/boards/BOARD-1/session`
+- `GET /api/kiosk/BOARD-1/overlay`
+
+`v4.5.5` turns that from a fatal runtime error into a self-healing condition.
 
 ## Validation performed
 
-Executed successfully:
+Executed successfully in isolated test databases:
 
 ```bash
-cd frontend && npm run build
+PYTHONPATH=. DATA_DIR=<tmp> .venv/bin/pytest backend/tests/test_v440_session_consistency.py -q
+PYTHONPATH=. DATA_DIR=<tmp> .venv/bin/pytest backend/tests/test_v430_scheduler_terminal_cleanup.py -q
+PYTHONPATH=. DATA_DIR=<tmp> .venv/bin/pytest backend/tests/test_manual_unlock_pricing.py -q
+bash release/build_release.sh
 ```
 
 Observed result:
-- frontend production build passed
-- release artifacts were rebuilt for `v4.5.4`
+- session consistency suite passed (`6 passed`)
+- scheduler terminal cleanup suite passed (`4 passed`)
+- manual unlock pricing suite passed (`2 passed`)
+- release artifacts were rebuilt for `v4.5.5`
 - release assets were published for automatic system update discovery

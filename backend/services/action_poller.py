@@ -535,13 +535,11 @@ class ActionPoller:
         from sqlalchemy import select
 
         # End active session if exists
-        result = await db.execute(
-            select(Session).where(
-                Session.board_id == board.id,
-                Session.status == SessionStatus.ACTIVE.value
-            )
-        )
-        session = result.scalar_one_or_none()
+        try:
+            from backend.dependencies import get_active_session_for_board
+        except ImportError:
+            from dependencies import get_active_session_for_board
+        session = await get_active_session_for_board(db, board.id)
         if session:
             session.status = SessionStatus.CANCELLED.value
             session.ended_at = datetime.now(timezone.utc)
@@ -592,13 +590,11 @@ class ActionPoller:
                 return False, f"start_session failed (unlock step): {msg}"
 
         # Check for existing active session
-        existing = await db.execute(
-            select(Session).where(
-                Session.board_id == board.id,
-                Session.status == SessionStatus.ACTIVE.value
-            )
-        )
-        if existing.scalar_one_or_none():
+        try:
+            from backend.dependencies import get_active_session_for_board
+        except ImportError:
+            from dependencies import get_active_session_for_board
+        if await get_active_session_for_board(db, board.id):
             logger.info(f"[ACTION-POLL] Board {board.board_id} already has active session — start_session is a no-op")
             return True, f"Board {board.board_id} already has an active session"
 
@@ -631,13 +627,11 @@ class ActionPoller:
         logger.info(f"[ACTION-POLL] stop_session for board {board.board_id}")
 
         # Find and end active session
-        result = await db.execute(
-            select(Session).where(
-                Session.board_id == board.id,
-                Session.status == SessionStatus.ACTIVE.value
-            )
-        )
-        active_session = result.scalar_one_or_none()
+        try:
+            from backend.dependencies import get_active_session_for_board
+        except ImportError:
+            from dependencies import get_active_session_for_board
+        active_session = await get_active_session_for_board(db, board.id)
 
         if not active_session:
             logger.info(f"[ACTION-POLL] No active session on board {board.board_id} — stop_session is a no-op")

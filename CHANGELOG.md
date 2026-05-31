@@ -1,3 +1,17 @@
+## [4.5.5] - 2026-05-31
+
+### Fixed
+- Hardened active-session lookup so the backend no longer crashes with `500` when corrupted state leaves more than one active session on the same board.
+- Added automatic duplicate-session self-healing: the newest active session is kept, older duplicates are cancelled with a consistency repair reason.
+- Updated scheduler and remote-action session flows to use the hardened lookup path so idle-timeout, force-lock, and board session reads stay usable under bad data instead of throwing `MultipleResultsFound`.
+
+### Validation
+- Isolated backend regression suites passed:
+  - `backend/tests/test_v440_session_consistency.py` → `6 passed`
+  - `backend/tests/test_v430_scheduler_terminal_cleanup.py` → `4 passed`
+  - `backend/tests/test_manual_unlock_pricing.py` → `2 passed`
+- Release artifacts rebuilt for `v4.5.5`.
+
 ## [4.5.4] - 2026-05-18
 
 ### Fixed

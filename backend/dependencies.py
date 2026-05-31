@@ -135,11 +135,27 @@ async def get_active_session_for_board(db: AsyncSession, board_db_id: str) -> Op
         select(Session)
         .where(Session.board_id == board_db_id)
         .where(Session.status == SessionStatus.ACTIVE.value)
-        .order_by(Session.started_at.desc())
+        .order_by(Session.started_at.desc(), Session.created_at.desc())
     )
-    session = result.scalar_one_or_none()
-    if not session:
+    sessions = result.scalars().all()
+    if not sessions:
         return None
+
+    session = sessions[0]
+    if len(sessions) > 1:
+        now = datetime.now(timezone.utc)
+        extras = sessions[1:]
+        for extra in extras:
+            extra.status = SessionStatus.CANCELLED.value
+            extra.ended_at = extra.ended_at or now
+            extra.ended_reason = extra.ended_reason or "consistency_auto_repair_duplicate_active_session"
+        await db.flush()
+        logger.warning(
+            "Auto-repaired duplicate active sessions for board_db_id=%s; kept=%s cancelled=%s",
+            board_db_id,
+            session.id,
+            [extra.id for extra in extras],
+        )
 
     charge_result = await db.execute(
         select(SessionCharge.note)
