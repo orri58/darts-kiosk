@@ -1,57 +1,97 @@
-# Darts Kiosk — Cafe Dartboard Management System
+# Darts Kiosk
 
-A production-grade kiosk system for cafes and bars with dartboards. Each dartboard gets a dedicated Mini-PC running this software. Staff unlock boards for customers, the system manages sessions, pricing, and integrates with [Autodarts](https://autodarts.io) for automated scoring.
+A production-oriented kiosk and management system for cafés, bars and venues operating electronic dartboards.
 
-## Current Status: `v4.0.0-recovery`
+The project combines a local kiosk UI, board/session management, revenue tracking and Autodarts integration in one deployable system. It is designed around one Mini-PC per dartboard and focuses on reliable local operation even when central services are unavailable.
 
-The system underwent a recovery to restore stability after a series of regressions introduced by central server / licensing features (v3.4–v3.15). The **local core** is now stable and fully tested. Central/portal features are disabled and will be reintroduced in controlled layers.
+## Why this project exists
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Local Admin Panel | **Stable** | Full CRUD, board management, settings, revenue |
-| Kiosk UI | **Stable** | Lock/unlock screens, autodarts integration |
-| Board Control | **Stable** | Unlock, lock, session flow |
-| Autodarts Integration | **Stable** | Observer mode, browser automation via Playwright |
-| Revenue & Reporting | **Stable** | Session-based revenue tracking |
-| Central Server / Portal | **Disabled** | Planned reintegration in layers (see `docs/RECOVERY.md`) |
-| Licensing | **Disabled** | Planned reintegration as Layer B |
+Running multiple dartboards in a venue involves more than simply starting a game. Staff need to unlock boards, manage sessions, keep pricing consistent and understand usage and revenue without disrupting the customer experience.
 
-See `docs/STATUS.md` for the full component matrix.
+Darts Kiosk brings these workflows together in a dedicated local application.
 
----
+## Core capabilities
+
+- kiosk interface for customer-facing board access
+- local admin panel for board and session management
+- unlock / lock workflow for individual dartboards
+- session-based pricing and revenue tracking
+- Autodarts integration through browser automation
+- WebSocket-based live updates
+- health/status monitoring
+- local persistence with SQLite
+- release tooling for Windows and Linux
+- Docker-based development/deployment option
+
+## Tech stack
+
+### Backend
+- Python
+- FastAPI
+- SQLAlchemy
+- SQLite
+- JWT-based authentication
+- WebSockets
+- Playwright for Autodarts browser automation
+
+### Frontend
+- React
+- browser-based kiosk and admin interfaces
+- real-time state updates
+
+### Delivery & operations
+- Docker / Docker Compose
+- Linux installer and release scripts
+- automated regression tests
+- architecture, testing and operations documentation
 
 ## Architecture
 
-```
+```text
 ┌─────────────────────────────────────────────┐
-│                 Mini-PC (per dartboard)      │
-│  ┌──────────┐  ┌──────────┐  ┌───────────┐ │
-│  │ React    │  │ FastAPI  │  │ SQLite    │ │
-│  │ Frontend │──│ Backend  │──│ Database  │ │
-│  │ (Kiosk + │  │ (API +   │  │           │ │
-│  │  Admin)  │  │ Services)│  └───────────┘ │
-│  └──────────┘  └──────────┘                 │
-│                      │                      │
-│              ┌───────┴────────┐             │
-│              │ Autodarts      │             │
-│              │ (Playwright    │             │
-│              │  Browser Auto) │             │
-│              └────────────────┘             │
+│              Mini-PC per dartboard          │
+│                                             │
+│  ┌────────────┐  ┌────────────┐  ┌────────┐│
+│  │ React UI   │──│ FastAPI    │──│ SQLite ││
+│  │ Kiosk/Admin│  │ API/Logic  │  │        ││
+│  └────────────┘  └─────┬──────┘  └────────┘│
+│                        │                    │
+│                 ┌──────▼───────┐            │
+│                 │ Autodarts    │            │
+│                 │ Playwright   │            │
+│                 └──────────────┘            │
 └─────────────────────────────────────────────┘
 ```
 
-See `docs/ARCHITECTURE.md` for the full system design.
+More detail is available in `docs/ARCHITECTURE.md`.
 
----
+## Current project status
 
-## Quick Start (Development)
+The local kiosk core is the current stable baseline. Central management and licensing features were intentionally disabled after regressions and are being reintroduced in controlled layers.
 
-### Prerequisites
+| Area | Status |
+|---|---|
+| Local admin panel | Stable baseline |
+| Kiosk UI | Stable baseline |
+| Board/session control | Stable baseline |
+| Autodarts integration | Stable baseline |
+| Revenue/reporting | Stable baseline |
+| Central server / portal | Disabled pending controlled reintegration |
+| Licensing | Disabled pending controlled reintegration |
+
+See `docs/STATUS.md` and `docs/RECOVERY.md` for the detailed recovery and reintegration plan.
+
+## Development setup
+
+### Requirements
+
 - Python 3.11+
 - Node.js 18+
-- SQLite3
+- SQLite
+- Chrome/Chromium for Autodarts automation
 
 ### Backend
+
 ```bash
 cd backend
 pip install -r requirements.txt
@@ -59,132 +99,64 @@ uvicorn backend.server:app --host 0.0.0.0 --port 8001 --reload
 ```
 
 ### Frontend
+
 ```bash
 cd frontend
 yarn install
-yarn start    # Starts on port 3000
+yarn start
 ```
 
-### First Login
-The system creates a default admin on first start:
-- **Username:** `admin`
-- **Password:** `admin123`
-- **PIN:** `1234`
-
-A staff account is also created:
-- **Username:** `wirt`
-- **Password:** `wirt123`
-
----
-
-## Repository Structure
-
-```
-darts-kiosk/
-├── backend/                 # FastAPI backend (FROZEN CORE)
-│   ├── server.py            # Main application entry point
-│   ├── database.py          # SQLite + SQLAlchemy setup
-│   ├── models/              # ORM models
-│   ├── routers/             # API route handlers
-│   │   ├── auth.py          # Authentication (JWT)
-│   │   ├── boards.py        # Board CRUD + unlock/lock
-│   │   ├── kiosk.py         # Kiosk state + game flow
-│   │   ├── admin.py         # Revenue, logs, reports
-│   │   ├── settings.py      # Branding, pricing, language
-│   │   ├── players.py       # Player stats + Stammkunde
-│   │   └── ...
-│   ├── services/            # Business logic services
-│   │   ├── autodarts_observer.py   # Playwright automation
-│   │   ├── ws_manager.py           # WebSocket broadcasts
-│   │   ├── health_monitor.py       # System health
-│   │   └── ...
-│   └── tests/               # Test suites
-├── frontend/                # React frontend (FROZEN CORE)
-│   └── src/
-│       ├── App.js           # Routing (admin + kiosk only)
-│       ├── pages/admin/     # Admin panel pages
-│       ├── pages/kiosk/     # Kiosk UI screens
-│       ├── context/         # React contexts (auth, settings, i18n)
-│       └── hooks/           # Custom hooks (WS, sound)
-├── central_server/          # Central management server (DISABLED)
-├── docs/                    # Documentation
-│   ├── ARCHITECTURE.md      # System architecture
-│   ├── RECOVERY.md          # Recovery strategy
-│   ├── RUNBOOK.md           # Operations guide
-│   ├── STATUS.md            # Component status matrix
-│   └── TESTING.md           # Testing guide
-├── release/                 # Build scripts + release artifacts
-├── memory/                  # Project memory (PRD, changelog)
-├── VERSION                  # Current version string
-├── Dockerfile               # Container build
-├── docker-compose.yml       # Docker orchestration
-├── install.sh               # Linux production installer
-└── CONTRIBUTING.md          # Contribution guidelines
-```
-
----
-
-## Build & Deploy
-
-### Windows (Test Environment)
-```bash
-bash release/build_release.sh
-# Output: release/build/darts-kiosk-v4.0.0-recovery-windows/
-# Run: start.bat
-```
-
-### Linux (Production)
-```bash
-bash release/build_release.sh
-# Output: release/build/darts-kiosk-v4.0.0-recovery-linux.tar.gz
-# Install: tar xzf ... && cd darts-kiosk && ./install.sh
-```
-
-### Docker
-```bash
-docker-compose up --build
-```
-
----
+Development credentials and local environment settings should be configured outside the public documentation and changed before any real deployment.
 
 ## Testing
 
 ```bash
-# Run baseline recovery tests
-cd /app && python -m pytest backend/tests/test_v400_recovery_baseline.py -v
-
-# Run full regression suite
+python -m pytest backend/tests/test_v400_recovery_baseline.py -v
 python -m pytest backend/tests/test_regression_e2e.py -v
 ```
 
-See `docs/TESTING.md` for the complete testing guide.
+The project uses a recovery baseline so that previously stabilized local functionality can be verified before new layers are introduced.
 
----
+## Repository structure
+
+```text
+darts-kiosk/
+├── backend/          # FastAPI API, domain logic and tests
+├── frontend/         # React kiosk and admin interfaces
+├── central_server/   # Central features, currently disabled
+├── docs/             # Architecture, runbook, status and testing docs
+├── release/          # Build/release tooling
+├── memory/           # Product and recovery notes
+├── Dockerfile
+├── docker-compose.yml
+└── install.sh
+```
+
+## Engineering approach
+
+This project is intentionally documented like a real software product rather than only as a code demo. Important practices include:
+
+- regression testing around a known stable baseline
+- separation of UI, API, services and persistence
+- controlled reintegration after regressions
+- operational runbooks and architecture documentation
+- fail-closed behaviour for authorization/licensing-sensitive flows
+- release tooling for repeatable deployment
+
+## Portfolio context
+
+This repository is part of my practical software-development portfolio. It demonstrates work across frontend, backend, persistence, browser automation, testing, deployment and technical documentation in a system built around a real operational use case.
 
 ## Documentation
 
 | Document | Purpose |
-|----------|---------|
+|---|---|
 | `docs/ARCHITECTURE.md` | System design and data flows |
-| `docs/RECOVERY.md` | Why recovery was needed, reintegration plan |
-| `docs/RUNBOOK.md` | How to run, verify, and debug the system |
+| `docs/RECOVERY.md` | Recovery strategy and reintegration plan |
+| `docs/RUNBOOK.md` | Operating and troubleshooting the system |
 | `docs/STATUS.md` | Component status matrix |
-| `docs/TESTING.md` | Test categories, commands, checklists |
-| `CONTRIBUTING.md` | Contribution rules and frozen core policy |
-| `memory/FROZEN_CORE.md` | List of frozen modules |
-| `memory/PRD.md` | Product requirements |
-| `memory/CHANGELOG.md` | Version history |
-
----
-
-## Key Concepts
-
-- **Frozen Core:** The local admin/kiosk/board/autodarts modules restored from v3.3.1-hotfix2. No modifications allowed without explicit approval.
-- **Recovery Layers:** Central features will be reintroduced in order: visibility → licensing → board control → config sync. Each must be verified before the next starts.
-- **Fail-Closed:** Any license or authorization check that fails must block the action, never silently allow it.
-- **Autodarts Observer:** Uses Playwright to automate the Autodarts web app. Requires Chrome/Chromium installed on the target machine.
-
----
+| `docs/TESTING.md` | Test strategy and verification commands |
+| `CONTRIBUTING.md` | Contribution and change rules |
 
 ## License
 
